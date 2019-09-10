@@ -1,0 +1,37 @@
+                    nrlsmf Version History
+
+Version 1.1b2
+=============
+    - Some progress towards table-based DPD, etc
+    - Updated tarball with non-blocking linuxDetour and bsdDetour
+      (18 Oct 2007)
+
+Version 1.1b1
+=============
+    - Major redesign to support gateways with multiple interfaces, etc
+    - Added support for detecting/handling IPSec
+    - IPv6 SMF_DPD option per "draft-ietf-manet-smf-03"
+    - More robust, complete enumeration of interface address
+      assignments in Protolib code.
+    - Use of ProtoPktIP classes in Protolib including ProtoPktDPD
+
+Version 1.0a3
+=============
+    - Changed interface with nrlolsr to support more multicast
+      forwarding protocols.
+    - Fixed s-mpr forwarding method.
+
+
+Version 1.0a2
+=============
+    - Fixed problem with not detecting locally generated
+      packets which had been forwarded by neighbor nodes
+      causing nrlsmf to forward some locally generated packets
+      
+    - Added "resequence" option to intercept outbound packets
+      and resequence the IP "id" field (IPv4) or add an option
+      header (IPv6)
+
+Version 1.0a1
+=============
+    - Initial release.

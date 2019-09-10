@@ -1,0 +1,461 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<HTML>
+<HEAD>
+	<META HTTP-EQUIV="CONTENT-TYPE" CONTENT="text/html; charset=utf-8">
+	<TITLE>NRL Simplified Multicast Forwarding (SMF) Engine</TITLE>
+	<META NAME="GENERATOR" CONTENT="NeoOffice/J 1.1  (Unix)">
+	<META NAME="AUTHOR" CONTENT="R. Brian Adamson">
+	<META NAME="CREATED" CONTENT="20050422;9200000">
+	<META NAME="CHANGED" CONTENT="20051222;17065000">
+	<STYLE>
+	<!--
+		@page { size: 8.5in 11in; margin-right: 1.25in; margin-top: 1in; margin-bottom: 1in }
+		P { margin-bottom: 0.08in; direction: ltr; color: #000000 }
+		P.western { font-family: "Times New Roman", serif; font-size: 12pt; so-language: en-US }
+		P.cjk { font-family: "Times New Roman", serif; font-size: 12pt }
+		P.ctl { font-family: "Times New Roman", serif; font-size: 10pt }
+		H1 { margin-bottom: 0.04in; direction: ltr; color: #000000 }
+		H1.western { font-family: "Arial", sans-serif; font-size: 16pt; so-language: en-US }
+		H1.cjk { font-family: "Times New Roman", serif; font-size: 16pt }
+		H1.ctl { font-family: "Times New Roman", serif; font-size: 16pt; font-weight: medium }
+		H2 { margin-bottom: 0.04in; direction: ltr; color: #000000 }
+		H2.western { font-family: "Arial", sans-serif; font-size: 14pt; so-language: en-US; font-style: italic }
+		H2.cjk { font-family: "Times New Roman", serif; font-size: 14pt; font-style: italic }
+		H2.ctl { font-family: "Times New Roman", serif; font-size: 14pt; font-weight: medium }
+		A:link { color: #0000ff }
+		A:visited { color: #800080 }
+	-->
+	</STYLE>
+</HEAD>
+<BODY LANG="en-US" TEXT="#000000" LINK="#0000ff" VLINK="#800080" DIR="LTR">
+<P ALIGN=CENTER STYLE="margin-top: 0.17in; margin-bottom: 0.04in"><FONT FACE="Arial, sans-serif"><FONT SIZE=4 STYLE="font-size: 16pt"><B>NRL
+Simplified Multicast Forwarding (SMF) Engine<BR>Overview and User's
+Guide</B></FONT></FONT></P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">The
+NRL Simplified Multicast Forwarding (<I>nrlsmf</I>) project includes
+software for a user-space forwarding engine.  This software is was
+developed by the <FONT COLOR="#0000ff"><U><A HREF="http://www.nrl.navy.mil/">Naval
+Research Laboratory</A></U></FONT> (NRL) PROTocol Engineering
+Advanced Networking (<FONT COLOR="#0000ff"><U><A HREF="http://protean.itd.nrl.navy.mil/">PROTEAN</A></U></FONT>)
+Research Group.  The goal of this effort is to provide an
+implementation of experimental techniques for robust, efficient
+distribution of broadcast or multicast packets in dynamic, wireless
+networks such as Mobile Ad-hoc Networks (MANETs).  The <I>nrlsmf</I>
+application can be run as a stand-alone application capable of
+providing  &quot;classic&quot; flooding of broadcast and multicast
+traffic for a specified network interface or can be used in
+conjunction with a controlling program to perform more sophisticated
+multicast forwarding.  An interprocess communication &quot;remote
+control&quot; interface is provided so that a compatible program
+(e.g. <FONT COLOR="#0000ff"><U><A HREF="http://pf.itd.nrl.navy.mil/projects.php?name=olsr"><I>nrlolsr</I></A></U></FONT>)
+may issue real-time commands to <I>nrlsmf</I> to control the
+multicast forwarding process.  Both IPv4 and IPv6 operation are
+supported.  Versions of <I>nrlsmf</I> can be built for the following
+operating systems:  Linux, MacOS, BSD, Win32, and WinCE.  
+</P>
+<H1 CLASS="western">Theory of Operation</H1>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">The
+<I>nrlsmf</I> program acts as a packet forwarding engine by
+promiscuously &quot;sniffing&quot; packets on a specified interface
+and then retransmitting packets (using its local network interface
+MAC address) according to set forwarding rules.  Currently, <I>nrlsmf</I>
+only receives and forwards packets on a single, specified network
+interface for operation within the &quot;routing area&quot;
+corresponding to that (generally wireless) interface.  However,
+future iterations of <I>nrlsmf</I> will also allow for packet
+reception and forwarding across multiple interfaces to allow for
+configurable gateway operation.  Currently, <I>nrlsmf</I> will
+forward incoming (non-locally generated) packets that are IP
+Multicast with time-to-live (TTL) greater than one.</P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">Duplicate
+packet detection is an important facet of wireless network multicast
+forwarding since packets often must be forwarded on the same
+interface as they are received.  Thus, neighbors' subsequent
+retransmission of forwarded packets will be &quot;heard&quot; and the
+local forwarding engine must discriminate between new packets and
+previously-forwarded packets to avoid unnecessary retransmission. 
+Accomplishing duplicate packet detection of native (unencapsulated)
+IP packets presents several challenges:</P>
+<OL>
+	<LI><P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">
+	While the IPv4 packet &quot;id&quot; field (a 16-bit sequence)
+	number is available to discriminate duplicate packets, its
+	implementation varies in different operating systems (e.g. always
+	set to ZERO, incremented on a &quot;per socket&quot; basis instead
+	of global, etc).  Furthermore, when incremented on a global basis
+	(with respect to the originating host's IP packet transmission),
+	other data flows (TCP sockets or other multicast or unicast flows)
+	may cause the field to be incremented haphazardly (or wrap quickly)
+	with respect to a specific flow of traffic to be forwarded by an SMF
+	engine.  Ideally, a sequence number that incremented on a per-IP
+	destination basis (with respect to an originating source) would be
+	most useful for duplicate packet detection.  There are also further
+	issues to consider with respect to the possibility of IP security
+	(IPSec) operation or network address translation (NAT) presence that
+	complicate matters here.  However, regardless of these issues, the
+	current <I>nrlsmf</I> implementation boldly uses the IP &quot;id&quot;
+	field for duplicate packet discrimination.  Work is in progress to
+	develop mechanisms to &quot;correct&quot; the IP &quot;id&quot;
+	field (or possibly insert an header option) on hosts participating
+	in networks with SMF.</P>
+	<LI><P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">
+	In IPv6, there is no equivalent to the IPv4 &quot;id&quot; field, so
+	duplicate detection is further complicated.  The current <I>nrlsmf</I>
+	 implementation has a partially-implemented feature that attempts to
+	mitigate this by adding a hop-by-hop options header for detected,
+	locally-generated IPv6 flows.  Then, incoming flows that have the
+	option header are forwarded.  This results in two copies of each
+	generated multicast packet on the first hop, but correct forwarding
+	on subsequent hops.  A similar approach could be adopted to
+	&quot;correct&quot; IPv4 &quot;id&quot; fields on systems where this
+	is needed in lieu of outbound packet interception.  Again, we are
+	investigating approaches to outbound packet interception for
+	supported operating systems to provide a more efficient experimental
+	capability for long-term use.</P>
+	<LI><P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">
+	Also under investigation are approaches to using &quot;hash&quot;
+	functions for duplicate detection.  Preliminary results indicate
+	these approaches are complex for per-packet processing and imperfect
+	with respect to false duplicate detection which results in
+	undesirable packet loss, perhaps unrecoverable even with end-to-end
+	reliability mechanisms.  But further investigation is merited.</P>
+	<LI><P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">
+	Encapsulation of packets for forwarding has some advantages in that
+	discrimination for duplicate packet detection can be carefully
+	controlled.  The principle disadvantage is that edge wireless
+	systems (not participating in packet forwarding) without explicit
+	SMF support for decapsulation would be unable to receive multicast
+	transmissions they would have otherwise been able to receive had
+	native IP packet formats been used.</P>
+</OL>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">The
+<I>nrlsmf</I> currently forwards based on its configuration and
+possibly the source MAC address of received packets meeting TTL
+criteria.  If &quot;default forwarding&quot; is enabled, <I>nrlsmf</I>
+will forward all non-duplicate, TTL &gt; 1, multicast packets. 
+Otherwise, <I>nrlsmf</I> only forwards packets with MAC source
+addresses matching those in a list provided by a separate controlling
+program (e.g. <FONT COLOR="#0000ff"><U><A HREF="http://pf.itd.nrl.navy.mil/projects.php?name=olsr"><I>nrlolsr</I></A></U></FONT>).
+ Future versions of <I>nrlsmf</I> will feature additional options to
+control the forwarding process and allow experiments with different
+algorithms and techniques.</P>
+<H1 CLASS="western">Downloads</H1>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">Source
+and binary distributions of <I>nrlsmf</I> will be made available at
+<FONT COLOR="#0000ff"><U><A HREF="http://downloads.pf.itd.nrl.navy.mil/smf">http://downloads.pf.itd.nrl.navy.mil/smf</A></U></FONT>.</P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">The
+source code is also maintained as a project entitled &quot;Simplified
+Multicast Forwarding&quot; with a CVS repository at
+<FONT COLOR="#0000ff"><U><A HREF="http://pf.itd.nrl.navy.mil/">http://pf.itd.nrl.navy.mil</A></U></FONT>.
+ Note that <I>nrlsmf</I> depends upon the NRL Protolib project and
+the Protolib code must be separately retrieved if the <I>nrlsmf</I>
+code is obtained via CVS.</P>
+<H1 CLASS="western">Build Instructions</H1>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">For
+Unix platforms, the &quot;smf/unix&quot; directory in the source tree
+contains Makefiles for different platforms.  Type:</P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in"><FONT FACE="Courier">make
+Makefile.&lt;ostype&gt; nrlsmf</FONT></P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">to
+build the <I>nrlsmf</I> binary executable.  
+</P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">For
+Win32 platforms (TBD) , a distribution of &quot;winpcap&quot; is
+required to build the <I>nrlsmf.exe</I> executable.  A Visual C++
+workspace (nrlsmf.dsw) and project files are provided in the
+&quot;smf/win32&quot; directory for building <I>nrlsmf.exe</I>.</P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">For
+WinCE (a.k.a. PocketPC) platforms, the &quot;RawEther&quot; library
+is required.  The Rawether development kit is a commercial product
+available from <FONT COLOR="#0000ff"><U><A HREF="http://www.rawether.net/">http://www.rawether.net</A></U></FONT>.
+ (Note we are able to provide a binary distribution of <I>nrlsmf.exe</I>
+for WinCE platforms including the required Rawether libraries).  A
+workspace (nrlsmf.vcw) and project files are provided for the
+Embedded Visual C++ compiler.</P>
+<H1 CLASS="western">Usage</H1>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">The
+nrlsmf program may be run as a stand-alone application to perform
+&quot;classic&quot; flooding</P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in"><FONT FACE="Courier"><FONT SIZE=2>nrlsmf
+interface &lt;ifaceName&gt; [ipv6][resequence
+{on|off}]<BR>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[defaultForward
+{on|off}][firewallForward {on|off]<BR>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[firewallCapture
+{on|off}][debug &lt;level&gt;][version]<BR>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[smfServer
+&lt;serverName&gt;][instance &lt;instanceName&gt;]</FONT></FONT></P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">where</P>
+<TABLE WIDTH=591 BORDER=1 BORDERCOLOR="#000000" CELLPADDING=7 CELLSPACING=0>
+	<COL WIDTH=226>
+	<COL WIDTH=335>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>interface
+			&lt;interfaceName&gt;</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">This specifies which
+			network interface will be monitored for packets and forwarded. 
+			The &lt;<U>interfaceName</U>&gt; name may be a canonical name
+			(e.g. &quot;eth0&quot;) or an IP address that has been assigned to
+			the desired interface.</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>defaultForward
+			{on|off}</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">When this option is
+			set to &quot;on&quot;, <I>all</I> received packets will be
+			forwarded (except those from &quot;blocked&quot; sources (see the
+			<I>mneBlock</I> command).  With duplicate packet detection, this
+			provides an implementation of &quot;classic&quot; broadcast
+			flooding (limited by TTL hop count).  Note this command may be
+			toggled &quot;on/off&quot; via the run-time <I>nrlsmf</I>
+			remote-control interface to dynamically control forwarding
+			behavior.  And &quot;<U>smfServer</U>&quot; process may wish to
+			control <I>nrlsmf</I> this way for relay set algorithms where
+			forwarding does not depend upon previous-hop information.</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>ipv6</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">This option enables
+			IPv6 support.  Specifically, it enables interception of outbound
+			IPv6 packets the <I>resequence</I> option is enabled.</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>resequence
+			{on|off}</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">When set &quot;on&quot;,
+			this option causes <I>nrlsmf</I> to intercept outbound multicast
+			packets and &quot;resequence&quot; the IPv4 &quot;id&quot; header
+			field, or apply an IPv6 hop-by-hop sequence option header.</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>firewallForward
+			{on | off}</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">When set &quot;on&quot;,
+			this option causes <I>nrlsmf</I> to transmit any forwarded packets
+			through the IP stack (via the firewall) instead of the default
+			behavior of raw Ethernet frames.  This enables firewall rules, QoS
+			filters, etc. to be applied to outbound packets forwarded by
+			<I>nrlsmf</I>.  (Note the &quot;firewallForward on&quot; behavior
+			_may_ become default for <I>nrlsmf</I> in the future.)</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>firewallCapture
+			{on | off}</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">When set &quot;on&quot;,
+			this option causes <I>nrlsmf</I> to capture incoming packets to
+			potentially forward via the firewall _instead_ of the default
+			behavior of capturing frames via system &quot;packet sniffing&quot;
+			facilities.  The advantage of this option is that inbound packet
+			firewall rules might be applied to packets.  The disadvantage is
+			that SMF previous-hop (source-based) multicast relay (e.g., S-MPR)
+			may not be used since the previous-hop MAC source address
+			information is sometimes not available via the system firewall
+			interface.  (The current <I>nrlsmf</I> implementation always
+			forwards via the firewall when <U>firewallCapture</U> is enabled. 
+			This will be remedied in a future version).</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>firewall
+			{on | off}</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">This is a shortcut
+			command equivalent to invoking both the <U><FONT SIZE=2><FONT FACE="Courier">firewallForward</FONT></FONT></U>
+			and <U><FONT SIZE=2><FONT FACE="Courier">firewallCapture</FONT></FONT></U>
+			commands simultaneously.</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>debug
+			&lt;level&gt;</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">Increasing &lt;<U>level</U>&gt;
+			values allow additional debugging information to be output while
+			running.</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>instance
+			&lt;instanceName&gt;</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">This establishes an
+			alternative &quot;name&quot; for the <I>nrlsmf</I> process which
+			is used for interprocess communication.  The default
+			&lt;<U>instanceName</U>&gt; is &quot;<FONT FACE="Courier">nrlsmf</FONT>&quot;.</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>smfServer
+			&lt;serverName&gt;</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">This instructs
+			<I>nrlsmf</I> to inform (via interprocess communication) a
+			specific server process of its presence, implicitly requesting any
+			current configuration from the named process.  The default
+			<I>&lt;</I><U>serverName</U><I>&gt;</I> name queried at <I>nrlsmf</I>
+			startup is &quot;nrlolsr&quot;, unless an alternate &lt;<U>serverName</U>&gt;
+			is given.  Note that with <I>defaultForward</I> set&quot;on&quot;,
+			<I>nrlsmf</I> can run as a &quot;stand-alone&quot; application
+			without requiring additional routing information.</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>version</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">This instructs
+			<I>nrlsmf</I> to display version information and exit.</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>background</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">This instructs
+			<I>nrlsmf</I> to run as a &quot;background&quot; process without a
+			console or debug window (Win32/WinCE only).</P>
+		</TD>
+	</TR>
+</TABLE>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">Note
+the combination of &quot;defaultForward off&quot; and an empty
+&quot;forwardMac&quot; list (see below) results in no packet
+forwarding.  In this case, the &quot;defaultForward&quot; command may
+be toggled from &quot;off&quot; to &quot;on&quot; and vice versa via
+the &quot;Remote Control&quot; interface (see below) to control
+&quot;classic flooding&quot; operation.</P>
+<H2 CLASS="western">Example Usage:</H2>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">On
+Linux, nrlsmf may be instantiated as follows to work in conjunction
+with nrlolsr and provide resequencing of IP &quot;id&quot; fields:</P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in"><FONT FACE="Courier">nrlsmf
+interface eth1 resequence on</FONT></P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">On
+WinCE or Win32 the syntax could be:</P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in"><FONT FACE="Courier">nrlsmf
+interface 192.168.1.101</FONT></P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">In
+the Linux example, the interface named &quot;eth1&quot; is presumed
+to be a wireless interface for MANET and in the Win32, the interface
+can be identified by its IP address.  Packet &quot;resequencing&quot;
+is not currently supported on Win32/WinCE platforms, but these
+platforms generally provide appropriate sequencing in the first
+place.  This will be addressed in future releases.</P>
+<H2 CLASS="western">Remote Control Interface</H2>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">The
+<I>nrlsmf</I> application provides an interprocess communication
+&quot;remote control&quot; interface for receiving run-time
+instructions from other processes.  The &quot;remote control&quot;
+interface is identified by a canonical name.  The default name used
+by <I>nrlsmf</I> is, strangely enough, &quot;<FONT FACE="Courier">nrlsmf</FONT>&quot;.
+ However, an alternative name can be specified using the <I>instance</I>
+command-line option described above.  This might be useful if
+multiple <I>nrlsmf</I> instances are required to cover multiple
+network interfaces.</P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">On
+UNIX systems, the &lt;<U>instanceName</U>&gt; corresponds to a
+Unix-domain datagram socket named &quot;<FONT FACE="Courier">/tmp/&lt;instanceName&gt;</FONT>&quot;
+that is opened and monitored for commands (thus the default <I>nrlsmf</I>
+Unix-domaind socket would be identified as &quot;<FONT FACE="Courier">/tmp/nrlsmf</FONT>&quot;).
+ On WIN32 systems, a &quot;mailslot&quot; named
+&quot;<FONT FACE="Courier">\\.\mailslot\&lt;instanceName&gt;</FONT>&quot;
+is  created and used while on WinCE systems a semaphore is
+instantiated along with a corresponding registry entry mapping to a
+locally-bound socket provides equivalent functionality.</P>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">Note
+that all of the command-line options described above can be issued to
+<I>nrlsmf</I> via its remote control interface at run-time.  This
+even includes the instance command which will cause <I>nrlsmf</I> to
+begin listening for commands on a possibly  alternate named
+interface.  In addition to the commands described above, some
+additional commands are available only through the remote control
+interface.  These include:</P>
+<TABLE WIDTH=591 BORDER=1 BORDERCOLOR="#000000" CELLPADDING=7 CELLSPACING=0>
+	<COL WIDTH=226>
+	<COL WIDTH=335>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>smfServerStart
+			&lt;serverName&gt;</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">This informs <I>nrlsmf</I>
+			that a remote server has started with its own remote control
+			interface of &lt;<U>serverName</U>&gt;.  Controlling processes
+			should use this command instead of the &quot;smfServer&quot;
+			command describe above as a command-line option.  At this time,
+			<I>nrlsmf</I> does not issue any commands to remote servers other
+			than &quot;smfClientStart &lt;instanceName&gt;&quot;, which is
+			done in response to the &quot;<I>smfServer</I>&quot; command
+			above.  Future <I>nrlsmf</I> features may require richer
+			interaction with the controller or use this interface for
+			statistics reporting to the controller.</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>forwardMac
+			&lt;binaryMacAddrs&gt;</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">This command informs
+			<I>nrlsmf</I> of the set of source MAC addresses for which it
+			should forward multicast packets.  This is applicable only when
+			<I>defaultForward</I> is &quot;off&quot;.  This &lt;<U>binaryMacAddrs</U>&gt;
+			is a concatenated byte array of 6-byte MAC addresses in network
+			(Big Endian) byte order.</P>
+		</TD>
+	</TR>
+	<TR VALIGN=TOP>
+		<TD WIDTH=226>
+			<P CLASS="western" STYLE="margin-top: 0.08in"><FONT FACE="Courier"><FONT SIZE=2>mneBlock
+			&lt;binaryMacAddrs&gt;</FONT></FONT></P>
+		</TD>
+		<TD WIDTH=335>
+			<P CLASS="western" STYLE="margin-top: 0.08in">This command is used
+			to provide <I>nrlsmf</I> with a list of source MAC address whose
+			transmitted packets it should completely ignore.  The intended use
+			of this command is for testing in NRL's original Mobile Network
+			Emulation (MNE) environment, but  could be leverage for other
+			purposes.  It is only available, if <I>nrlsmf</I> is compiled with
+			the C macro &quot;MNE_SUPPORT&quot; defined.  As with the
+			forwardMac command, the &lt;<U>binaryMacAddrs</U>&gt; is a
+			concatenated byte array of 6-byte MAC addresses in network (Big
+			Endian) byte order.</P>
+		</TD>
+	</TR>
+</TABLE>
+<P CLASS="western" STYLE="margin-top: 0.08in; margin-bottom: 0in">This
+document will be updated as the <I>nrlsmf</I> code evolves.</P>
+</BODY>
+</HTML>

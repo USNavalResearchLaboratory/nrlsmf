@@ -1,0 +1,72 @@
+#########################################################################
+# COMMON PROTOLIB MAKEFILE STUFF
+#
+
+SHELL=/bin/sh
+
+.SUFFIXES: .cpp $(.SUFFIXES)
+
+PROTOLIB = ../protolib
+COMMON = ../common
+UNIX = ../unix
+NS = ../ns
+
+INCLUDES = $(SYSTEM_INCLUDES) -I$(UNIX) -I$(COMMON) -I$(PROTOLIB)/common -I$(PROTOLIB)/manet
+
+CFLAGS = -g -DMNE_SUPPORT -DPROTO_DEBUG -DUNIX -D_FILE_OFFSET_BITS=64 -O -fPIC $(SYSTEM_HAVES) $(INCLUDES)
+
+LDFLAGS = $(SYSTEM_LDFLAGS)
+
+LIBS = $(SYSTEM_LIBS) -lm -lpthread
+
+TARGETS = nrlsmf
+
+# Rule for C++ .cpp extension
+.cpp.o:
+	$(CC) -c $(CFLAGS) -o $*.o $*.cpp
+
+all:	nrlsmf
+
+# SMF depends upon the NRL Protean Group's development library
+LIBPROTO = $(PROTOLIB)/unix/libProtokit.a
+$(PROTOLIB)/unix/libProtokit.a: 
+	cd $(PROTOLIB)/unix; $(MAKE) -f Makefile.$(SYSTEM) libProtokit.a
+    
+NRLSMF_SRC = $(COMMON)/nrlsmf.cpp $(COMMON)/smf.cpp \
+	$(COMMON)/smfDupTree.cpp $(COMMON)/smfWindow.cpp  $(SYSTEM_SRC) \
+	$(PROTOLIB)/common/protoPkt.cpp $(PROTOLIB)/common/protoPktIP.cpp
+   
+NRLSMF_OBJ = $(NRLSMF_SRC:.cpp=.o)
+
+nrlsmf:    $(NRLSMF_OBJ) $(LIBPROTO)
+	$(CC) $(CFLAGS) -o $@ $(NRLSMF_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
+
+PSEND_SRC = $(COMMON)/psend.cpp $(SYSTEM_SRC) \
+	$(PROTOLIB)/common/protoPkt.cpp $(PROTOLIB)/common/protoPktIP.cpp
+   
+PSEND_OBJ = $(PSEND_SRC:.cpp=.o)
+
+psend:    $(PSEND_OBJ) $(LIBPROTO)
+	$(CC) $(CFLAGS) -o $@ $(PSEND_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
+    
+NT_SRC = $(COMMON)/nt.cpp $(PROTOLIB)/manet/manetMsg.cpp 
+NT_OBJ = $(NT_SRC:.cpp=.o)
+
+nt:    $(NT_OBJ) $(LIBPROTO)
+	$(CC) $(CFLAGS) -o $@ $(NT_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
+
+GT_SRC = $(COMMON)/gt.cpp $(PROTOLIB)/manet/manetGraph.cpp $(COMMON)/protoGraph.cpp 
+GT_OBJ = $(GT_SRC:.cpp=.o)
+
+gt:    $(GT_OBJ) $(LIBPROTO)
+	$(CC) $(CFLAGS) -o $@ $(GT_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO) 
+           
+clean:	
+	rm -f *.o $(COMMON)/*.o $(NS)/*.o ../wx/*.o *.a \
+        nrlsmf $(PROTOLIB)/*/*.o $(PROTOLIB)/unix/*.a   
+
+# DO NOT DELETE THIS LINE -- mkdep uses it.
+# DO NOT PUT ANYTHING AFTER THIS LINE, IT WILL GO AWAY.
+
+
+
