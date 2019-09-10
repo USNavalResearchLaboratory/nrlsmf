@@ -37,9 +37,9 @@ SYSTEM_LIBS =  -lresolv -lpcap
 #
 
 SYSTEM_HAVES = -DMACOSX -DHAVE_IPV6 -DHAVE_ASSERT -DHAVE_GETLOGIN -DHAVE_FLOCK \
--D_FILE_OFFSET_BITS=64 -DHAVE_DIRFD -DSOCKLEN_T=int
+-D_FILE_OFFSET_BITS=64 -DHAVE_DIRFD -DSOCKLEN_T=int -DUSE_SELECT
 
-SYSTEM_SRC = ../protolib/src/unix/bpfCap.cpp ../protolib/src/bsd/bsdDetour.cpp 
+SYSTEM_SRC = ../protolib/src/unix/bpfCap.cpp ../protolib/src/unix/unixVif.cpp ../protolib/src/bsd/bsdDetour.cpp 
 
 # The "SYSTEM" keyword can be used for dependent makes
 SYSTEM = macosx

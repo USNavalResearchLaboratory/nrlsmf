@@ -62,8 +62,11 @@ SYSTEM_LIBS = -ldl -lnetfilter_queue
 # (We export these for other Makefiles as needed)
 #
 
+
 SYSTEM_HAVES = -DLINUX -DHAVE_IPV6 -DHAVE_GETLOGIN -D_FILE_OFFSET_BITS=64 -DHAVE_LOCKF \
--DHAVE_OLD_SIGNALHANDLER -DHAVE_DIRFD -DHAVE_ASSERT -DNO_SCM_RIGHTS -DHAVE_SCHED
+-DHAVE_OLD_SIGNALHANDLER -DHAVE_DIRFD -DHAVE_ASSERT -DNO_SCM_RIGHTS -DHAVE_SCHED -DUNIX \
+-DUSE_SELECT -DUSE_TIMERFD -DUSE_EVENTFD -DHAVE_PSELECT
+
 
 #
 # Note, for Linux, we can use either "../protolib/common/pcapCap.cpp" 
@@ -71,7 +74,7 @@ SYSTEM_HAVES = -DLINUX -DHAVE_IPV6 -DHAVE_GETLOGIN -D_FILE_OFFSET_BITS=64 -DHAVE
 #
 
 #SYSTEM_SRC = ../protolib/src/common/pcapCap.cpp
-SYSTEM_SRC = ../protolib/src/linux/linuxCap.cpp ../protolib/src/linux/linuxDetour.cpp
+SYSTEM_SRC = ../protolib/src/linux/linuxCap.cpp ../protolib/src/unix/unixVif.cpp ../protolib/src/linux/linuxDetour.cpp
 
 SYSTEM = linux
 

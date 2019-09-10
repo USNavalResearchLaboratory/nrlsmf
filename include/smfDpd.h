@@ -42,6 +42,11 @@
 // Both the "window" (sequence) and "table" lookup approaches to DPD use 
 // "flows" to detect duplicate packets on a per-flow basis
 
+// TBD - this code should be updated to use the more current ProtoTreeTemplate
+//       classes, etc.  For example, the current ProtoTree allows for
+//       variable length entries that were not supported when the code below
+//       was written.  
+
 
 class SmfFlow : public ProtoTree::Item
 {
@@ -269,7 +274,7 @@ class SmfDpdTable : public SmfDpd
                 
                 void Prune(unsigned int             currentTime,
                            unsigned int             ageMax,
-                           ProtoTree::ItemPool**  poolArray = NULL)
+                           ProtoTree::ItemPool**    poolArray = NULL)
                     {pkt_id_table.Prune(currentTime, ageMax, poolArray);}
               
                 void EmptyToPool(ProtoTree::ItemPool** poolArray)

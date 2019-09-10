@@ -13,7 +13,7 @@ SmfQueue::SmfQueue(const ProtoAddress&  dst,
                    const ProtoAddress&  src,
                    ProtoPktIP::Protocol proto,
                    UINT8                trafficClass)
- : queue_length(0)
+ : queue_limit(0), queue_length(0), priority_index(NULL)
 {
     unsigned int len = 0;
     if (dst.IsValid())
@@ -38,6 +38,71 @@ SmfQueue::SmfQueue(const ProtoAddress&  dst,
 SmfQueue::~SmfQueue()
 {
 }
+
+// The methods here implement a FIFO queue with two levels of 
+// priority.  The "priority_index" is the current "Last Out"
+// packet of the higher priority. (Note a high priority packet
+// can push a lower one out if there is a queue limit)
+bool SmfQueue::EnqueuePacket(SmfPacket& pkt, bool prioritize, SmfPacket::Pool* pool)
+{
+    if (prioritize)
+    {
+        if ((queue_limit >= 0) && (queue_length >= queue_limit))
+        {
+            if (GetHead() != priority_index)
+            {
+                // priority packet will bump non-priority packet
+                SmfPacket* drop = RemoveHead();
+                queue_length--;
+                if (NULL != pool)
+                    pool->Put(*drop);
+                else
+                    delete drop;
+            }
+            else
+            {
+                // full of priority packets
+                return false;
+            }
+        }   
+        if (NULL != priority_index)
+        {
+            Insert(pkt, *priority_index);
+            priority_index = &pkt;
+        }
+        else
+        {
+            Append(pkt);
+            priority_index = &pkt;
+        }
+    }
+    else if ((queue_limit < 0) || (queue_length < queue_limit))
+    {
+        Prepend(pkt);
+    }
+    else
+    {
+        return false;
+    }
+    queue_length++;
+    return true;
+}  // end SmfQueue::EnqueuePacket()
+
+SmfPacket* SmfQueue::PreviewPacket()
+{
+    return GetTail();
+}  // end SmfQueue::PreviewPacket()
+
+SmfPacket* SmfQueue::DequeuePacket()
+{
+    SmfPacket* pkt = RemoveTail();
+    if (NULL == pkt)
+        return NULL;
+    else if (priority_index == pkt)
+        priority_index = NULL;  // was last priority pkt
+    queue_length--;
+    return pkt;
+}  // end SmfQueue::DequeuePacket()
 
 
 ////////////////////////////////////

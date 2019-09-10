@@ -7,11 +7,12 @@ SHELL=/bin/sh
 .SUFFIXES: .cpp $(.SUFFIXES)
 
 PROTOLIB = ../protolib
-COMMON = ../common
-UNIX = ../unix
+COMMON = ../src/common
+UNIX = ../makefiles
+INCLUDE = ../include
 NS = ../ns
 
-INCLUDES = $(SYSTEM_INCLUDES) -I$(UNIX) -I$(COMMON) -I$(PROTOLIB)/include
+INCLUDES = $(SYSTEM_INCLUDES) -I$(UNIX) -I$(INCLUDE) -I$(PROTOLIB)/include
 
 CFLAGS = -g -DMNE_SUPPORT -DPROTO_DEBUG -DUNIX -D_FILE_OFFSET_BITS=64 -O -fPIC $(SYSTEM_HAVES) $(INCLUDES)
 
@@ -30,11 +31,11 @@ all:	nrlsmf
 # SMF depends upon the NRL Protean Group's development library
 LIBPROTO = $(PROTOLIB)/lib/libprotokit.a
 $(PROTOLIB)/lib/libprotokit.a: 
-	cd $(PROTOLIB)/makefiles; $(MAKE) -f Makefile.$(SYSTEM) libprotokit.a
+	cd $(PROTOLIB)/makefiles; $(MAKE) -f Makefile.$(FOOBAR) libprotokit.a
     
 NRLSMF_SRC = $(COMMON)/nrlsmf.cpp $(COMMON)/smf.cpp $(COMMON)/smfDpd.cpp \
 	$(COMMON)/smfHash.cpp $(COMMON)/smfHashMD5.cpp $(COMMON)/smfHashSHA1.cpp \
-	$(COMMON)/smfQueue.cpp $(SYSTEM_SRC)
+	$(SYSTEM_SRC)
    
 NRLSMF_OBJ = $(NRLSMF_SRC:.cpp=.o)
 
@@ -42,27 +43,25 @@ nrlsmf:    $(NRLSMF_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o $@ $(NRLSMF_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
 
 PSEND_SRC = $(COMMON)/psend.cpp $(SYSTEM_SRC) \
-	$(PROTOLIB)/common/protoPkt.cpp $(PROTOLIB)/common/protoPktIP.cpp
+	$(PROTOLIB)/src/common/protoPkt.cpp $(PROTOLIB)/src/common/protoPktIP.cpp
    
 PSEND_OBJ = $(PSEND_SRC:.cpp=.o)
 
 psend:    $(PSEND_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o $@ $(PSEND_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
     
-NT_SRC = $(COMMON)/nt.cpp $(PROTOLIB)/manet/manetMsg.cpp 
+NT_SRC = $(COMMON)/nt.cpp $(PROTOLIB)/src/manet/manetMsg.cpp 
 NT_OBJ = $(NT_SRC:.cpp=.o)
 nt:    $(NT_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o $@ $(NT_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
         
     
-NHDP_SRC = $(COMMON)/nhdpTest.cpp $(COMMON)/nhdp.cpp \
-	 $(PROTOLIB)/src/manet/manetMsg.cpp $(PROTOLIB)/src/manet/manetGraph.cpp \
-	 $(PROTOLIB)/src/common/protoGraph.cpp
+NHDP_SRC = $(COMMON)/nhdpTest.cpp $(COMMON)/nhdp.cpp $(PROTOLIB)/src/manet/manetMsg.cpp 
 NHDP_OBJ = $(NHDP_SRC:.cpp=.o)
 nhdp:    $(NHDP_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o $@ $(NHDP_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
 
-GT_SRC = $(COMMON)/gt.cpp $(PROTOLIB)/common/protoGraph.cpp \
+GT_SRC = $(COMMON)/gt.cpp $(PROTOLIB)/src/common/protoGraph.cpp \
 	$(PROTOLIB)/manet/manetGraph.cpp 
 GT_OBJ = $(GT_SRC:.cpp=.o)
 gt:    $(GT_OBJ) $(LIBPROTO)

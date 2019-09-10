@@ -6,10 +6,16 @@
   <articleinfo>
     <title><inlinemediaobject>
         <imageobject>
-          <imagedata align="center" fileref="smfLogo.png" scale="30"
-                     valign="middle"></imagedata>
+          <imagedata align="left" fileref="resources/smfLogo.png" scale="25"
+                     valign="middle"/>
         </imageobject>
-      </inlinemediaobject> <emphasis>nrlsmf</emphasis> User's Guide</title>
+      </inlinemediaobject> <emphasis>nrlsmf</emphasis> User's
+    Guide<inlinemediaobject>
+        <imageobject>
+          <imagedata align="right" fileref="resources/ProteanLogo.png"
+                     scale="30" valign="top"/>
+        </imageobject>
+      </inlinemediaobject></title>
 
     <titleabbrev><emphasis>nrlsmf</emphasis> User's Guide</titleabbrev>
 
@@ -84,16 +90,38 @@
 
     <para><informalexample>
         <programlisting><?dbfo keep-together="always"?>nrlsmf [ipv6][resequence {on|off}][nhdp &lt;ifaceList&gt;]
+       [add [&lt;group&gt;,]{cf|smpr|ecds|push|rpush|merge|rmerge},&lt;ifaceList&gt;]
+       [remove {&lt;group&gt; | [&lt;group&gt;,]&lt;ifaceList&gt;}   
        [cf &lt;ifaceList&gt;][smpr &lt;ifaceList&gt;][ecds &lt;ifaceList&gt;]
        [push &lt;srcIface&gt;,&lt;dstIfaceList&gt;][rpush &lt;srcIface&gt;,&lt;dstIfaceList&gt;]
        [merge &lt;ifaceList&gt;][rmerge &lt;ifaceList&gt;]
        [clear {&lt;ifaceList&gt;|all}]
        [unpush &lt;srcIface&gt;,&lt;dstIfaceList&gt;][unmerge &lt;srcIface&gt;,&lt;dstIfaceList&gt;]
        [forward {on|off}][relay {on|off}]
+       [unicast {unicastPrefix | off}]
+       [dscpCapture &lt;dscpValue&gt;,&lt;dscpValueList&gt;]
        [hash &lt;algorithm&gt;][idpd {on | off}][window {on|off}]
        [firewallForward {on|off}][firewallCapture {on|off}]
        [tap &lt;tapInstanceName&gt;]
-       [instance &lt;instanceName&gt;][debug &lt;debugLevel&gt;][log &lt;logFile&gt;</programlisting>
+       [instance &lt;instanceName&gt;][debug &lt;debugLevel&gt;][log &lt;logFile&gt;
+
+nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
+       [add [&lt;group&gt;,]{cf|smpr|ecds|push|rpush|merge|rmerge},&lt;ifaceList&gt;]
+       [remove {&lt;group&gt; | [&lt;group&gt;,]&lt;ifaceList&gt;}
+       [cf &lt;ifaceList&gt;][smpr &lt;ifaceList&gt;][ecds &lt;ifaceList&gt;]
+       [push &lt;srcIface&gt;,&lt;dstIfaceList&gt;] [rpush &lt;srcIface&gt;,&lt;dstIfaceList&gt;]
+       [merge &lt;ifaceList&gt;][rmerge &lt;ifaceList&gt;]
+       [forward {on|off}][relay {on|off}][delayoff &lt;value&gt;]
+       [device &lt;vifName&gt;,&lt;ifaceName&gt;[,&lt;addr&gt;[/&lt;maskLen&gt;][,&lt;addr2&gt;[/&lt;maskLen&gt;] ...]]]
+       [rate [&lt;iface&gt;,]&lt;bits/sec&gt;][queue [&lt;iface&gt;,]&lt;queueLimit&gt;]
+       [unicast {unicastPrefix | off}]
+       [dscpCapture &lt;dscpValue&gt;,&lt;dscpValueList&gt;]
+       [dscpRelease &lt;dscpValue&gt;,&lt;dscpValueList&gt;]
+       [ihash &lt;algorithm&gt;][hash &lt;algorithm&gt;]
+       [idpd {on | off}][window {on | off}]
+       [instance &lt;instanceName&gt;][smfServer &lt;serverName&gt;]
+       [resequence {on|off}][ttl &lt;value&gt;][boost {on|off}]
+       [debug &lt;debugLevel&gt;][log &lt;debugLogFile&gt;]</programlisting>
       </informalexample></para>
 
     <sect2 id="ExampleUsage">
@@ -220,9 +248,9 @@
       <title>Operating Mode Commands</title>
 
       <tgroup cols="2">
-        <colspec colname="Command" colwidth="1*" />
+        <colspec colname="Command" colwidth="1*"/>
 
-        <colspec colname="Description" colwidth="2.5*" />
+        <colspec colname="Description" colwidth="2.5*"/>
 
         <tbody>
           <row>
@@ -443,6 +471,29 @@
           </row>
 
           <row>
+            <entry><literal>unicast {unicastPrefix | off}</literal></entry>
+
+            <entry>Specify an IP prefix of unicast packets that will be
+            intercepted by <emphasis>nrlsmf</emphasis>. These packets are
+            captured through an <emphasis>iptables</emphasis> rule and follow
+            the regular processing path of multicast packets, including DPD
+            checks, and ECDS. This command assumes that the unicast packets
+            will be processed by a separate process that interacts with
+            <emphasize>nrlsmf</emphasize> through the
+            <emphasize>tap</emphasize> mechanism.</entry>
+          </row>
+
+          <row>
+            <entry><literal>dscpCapture
+            &lt;dscpValue&gt;,&lt;dscpValueList&gt;</literal></entry>
+
+            <entry>Specify a list of DSCP values for unicast packets that will
+            be intercepted by <emphasis>nrlsmf</emphasis>. This command
+            assumes that a <emphasize>unicast</emphasize> command is also
+            being used.</entry>
+          </row>
+
+          <row>
             <entry><literal>debug &lt;debugLevel&gt;</literal></entry>
 
             <entry>Sets the <emphasis>nrlsmf</emphasis> debug level. The
@@ -483,21 +534,39 @@
       <title>MANET Interface Commands</title>
 
       <tgroup cols="2">
-        <colspec colname="Command" colwidth="1*" />
+        <colspec colname="Command" colwidth="1*"/>
 
-        <colspec colname="Description" colwidth="2.5*" />
+        <colspec colname="Description" colwidth="2.5*"/>
 
         <tbody>
           <row>
-            <entry><literal>nhdp {on|off},&lt;ifaceList&gt;</literal></entry>
+            <entry><literal>add
+            [&lt;group&gt;,]{cf|smpr|ecds|...},&lt;ifaceList&gt;</literal></entry>
 
-            <entry>Enables/disables NHDP protocol on the listed network
-            interfaces. The <literal>"on"</literal> or
-            "<literal>off"</literal> keyword enables or disables,
-            respectively, NHDP operation for the subsequent listed interfaces.
-            The &lt;ifaceList&gt; is a comma-delimited (no spaces) list of
-            interface names for which NHDP protocol activity should be
-            enabled.</entry>
+            <entry>Creates a new interface group or adds interfaces to an
+            existing group and configures the group for a specific relay
+            algorithm (e.g., <literal>cf</literal>, <literal>smpr</literal>,
+            <literal>ecds</literal>) or a "<literal>push</literal>",
+            "<literal>rpush</literal>", "<literal>merge</literal>", or
+            "<literal>rmerge</literal>" gateway interface group can also be
+            managed instead of an SMF relay algorithm. Note if the
+            <literal>&lt;group&gt;</literal> name is omitted, an implicit
+            group name based on the relay algorithm or given gateway command
+            is used.</entry>
+          </row>
+
+          <row>
+            <entry><literal>remove {&lt;group&gt; |
+            [&lt;group&gt;,],&lt;ifaceList}</literal></entry>
+
+            <entry>Removes either an entire <literal>&lt;group&gt;</literal>
+            or the given <literal>&lt;ifaceList&gt;</literal> interfaces from
+            a specific <literal>&lt;group&gt;</literal> or from all groups if
+            the <literal>&lt;group&gt;</literal> name is omitted. The
+            <literal>&lt;group&gt;</literal> name should be that of an
+            explicit group name previous created with the
+            <command>add</command> command or the implicit relay algorithm or
+            gateway mode.</entry>
           </row>
 
           <row>
@@ -534,25 +603,35 @@
           </row>
 
           <row>
-            <entry><literal>clear {&lt;ifaceList&gt; | all}</literal></entry>
-
-            <entry>Remove <emphasis>any</emphasis> forwarding associations for
-            the listed (or "all") interfaces. The
-            <literal>&lt;ifaceList&gt;</literal> is a comma-delimited (no
-            spaces) list of interface names. Note that forwarding association
-            are bi-directionally removed with this command for all pairs of
-            interfaces listed, including the implicit
-            self-association.</entry>
-          </row>
-
-          <row>
             <entry><literal>relay {on | off}</literal></entry>
 
             <entry>This command controls the <emphasis>nrlsmf</emphasis>
             status as a relay for interfaces that have E-CDS forwarding
             enabled. Note that S-MPR relay status is controlled by the
             selector MAC address list supplied to <emphasis>nrlsmf</emphasis>
-            during run-time. (default = "off"</entry>
+            during run-time. (default = "off")</entry>
+          </row>
+
+          <row>
+            <entry><literal>device
+            &lt;vifName&gt;,&lt;ifaceName&gt;[,&lt;addrList
+            ...&gt;]</literal></entry>
+
+            <entry>This command ...</entry>
+          </row>
+
+          <row>
+            <entry><literal>rate
+            [&lt;ifaceName&gt;,]&lt;bits/sec&gt;</literal></entry>
+
+            <entry>This command ...</entry>
+          </row>
+
+          <row>
+            <entry><literal>queue
+            [&lt;ifaceName&gt;,]&lt;queueLimit&gt;</literal></entry>
+
+            <entry>This command ...</entry>
           </row>
         </tbody>
       </tgroup>
@@ -576,9 +655,9 @@
       <title>Gateway Commands</title>
 
       <tgroup cols="2">
-        <colspec colname="Command" colwidth="1*" />
+        <colspec colname="Command" colwidth="1*"/>
 
-        <colspec colname="Description" colwidth="2.5*" />
+        <colspec colname="Description" colwidth="2.5*"/>
 
         <tbody>
           <row>
@@ -644,28 +723,6 @@
             "<literal>resequence</literal>" command that applies to
             locally-generated IP Multicast packets.</entry>
           </row>
-
-          <row>
-            <entry><literal>unpush
-            &lt;srcIface&gt;,&lt;dstIfaceList&gt;</literal></entry>
-
-            <entry>Remove forwarding associations from the given
-            &lt;srcIface&gt; to the listed destination interfaces. The
-            <literal>&lt;dstIfaceList&gt;</literal> is a comma-delimited (no
-            spaces) list of interface names.</entry>
-          </row>
-
-          <row>
-            <entry><literal>unmerge &lt;ifaceList&gt;</literal></entry>
-
-            <entry>Remove forwarding association from each listed interface to
-            all other interfaces listed. This does not remove any
-            self-associations (such as is setup with the MANET relay commands
-            <literal>cf</literal>, <literal>smpr</literal>,
-            <literal>ecds</literal>, etc). The
-            <literal>&lt;ifaceList&gt;</literal> is a comma-delimited (no
-            spaces) list of interface names.</entry>
-          </row>
         </tbody>
       </tgroup>
     </table>
@@ -690,9 +747,9 @@
         <title>Remote-only Commands</title>
 
         <tgroup cols="2">
-          <colspec colname="Command" colwidth="1*" />
+          <colspec colname="Command" colwidth="1*"/>
 
-          <colspec colname="Description" colwidth="2.5*" />
+          <colspec colname="Description" colwidth="2.5*"/>
 
           <tbody>
             <row>
@@ -746,7 +803,7 @@
 
             <row xreflabel="smfPkt">
               <entry><literal xreflabel="">smfPkt &lt;binary packet
-              info&gt;<anchor id="smfPkt" /></literal></entry>
+              info&gt;<anchor id="smfPkt"/></literal></entry>
 
               <entry>This interprocess message is generated by
               <emphasis>nrlsmf</emphasis> and sent via "remote control
@@ -762,7 +819,7 @@
       </table></para>
 
     <sect2>
-      <title><anchor id="smfPktFormat" />The "smfPkt" Command Format</title>
+      <title><anchor id="smfPktFormat"/>The "smfPkt" Command Format</title>
 
       <para>The "<literal>smfPkt</literal>" command is used to pass packets
       to/from <emphasis>nrlsmf</emphasis> and external processes. This allows

@@ -11,17 +11,46 @@
 #include <stdio.h>   // for sprintf()
 #include <stdlib.h>  // for rand(), srand()
 
+void
+PrintRoutes(ManetGraph::DijkstraTraversal* dijkstra)
+{
+    dijkstra->TreeWalkReset();
+    //while (NULL != (iface = dijkstra.TreeWalkNext()))
+    ManetGraph::Interface* iface;
+    while (NULL != (iface = dijkstra->TreeWalkNext()))
+    {
+    //    TRACE("next iface %s next hop is ",iface->GetAddress().GetHostString());
+    //    if(dijkstra->GetNextHop(*iface)!=NULL)
+    //            TRACE("%s with cost %f\n",dijkstra->GetNextHop(*iface)->GetAddress().GetHostString(),dijkstra->GetCost(*iface)->GetValue());
+    //    else
+    //        TRACE("self\n");
+    }
+}
+void
+PrintDelta(struct timeval& startTime, struct timeval& stopTime)
+{
+    double deltaTime = 1000.0 * (stopTime.tv_sec - startTime.tv_sec);
+    if (stopTime.tv_usec > startTime.tv_usec )
+        deltaTime += 1.0e-03 * (double)(stopTime.tv_usec - startTime.tv_usec);
+    else
+        deltaTime -= 1.0e-03 * (double)(stopTime.tv_usec - startTime.tv_usec);
+    
+    TRACE("deltaTime = %lf msec\n", deltaTime);
+}
+
 int main(int argc, char* argv[])
 {
     struct timeval currentTime;
     ProtoSystemTime(currentTime);
-    srand(currentTime.tv_usec);
+    //srand(currentTime.tv_usec);
+    srand(1);
     
     ManetGraph theGraph;
     ManetGraph::Node* srcNode;
     
     // Add N nodes to theGraph
-    const int NUM_NODES = 100;
+    const int NUM_NODES = 600;
+    //const int NUM_NODES = 60000;
     TRACE("gt: Adding %d nodes to graph ...\n", NUM_NODES);
     for (int i = 0 ; i < NUM_NODES; i++)
     {
@@ -45,6 +74,9 @@ int main(int argc, char* argv[])
 #ifdef MESH
     // Randomly connect nodes until topology is fully connected
     TRACE("gt:  building random mesh ...\n");
+    int count = 0;
+    bool doRandomWheel = true;
+    //while(count!=60030)
     while (1)        
     {
         double cv = rand() % 2 + 1;
@@ -52,6 +84,8 @@ int main(int argc, char* argv[])
         ManetGraph::SimpleCostDouble linkCost(cv);
         int a = rand() % NUM_NODES;
         int b = rand() % NUM_NODES;
+        if(doRandomWheel)
+            b = (count++) % NUM_NODES;
         if (a == b) continue;
         char host[32];
         sprintf(host, "192.168.%d.%d", a/256, a%256);
@@ -79,9 +113,10 @@ int main(int argc, char* argv[])
         {
             ifaceCount++;
         }
-        //TRACE("   ifaceCount : %d\n", ifaceCount);
+        TRACE("   ifaceCount : %d\n", ifaceCount);
         if (ifaceCount == NUM_NODES) break;
     }
+    TRACE("%d is count\n",count);
 #else    
     // Build an ordered pyramid 
     TRACE("gt:  building pyramid ...\n");
@@ -117,63 +152,80 @@ int main(int argc, char* argv[])
     ManetGraph::SimpleCostDouble maxCost;
     maxCost.Minimize();
     ProtoGraph::Vertice::SimpleList q;
+    ProtoAddress addr;
+    addr.ResolveFromString("192.168.0.0");
+    ManetGraph::Interface* iface0 = theGraph.FindInterface(addr);
+    ASSERT(NULL != iface0);
+
+    addr.ResolveFromString("192.168.0.4");
+    ManetGraph::Interface* iface4 = theGraph.FindInterface(addr);
+    ASSERT(NULL != iface4);
+
+    addr.ResolveFromString("192.168.0.5");
+    ManetGraph::Interface* iface5 = theGraph.FindInterface(addr);
+    iface5 = theGraph.FindInterface(addr);
+    ASSERT(NULL != iface5);
     
     // Do Dijkstra traversal and show "routing table"
     TRACE("gt: doing Dijkstra traversal ...\n");
     struct timeval startTime, stopTime;
-    ProtoSystemTime(startTime);
     ManetGraph::DijkstraTraversal dijkstra(theGraph, *srcNode);
-    ManetGraph::Interface* iface;
     
-    while (NULL != (iface = dijkstra.GetNextInterface()))
-    {
-        const ManetGraph::SimpleCostDouble* scost = dijkstra.GetCost(*iface);
-        //TRACE("   traversed to iface:%s cost:%lf ", iface->GetAddress().GetHostString(), scost->GetValue());
-        ManetGraph::Interface* nextHop = dijkstra.GetNextHop(*iface);
-        
-        //TRACE("nextHop:%s ", nextHop ? nextHop->GetAddress().GetHostString() : "(none)");
-        ManetGraph::Interface* prevHop = dijkstra.GetPrevHop(*iface);
-        //TRACE("prevHop:%s \n", prevHop ? prevHop->GetAddress().GetHostString() : "(none)"); 
-        
-        const ManetGraph::SimpleCostDouble* dstCost = static_cast<const ManetGraph::SimpleCostDouble*>(dijkstra.GetCost(*iface));
-        
-        if ((NULL != dstCost) && (*dstCost> maxCost)) 
-        {
-            maxCost = *dstCost;
-        }
-        q.Prepend(*iface); 
-    }
+    dijkstra.TraverseNodes(true);
+
+    ProtoSystemTime(startTime);
+    dijkstra.Update(*srcNode->GetDefaultInterface());
     ProtoSystemTime(stopTime);
+
+    PrintRoutes(&dijkstra);
+    TRACE("%s has a cost of %f\n",iface0->GetAddress().GetHostString(),dijkstra.GetCost(*iface0)->GetValue());
+    TRACE("%s has a cost of %f\n",iface4->GetAddress().GetHostString(),dijkstra.GetCost(*iface4)->GetValue());
+    TRACE("%s has a cost of %f\n",iface5->GetAddress().GetHostString(),dijkstra.GetCost(*iface5)->GetValue());
+
+    PrintDelta(startTime,stopTime);
+        
+    // Test ManetGraph::DijkstraTraversal::Update() path shorter 
+       
+    ManetGraph::SimpleCostDouble linkCost(2.0);
+    TRACE("connecting interface %s with ",iface0->GetAddress().GetHostString());
+    TRACE("%s\n",iface4->GetAddress().GetHostString());
+    theGraph.Connect(*iface0, *iface4, linkCost, true);
     
-    double deltaTime = 1000.0 * (stopTime.tv_sec - startTime.tv_sec);
-    if (stopTime.tv_usec > startTime.tv_usec )
-        deltaTime += 1.0e-03 * (double)(stopTime.tv_usec - startTime.tv_usec);
-    else
-        deltaTime -= 1.0e-03 * (double)(stopTime.tv_usec - startTime.tv_usec);
+    ProtoSystemTime(startTime);
+    dijkstra.Update(*iface0);
+    dijkstra.Update(*iface4);
+    ProtoSystemTime(stopTime);
+    PrintRoutes(&dijkstra);
+    TRACE("%s has a cost of %f\n",iface0->GetAddress().GetHostString(),dijkstra.GetCost(*iface0)->GetValue());
+    TRACE("%s has a cost of %f\n",iface4->GetAddress().GetHostString(),dijkstra.GetCost(*iface4)->GetValue());
+    TRACE("%s has a cost of %f\n",iface5->GetAddress().GetHostString(),dijkstra.GetCost(*iface5)->GetValue());
+
+    PrintDelta(startTime,stopTime);
     
-    TRACE("deltaTime = %lf msec\n", deltaTime);
-    
-    // Test ManetGraph::DijkstraTraversal::Update()
-    /*
-    ProtoAddress addr;
-    addr.ResolveFromString("192.168.0.12");
-    ManetGraph::Interface* ifaceA = theGraph.FindInterface(addr);
-    ASSERT(NULL != ifaceA);
-    addr.ResolveFromString("192.168.0.32");
-    ManetGraph::Interface* ifaceB = theGraph.FindInterface(addr);
-    ASSERT(NULL != ifaceB);
-    ManetGraph::SimpleCostDouble linkCost(1.0);
-    theGraph.Connect(*ifaceA, *ifaceB, linkCost, true);
-    dijkstra.Update(*ifaceA);
-    */
-    /*      
-    q.Empty();
-    dijkstra.TreeWalkReset();
-    while (NULL != (iface = dijkstra.TreeWalkNext()))
-    {
-        q.Prepend(*iface);
-    }
-    */
+    linkCost.SetValue(10.0);
+    TRACE("connecting interface %s with ",iface4->GetAddress().GetHostString());
+    TRACE("%s\n",iface5->GetAddress().GetHostString());
+    theGraph.Connect(*iface4, *iface5, linkCost, true);
+    //theGraph.Disconnect(*ifaceA, *ifaceB);
+
+    ProtoSystemTime(startTime);
+    dijkstra.Update(*iface4);
+    dijkstra.Update(*iface5);
+    ProtoSystemTime(stopTime);
+    PrintRoutes(&dijkstra);
+    PrintDelta(startTime,stopTime);
+
+    TRACE("Disconnecting interface %s with ",iface4->GetAddress().GetHostString());
+    TRACE("%s\n",iface5->GetAddress().GetHostString());
+    theGraph.Disconnect(*iface4,*iface5);
+    ProtoSystemTime(startTime);
+    dijkstra.Update(*iface4);
+    dijkstra.Update(*iface5);
+    ProtoSystemTime(stopTime);
+    PrintRoutes(&dijkstra);
+    PrintDelta(startTime,stopTime);
+
+    return 1;
     /*
     TRACE("performing bfs ...\n");     
     q.Empty();
@@ -197,6 +249,7 @@ int main(int argc, char* argv[])
     double yStep = (double)HEIGHT_MAX / (double)numLevels;
     //double y = yStep / 2.0;
     ProtoGraph::Vertice::SimpleList::Iterator queueIterator(q);
+    ManetGraph::Interface *iface;
     while (NULL != (iface = static_cast<ManetGraph::Interface*>(queueIterator.GetNextVertice())))
     {
         // 1) Count interfaces at this level  ...
@@ -244,9 +297,9 @@ int main(int argc, char* argv[])
     ManetGraph::InterfaceIterator ifaceIterator(theGraph);
     while (NULL != (iface = ifaceIterator.GetNextInterface()))
     {
-        ManetGraph::Interface::AdjacencyIterator linkIterator(*iface);
+        ManetGraph::AdjacencyIterator linkIterator(*iface);
         ManetGraph::Link* link;
-        while (NULL != (link = linkIterator.GetNextLink()))
+        while (NULL != (link = linkIterator.GetNextAdjacencyLink()))
         {
             ManetGraph::Interface* parent = dijkstra.GetPrevHop(*iface);   
             ManetGraph::Interface* dst = link->GetDst();

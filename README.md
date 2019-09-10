@@ -24,7 +24,7 @@ operating systems:  Linux, MacOS, BSD, Win32, and WinCE.
 
 Build Instructions 
 
-For Unix platforms, the "smf/unix" directory in the source
+For Unix platforms, the "nrlsmf/makefiles" directory in the source
 tree contains Makefiles for different platforms.  Type:
 
 make Makefile.<ostype> nrlsmf 
@@ -33,8 +33,8 @@ to build the nrlsmf binary executable.
 
 For Win32 platforms, a distribution of "winpcap" is
 required to build the nrlsmf.exe executable.  A Visual C++
-workspace (nrlsmf.dsw) and project files are provided in
-the "smf/win32" directory for building nrlsmf.exe. 
+solution (nrlsmf.sln) and project files are provided in
+the "makefiles/win32" directory for building nrlsmf.exe. 
 
 For WinCE (a.k.a. PocketPC) platforms, the "RawEther"
 library is required.  The Rawether development kit is a
