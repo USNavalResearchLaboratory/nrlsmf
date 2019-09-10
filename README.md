@@ -24,6 +24,10 @@ operating systems:  Linux, MacOS, BSD, Win32, and WinCE.
 
 Build Instructions 
 
+Requires Protolib:
+    https://www.nrl.navy.mil/itd/ncs/products/protolib
+    https://github.com/USNavalResearchLaboratory/protolib
+
 For Unix platforms, the "nrlsmf/makefiles" directory in the source
 tree contains Makefiles for different platforms.  Type:
 
