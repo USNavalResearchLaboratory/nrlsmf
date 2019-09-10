@@ -79,6 +79,7 @@ SYSTEM_SRC = ../protolib/src/linux/linuxCap.cpp ../protolib/src/unix/unixVif.cpp
 SYSTEM = linux
 
 CC = g++
+SYSTEM_CFLAGS = -Wall -Wcast-align -pedantic -fPIC
 RANLIB = ranlib
 AR = ar
 

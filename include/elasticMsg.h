@@ -6,13 +6,13 @@
 #include "protoAddress.h"
 
 // IMPORTANT NOTE:  This current ElasticAck message is an interim
-// format that is being used to validate functionality of the 
+// format that is being used to validate functionality of the
 // Elastic Routing extensions to "nrlsmf".  Eventually, a finalized
 // message format (likely based on the RFC 5444 "PacketBB" specification)
 
-// 
-//       0                   1                   2                   3
-//       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+//
+//       0               1               2               3               
+//       0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //      |S|P|C|R| atype | ulen  | utype |  protocol   |  traffic class  |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -52,14 +52,14 @@
 class ElasticAck : public ProtoPkt
 {
     public:
-        ElasticAck(UINT32*        bufferPtr = NULL, 
-                   unsigned int   bufferBytes = 0, 
+        ElasticAck(UINT32*        bufferPtr = NULL,
+                   unsigned int   bufferBytes = 0,
                    bool           freeOnDestruct = false);
         ~ElasticAck();
-        
+
         static const ProtoAddress ELASTIC_ADDR;  // 224.0.0.55
         static const UINT16 ELASTIC_PORT;        // 5555
-        
+
         enum AddressType
         {
             ADDR_INVALID = 0,
@@ -67,7 +67,7 @@ class ElasticAck : public ProtoPkt
             ADDR_IPV6,
             ADDR_ETHER
         };
-            
+
         enum Flag
         {
             FLAG_SOURCE     = 0x01,
@@ -175,5 +175,33 @@ class ElasticAck : public ProtoPkt
 };  // end class ElasticAck
 
 
+// Elastic ADV message flow item
+//
+//       0             1               2               3               4
+//       0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |                               |          DPD ID               |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |S|P|C|G| atype | ulen  | utype |  protocol   |  traffic class  |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |                                                               |
+//      +                       Destination Address                     +
+//      |                                                               |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |                                                               |
+//      +                         Source Address                        +
+//      |                                                               |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |                                                               |
+//      +                      [Advertiser Address]                     +
+//      |                                 ...                           |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//
+// FLAGS:
+//
+// S        : source addr present (1 bit)
+// P        : protocol type valid (1 bit)
+// C        : traffic class valid (1 bit)
+// R        : reserved flag (1 bit)
 
 #endif // !_ELASTIC_MSG

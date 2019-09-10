@@ -157,7 +157,7 @@ void SmfHashMD5::Finalize()
  */
 void SmfHashMD5::Transform()
 {
-    register UINT32 a, b, c, d;
+    UINT32 a, b, c, d;
 
     a = digest_buffer[0];
     b = digest_buffer[1];

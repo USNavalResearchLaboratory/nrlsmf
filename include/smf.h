@@ -6,10 +6,14 @@
 #include "smfQueue.h"    // for optional per-flow interface queues
 #include "protoTimer.h"
 #include "protoPktIP.h"  // (TBD) use something different for OPNET and/or ns-2?
+#include "protoPktETH.h"
 #include "protoQueue.h"
-
-#ifdef ELASTIC_MCAST
+#if defined(ELASTIC_MCAST) || defined(ADAPTIVE_ROUTING)
 #include "mcastFib.h"
+#ifdef ADAPTIVE_ROUTING
+#include "smartController.h"
+#include "smartForwarder.h"
+#endif // ADAPTIVE_ROUTING
 #endif // ELASTIC_MCAST
 
 #define SET_DSCP   1
@@ -21,6 +25,9 @@ class Smf
 #ifdef ELASTIC_MCAST
   : public ElasticMulticastForwarder
 #endif // ELASTIC_MCAST
+#ifdef ADAPTIVE_ROUTING
+  : public SmartForwarder
+#endif
 {
     public:
         enum RelayType
@@ -122,6 +129,7 @@ class Smf
                 unsigned int GetIndex() const
                     {return if_index;}
                 
+                // These are the hardware address
                 void SetInterfaceAddress(const ProtoAddress& ifAddr)
                     {if_addr = ifAddr;}
                 const ProtoAddress& GetInterfaceAddress() const
@@ -169,9 +177,19 @@ class Smf
                 
                 // For "tunnel" interface associations (no ttl decrement)
                 void SetTunnel(bool state)
-                    {tunnel = state;}
-                bool GetTunnel() const
-                    {return tunnel;}
+                    {is_tunnel = state;}
+                bool IsTunnel() const
+                    {return is_tunnel;}
+                
+                // Set to "true" for interfaces that provide their
+                // own underlying layer of multicast flooding/distribution
+                // "Layered" interfaces do the following:
+                // 1) They do _not_ self-associate (i.e. no retransmit of received packets on same interface)
+                // 2) The outbound DPD table is checked before forwarding (i.e. seen packets are not retransmitted)
+                void SetLayered(bool state)
+                    {is_layered = state;}
+                bool IsLayered() const
+                    {return is_layered;}
                 
                 void SetEncapsulation(bool state)
                     {ip_encapsulate = state;}
@@ -195,9 +213,24 @@ class Smf
                         Interface& GetInterface() const
                             {return target_iface;}
                         
+                        void SetRelayType(RelayType relayType)
+                            {relay_type = relayType;}
+                        RelayType GetRelayType() const
+                            {return relay_type;}
+                        void SetElasticMulticast(bool state)
+                            {elastic_mcast = state;}
+                        void SetAdaptiveRouting (bool state)
+                            {adaptive_routing = state;}
+                        bool GetElasticMulticast() const
+                            {return elastic_mcast;}
+                        bool GetAdaptiveRouting() const
+                            {return adaptive_routing;}
                     private:
                         InterfaceGroup& iface_group;
                         Interface&      target_iface;
+                        RelayType  relay_type;
+                        bool       elastic_mcast;
+                        bool        adaptive_routing;
                 };  // end class Smf::Interface::Associate
                 
                 class AssociateList : public ProtoSimpleQueueTemplate<Associate>
@@ -322,7 +355,8 @@ class Smf
                 ProtoAddressList    addr_list;     // list of IP addresses of the interface
                 ProtoAddress        ip_addr;       // used as source addr for IPIP encapsulation
                 bool                resequence;
-                bool                tunnel;
+                bool                is_tunnel;
+                bool                is_layered;
                 bool                ip_encapsulate;
                 ProtoAddress        encapsulation_link;  // MAC addr of next hop for encapsulated packets
                 SmfDpd*             dup_detector;
@@ -451,9 +485,9 @@ class Smf
                 bool GetResequence() const
                     {return resequence;}
                  void SetTunnel(bool state)
-                    {tunnel = state;}
-                bool GetTunnel() const
-                    {return tunnel;}
+                    {is_tunnel = state;}
+                bool IsTunnel() const
+                    {return is_tunnel;}
                 
                 // Elastic routing state variables
                 void SetElasticMulticast(bool state);
@@ -462,6 +496,9 @@ class Smf
                 void SetElasticUnicast(bool state);
                 bool GetElasticUnicast() const
                     {return elastic_ucast;}
+				void SetAdaptiveRouting(bool state);
+                bool GetAdaptiveRouting() const
+                    {return adaptive_routing;}
                 bool IsElastic() const
                     {return (elastic_mcast || elastic_ucast);}
                 
@@ -470,9 +507,10 @@ class Smf
                     forwarding_mode = group.forwarding_mode;
                     relay_type = group.relay_type;
                     resequence = group.resequence;
-                    tunnel = group.tunnel;
+                    is_tunnel = group.is_tunnel;
                     elastic_mcast = group.elastic_mcast;
                     elastic_ucast = group.elastic_ucast;
+					adaptive_routing = group.adaptive_routing;
                 }
                 
             private:
@@ -493,10 +531,11 @@ class Smf
                 Mode            forwarding_mode;
                 RelayType       relay_type;
                 bool            resequence;
-                bool            tunnel;
+                bool            is_tunnel;
                 bool            elastic_mcast;
                 bool            elastic_ucast;
-                
+                bool            adaptive_routing;
+				
         };  // end class Smf::InterfaceGroup
         
         class InterfaceGroupList : public ProtoTreeTemplate<InterfaceGroup>
@@ -510,9 +549,10 @@ class Smf
         // Notes:
         // 1) This decrements the ttl/hopLimit of the "ipPkt"
         // 2)
-        unsigned int ProcessPacket(ProtoPktIP& ipPkt, const ProtoAddress& srcMac, Interface& srcIface, 
-                                   unsigned int dstIfArray[], unsigned int dstIfArraySize);
-        
+         int ProcessPacket(ProtoPktIP& ipPkt, const ProtoAddress& srcMac, Interface& srcIface,
+                           unsigned int dstIfArray[], unsigned int dstIfArraySize, 
+                           ProtoPktETH& ethPkt, bool outbound = false, bool* recvDup = NULL);
+		unsigned int GetInterfaceList(Interface& srcIface, unsigned int dstIfArray[], int dstIfArrayLength);
         void SetRelayEnabled(bool state);
         bool GetRelayEnabled() const
             {return relay_enabled;}
@@ -521,6 +561,10 @@ class Smf
             {return relay_selected;}
         void SetUnicastEnabled(bool state)
             {unicast_enabled = state;}
+        void SetAdaptiveRouting(bool state)
+            {adaptive_routing = state;}
+        bool GetAdaptiveRouting() const
+            {return adaptive_routing;}
         bool GetUnicastEnabled() const
             {return unicast_enabled;}      
 	    void SetUnicastPrefix(const char* prefix)
@@ -599,7 +643,7 @@ class Smf
         InterfaceGroupList& AccessInterfaceGroupList()
             {return iface_group_list;}
         
-#ifdef ELASTIC_MCAST
+#if defined(ELASTIC_MCAST) || defined(ADAPTIVE_ROUTING)
         // required ElasticMulticastForwarder overrides
         bool SendAck(unsigned int           ifaceIndex, 
                      const ProtoAddress&    relayAddr,
@@ -634,6 +678,7 @@ class Smf
         bool                relay_enabled;
         bool                relay_selected;
         bool                unicast_enabled;
+        bool                adaptive_routing;
 	    char                unicast_prefix[24];
 	    char                dscp[256];
        

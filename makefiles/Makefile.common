@@ -15,7 +15,7 @@ INSTALLPREFIX ?= /usr/local
 
 INCLUDES = $(SYSTEM_INCLUDES) -I$(UNIX) -I$(INCLUDE) -I$(PROTOLIB)/include
 
-CFLAGS = -g -DMNE_SUPPORT -DPROTO_DEBUG -DUNIX -D_FILE_OFFSET_BITS=64 -O -fPIC $(SYSTEM_HAVES) $(INCLUDES)
+CFLAGS = -std=c++11 -g -DMNE_SUPPORT -DPROTO_DEBUG -DUNIX -D_FILE_OFFSET_BITS=64 -O -fPIC $(SYSTEM_CFLAGS) $(SYSTEM_HAVES) $(INCLUDES)
 
 LDFLAGS = $(SYSTEM_LDFLAGS)
 
@@ -31,9 +31,9 @@ all:	nrlsmf
 
 # SMF depends upon the NRL Protean Group's development library
 LIBPROTO = $(PROTOLIB)/lib/libprotokit.a
-$(PROTOLIB)/lib/libprotokit.a: 
+$(PROTOLIB)/lib/libprotokit.a:
 	cd $(PROTOLIB)/makefiles; $(MAKE) -f Makefile.$(SYSTEM) libprotokit.a
-    
+
 NRLSMF_SRC = $(COMMON)/nrlsmf.cpp $(COMMON)/smf.cpp $(COMMON)/smfDpd.cpp \
 	$(COMMON)/smfHash.cpp $(COMMON)/smfHashMD5.cpp $(COMMON)/smfHashSHA1.cpp \
 	$(COMMON)/smfQueue.cpp $(COMMON)/smfConfig.cpp $(SYSTEM_SRC)
@@ -45,40 +45,49 @@ nrlsmf:    $(NRLSMF_OBJ) $(LIBPROTO)
 
 # Builds "nrlsmf" with embedded experimental Elastic Multicast code
 ELASTIC_SRC = $(NRLSMF_SRC) $(COMMON)/mcastFib.cpp $(COMMON)/flowTable.cpp \
-	$(COMMON)/elasticMsg.cpp
+	$(COMMON)/elasticMsg.cpp $(COMMON)/r2dnMsg.cpp
 
 ELASTIC_OBJ = $(ELASTIC_SRC:.cpp=.o)
- 
+
 elastic: CFLAGS += -DELASTIC_MCAST
 elastic:	$(ELASTIC_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o nrlsmf $(ELASTIC_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
-    
+
+# Builds "nrlsmf" with embedded Smart Robust Routing (SRR) Code (for R2DN Program)
+ADAPTIVE_SRC = $(NRLSMF_SRC) $(COMMON)/mcastFib.cpp $(COMMON)/flowTable.cpp \
+	$(COMMON)/elasticMsg.cpp $(COMMON)/path.cpp $(COMMON)/r2dnMsg.cpp $(COMMON)/smartController.cpp $(COMMON)/smartForwarder.cpp
+
+ADAPTIVE_OBJ = $(ADAPTIVE_SRC:.cpp=.o)
+
+adaptive: CFLAGS += -DADAPTIVE_ROUTING
+adaptive:	$(ADAPTIVE_OBJ) $(LIBPROTO)
+	$(CC) $(CFLAGS) -o nrlsmf $(ADAPTIVE_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
 
 # Builds "fibTest" for testing MulticastFIB class
 FIB_SRC = $(COMMON)/fibTest.cpp $(COMMON)/mcastFib.cpp $(COMMON)/flowTable.cpp \
-	$(COMMON)/elasticMsg.cpp
+	$(COMMON)/elasticMsg.cpp $(COMMON)/r2dnMsg.cpp
 
 FIB_OBJ = $(FIB_SRC:.cpp=.o)
- 
+
 fibTest: CFLAGS += -DELASTIC_MCAST
 fibTest:	$(FIB_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o fibTest $(FIB_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
-    
+
 
 PSEND_SRC = $(COMMON)/psend.cpp $(SYSTEM_SRC) \
 	$(PROTOLIB)/src/common/protoPkt.cpp $(PROTOLIB)/src/common/protoPktIP.cpp
-   
+
 PSEND_OBJ = $(PSEND_SRC:.cpp=.o)
 
 psend:    $(PSEND_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o $@ $(PSEND_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
-    
-NT_SRC = $(COMMON)/nt.cpp $(PROTOLIB)/src/manet/manetMsg.cpp 
+
+NT_SRC = $(COMMON)/nt.cpp $(PROTOLIB)/src/manet/manetMsg.cpp
 NT_OBJ = $(NT_SRC:.cpp=.o)
 nt:    $(NT_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o $@ $(NT_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
-        
-    
+
+
 NHDP_SRC = $(COMMON)/nhdpTest.cpp $(COMMON)/nhdp.cpp \
 	 $(PROTOLIB)/src/manet/manetMsg.cpp $(PROTOLIB)/src/manet/manetGraph.cpp \
 	 $(PROTOLIB)/src/common/protoGraph.cpp
@@ -87,28 +96,28 @@ nhdp:    $(NHDP_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o $@ $(NHDP_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
 
 GT_SRC = $(COMMON)/gt.cpp $(PROTOLIB)/src/common/protoGraph.cpp \
-	$(PROTOLIB)/src/manet/manetGraph.cpp 
+	$(PROTOLIB)/src/manet/manetGraph.cpp
 GT_OBJ = $(GT_SRC:.cpp=.o)
 gt:    $(GT_OBJ) $(LIBPROTO)
-	$(CC) $(CFLAGS) -o $@ $(GT_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO) 
+	$(CC) $(CFLAGS) -o $@ $(GT_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
 
 TAP_SRC = $(COMMON)/tapExample.cpp
 TAP_OBJ = $(TAP_SRC:.cpp=.o)
 tapExample:    $(TAP_OBJ) $(LIBPROTO)
-	$(CC) $(CFLAGS) -o $@ $(TAP_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO) 
+	$(CC) $(CFLAGS) -o $@ $(TAP_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
 
 
 install:
 	mkdir -p $(INSTALLPREFIX)/bin
-	cp -p nrlsmf $(INSTALLPREFIX)/bin            
+	cp -p nrlsmf $(INSTALLPREFIX)/bin
 
-clean:	
+clean:
 	rm -f *.o $(COMMON)/*.o $(NS)/*.o ../wx/*.o *.a nrlsmf; \
-        cd $(PROTOLIB)/makefiles; $(MAKE) -f Makefile.$(SYSTEM) clean   
+        cd $(PROTOLIB)/makefiles; $(MAKE) -f Makefile.$(SYSTEM) clean
 
-smfclean:	
+smfclean:
 	rm -f *.o $(COMMON)/*.o $(NS)/*.o ../wx/*.o *.a nrlsmf;
-     
+
 # DO NOT DELETE THIS LINE -- mkdep uses it.
 # DO NOT PUT ANYTHING AFTER THIS LINE, IT WILL GO AWAY.
 
