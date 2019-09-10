@@ -4,7 +4,7 @@
 
 
 /* This variable carries the header into the object file */
-const char wlan_mac_smf_pr_c [] = "MIL_3_Tfile_Hdr_ 120A 30A op_runsim 7 45830DD5 45830DD5 1 wn12jh Jim@Hauser 0 0 none none 0 0 none 0 0 0 0 0 0 0 0 1042 1                                                                                                                                                                                                                                                                                                                                                                                                      ";
+const char wlan_mac_smf_pr_c [] = "MIL_3_Tfile_Hdr_ 120A 30A op_runsim 7 460A7545 460A7545 1 wn12jh Jim@Hauser 0 0 none none 0 0 none 0 0 0 0 0 0 0 0 10de 3                                                                                                                                                                                                                                                                                                                                                                                                      ";
 #include <string.h>
 
 
@@ -1949,7 +1949,7 @@ wlan_smf_data_arrival (Packet*	hld_pkptr, int	dest_addr)
 		char err_str[20];
 		wlan_hl_packet_drop (hld_pkptr, data_size);
 		sprintf (err_str,"  address: %d", my_address);
-		op_sim_message ("SMF forwarded packet dropped.", err_str); 
+		//op_sim_message ("SMF forwarded packet dropped.", err_str); 
 		FOUT; 
 		}
 		
@@ -6127,6 +6127,7 @@ wlan_data_process (Packet* seg_pkptr, int dest_addr, int sta_addr, int final_des
 				op_sar_buf_destroy (defrag_ptr->reassembly_buffer_ptr);					
 				op_prg_mem_free (defrag_ptr);
 				}
+			op_pk_destroy(seg_pkptr);
 			FOUT;
 			}
 		

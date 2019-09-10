@@ -51,28 +51,17 @@ void SmfDuplicateTree::Destroy()
         flow_list.Remove(*nextFlow);
         delete nextFlow;
     }
-    flow_tree.Destroy();
 }  // end SmfDuplicateTree::Destroy()
 
 bool SmfDuplicateTree::Init(UINT32 windowSize,       // in packets
                             UINT32 windowPastMax)    // in packets
 {
-    // This tree init currently handles single IPv4 arc addrs through 
-    // IPv6 src::dst::taggerID addr tuples as keys (IPv6 addr taggerID)
-    if (!flow_tree.Init(32, 384))
-    {
-        DMSG(0, "SmfDuplicateTree::Init() flow_tree init error: %s\n",
-                GetErrorString());
-        return false;
-    }
-    
+    Destroy();
     if (windowPastMax < windowSize)
     {
-        DMSG(0, "SmfDuplicateTree::Init() error: invalid windowPastMax value\n");
-        flow_tree.Destroy();
+        PLOG(PL_ERROR, "SmfDuplicateTree::Init() error: invalid windowPastMax value\n");
         return false;
     }
-    
     window_size = windowSize;
     window_past_max = windowPastMax;
     return true;
@@ -92,7 +81,7 @@ bool SmfDuplicateTree::IsDuplicate(unsigned int   currentTime,
         theFlow = new Flow();
         if (NULL == theFlow)
         {
-            DMSG(0,"SmfDuplicateTree::IsDuplicate() new PFlow() error: %s\n",
+            PLOG(PL_ERROR,"SmfDuplicateTree::IsDuplicate() new PFlow() error: %s\n",
                     GetErrorString());
             return true;  // returns true to be safe (but breaks forwarding)
         }
@@ -103,7 +92,7 @@ bool SmfDuplicateTree::IsDuplicate(unsigned int   currentTime,
                            window_size, 
                            window_past_max))
         {
-            DMSG(0,"SmfDuplicateTree::IsDuplicate() SmfSlidingWindow::Init() error\n");
+            PLOG(PL_ERROR,"SmfDuplicateTree::IsDuplicate() SmfSlidingWindow::Init() error\n");
             delete theFlow;
             return true;  // returns true to be safe (but breaks forwarding)
         }
@@ -157,38 +146,41 @@ SmfDuplicateTree::Flow::Flow()
 SmfDuplicateTree::Flow::~Flow()
 {
     window.Destroy();
-    if (NULL != key)
+    if (NULL != flow_id)
     {
-        delete[] key;
-        key = NULL;
+        delete[] flow_id;
+        flow_id = NULL;
     }
-    keysize = 0;
+    flow_id_size = 0;
 }
 
-bool SmfDuplicateTree::Flow::Init(const char*   theKey,
-                                  unsigned int  theKeysize,     // in bits
+bool SmfDuplicateTree::Flow::Init(const char*   flowId,
+                                  unsigned int  flowIdSize,     // in bits
                                   UINT8         seqNumSize,     // in bits
                                   UINT32        windowSize,     // in packets
                                   UINT32        windowPastMax)  // in packets
 {
-    unsigned int keyBytes = theKeysize >> 3;
-    if (0 != (theKeysize & 0x07)) keyBytes++;
-    char* keySpace = new char[keyBytes];
-    if (NULL == keySpace)
+    if (NULL != flow_id) delete[] flow_id;
+    unsigned int flowIdBytes = flowIdSize >> 3;
+    if (0 != (flowIdSize & 0x07)) flowIdBytes++;
+    flow_id = new char[flowIdBytes];
+    if (NULL == flow_id)
     {
-        DMSG(0, "SmfDuplicateTree::Flow::Init() new char[] error: %s\n", GetErrorString());
+        PLOG(PL_ERROR, "SmfDuplicateTree::Flow::Init() new flow_id error: %s\n", GetErrorString());
+        flow_id_size = 0;
         return false;
     }
-    memcpy(keySpace, theKey, keyBytes);
-    ProtoTree::Item::Init(keySpace, theKeysize);
+    memcpy(flow_id, flowId, flowIdBytes);
+    flow_id_size = flowIdSize;
     if (!window.Init(seqNumSize, windowSize, windowPastMax))
     {
-        delete[] key;
-        key = NULL;
-        keysize = 0;
-        DMSG(0, "SmfDuplicateTree::Flow::Init() error: DPD window bitmask init failed\n");
+        delete[] flow_id;
+        flow_id = NULL;
+        flow_id_size = 0;
+        PLOG(PL_ERROR, "SmfDuplicateTree::Flow::Init() error: DPD window bitmask init failed\n");
         return false;
     }
+    return true;
 }  // end  SmfDuplicateTree::Flow::Init()
 
 SmfDuplicateTree::FlowList::FlowList()
@@ -213,12 +205,6 @@ SmfSequenceMgr::~SmfSequenceMgr()
 
 bool SmfSequenceMgr::Init(UINT8 numSeqBits)
 {
-    // Init to handle single IPv4 addr thru Ipv6 src::dst addr concatenated key sizes
-    if (!flow_tree.Init(32, 256))
-    {
-        DMSG(0, "SmfSequenceMgr::Init() ProtoTree::Init() error: %s\n", GetErrorString());
-        return false;
-    }   
     seq_mask = 0xffffffff;
     if (numSeqBits < 32)
         seq_mask >>= (32 - numSeqBits);   
@@ -234,7 +220,6 @@ void SmfSequenceMgr::Destroy()
         flow_list.Remove(*nextFlow);
         delete nextFlow;
     }
-    flow_tree.Destroy();
 }  // end SmfSequenceMgr::Destroy()
 
 UINT32 SmfSequenceMgr::IncrementSequence(unsigned int        updateTime,
@@ -256,7 +241,7 @@ UINT32 SmfSequenceMgr::IncrementSequence(unsigned int        updateTime,
     }
     else
     {
-        DMSG(0, "SmfSequenceMgr::IncrementSequence() warning: NULL dstAddr?!\n");
+        PLOG(PL_ERROR, "SmfSequenceMgr::IncrementSequence() warning: NULL dstAddr?!\n");
         ASSERT(0);
     }
     addrBits <<= 3;
@@ -265,7 +250,7 @@ UINT32 SmfSequenceMgr::IncrementSequence(unsigned int        updateTime,
     {
         if (NULL == (flow = new Flow()))
         {
-            DMSG(0, "SmfSequenceMgr::IncrementSequence() new Item error: %s\n", GetErrorString());
+            PLOG(PL_ERROR, "SmfSequenceMgr::IncrementSequence() new Item error: %s\n", GetErrorString());
             return  (seq_global++ & seq_mask);
         }
         flow->Init(addrKey, addrBits);
@@ -308,29 +293,29 @@ SmfSequenceMgr::Flow::Flow()
 
 SmfSequenceMgr::Flow::~Flow()
 {
-    if (NULL != key)
+    if (NULL != flow_id)
     {
-        delete[] key;
-        key = NULL;
+        delete[] flow_id;
+        flow_id = NULL;
     }
-    keysize = 0;
+    flow_id_size = 0;
 }
 
-bool SmfSequenceMgr::Flow::Init(const char*  theKey, 
-                                unsigned int theKeysize)
+bool SmfSequenceMgr::Flow::Init(const char*  flowId, 
+                                unsigned int flowIdSize)
 {
-    if (NULL != key) delete[] key;
-    unsigned int keyBytes = theKeysize >> 3;
-    if (0 != (theKeysize & 0x07)) keyBytes++;
-    char* keySpace = new char[keyBytes];
-    if (NULL == keySpace)
+    if (NULL != flow_id) delete[] flow_id;
+    unsigned int flowIdBytes = flowIdSize >> 3;
+    if (0 != (flowIdSize & 0x07)) flowIdBytes++;
+    flow_id = new char[flowIdBytes];
+    if (NULL == flow_id)
     {
-        keysize = 0;
-        DMSG(0, "smfSequenceMgr::Flow::Init() new char[] error: %s\n", GetErrorString());
+        PLOG(PL_ERROR, "smfSequenceMgr::Flow::Init() new char[] error: %s\n", GetErrorString());
+        flow_id_size = 0;
         return false;
     }
-    memcpy(keySpace, theKey, keyBytes);
-    ProtoTree::Item::Init(keySpace, theKeysize);
+    memcpy(flow_id, flowId, flowIdBytes);
+    flow_id_size = flowIdSize;
     return true;
 }  // end SmfSequenceMgr::Flow::Init()
 

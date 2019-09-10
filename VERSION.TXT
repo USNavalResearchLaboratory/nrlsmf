@@ -1,10 +1,12 @@
                     nrlsmf Version History
 
-Version 1.1b2
+
+Version 1.2b1
 =============
-    - Some progress towards table-based DPD, etc
-    - Updated tarball with non-blocking linuxDetour and bsdDetour
-      (18 Oct 2007)
+    - Multiple bug fixes. (bugs with hashing DPD)
+      (Thanks to William Chao!)
+    - Tweaks to support WIN32 build of new SMF code
+    - Added "smfPkt" command support for external filtering/injection
 
 Version 1.1b1
 =============

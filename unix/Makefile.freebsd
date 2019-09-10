@@ -7,7 +7,8 @@
 #
 SYSTEM_INCLUDES =  
 SYSTEM_LDFLAGS =  
-SYSTEM_LIBS = -lc_r
+SYSTEM_LIBS = -pthread
+####SYSTEM_LIBS = -lc_r
 
 # 2) System specific capabilities
 # Must choose appropriate for the following:
@@ -41,10 +42,10 @@ SYSTEM_LIBS = -lc_r
 
 SYSTEM_HAVES =  -DHAVE_IPV6 -DHAVE_ASSERT -DHAVE_GETLOGIN -DHAVE_FLOCK -DHAVE_DIRFD $(DNETSEC)
 
-SYSTEM_SRC = bsdRouteMgr.cpp
+SYSTEM_SRC = ../protolib/src/bsd/bsdRouteMgr.cpp ../protolib/src/bsd/bsdDetour.cpp ../protolib/src/unix/bpfCap.cpp
 
 SYSTEM = freebsd
-CC = gcc
+CC = g++
 RANLIB = ranlib
 AR = ar
 

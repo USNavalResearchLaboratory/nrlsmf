@@ -48,7 +48,7 @@ enum SmfLinkStatus
     SMF_LINK_RESERVED  = 0,
     SMF_LINK_LOST      = 1,
     SMF_LINK_HEARD     = 2,
-    SMF_LINK_SYMMETRIC = 3   
+    SMF_LINK_SYMMETRIC = 3  
 };
 
 int main(int argc, char* argv[])
@@ -58,28 +58,40 @@ int main(int argc, char* argv[])
     srand(currentTime.tv_usec);
     
     // 1) Test the generic pkt, msg, tlv stuff
+    TRACE("Building  a packet ...\n");
     
     // a) Instantiate an "ManetPkt" from the stack
     UINT32 buffer[PACKET_SIZE_MAX/4];
     ManetPkt pkt;
     if (!pkt.InitIntoBuffer(buffer, PACKET_SIZE_MAX)) TRACE("ManetPkt::Init() error\n");
     
+    
+    // Add a pkt-tlv
+    TRACE("adding tlv to packet ...\n");
+    ManetTlv* tlv = pkt.AppendTlv(SMF_TLV_RTR_PRIORITY);
+    
     // b) Append a message to the pkt (multiple messages may go in an ManetPkt)
     //    (Note: the msg pointer returned here is invalid after another message is appended!)
+    TRACE("adding message to packet ...\n");
     ManetMsg* msg = pkt.AppendMessage();
-    if (NULL == msg)
-        TRACE("ManetPkt::AppendMessage() error\n");
+    if (NULL == msg) TRACE("ManetPkt::AppendMessage() error\n");
+    
     // c) Set msg header fields
     msg->SetType(SMF_HELLO);
     ProtoAddress myAddr;
     myAddr.ResolveFromString("192.168.1.1");
     msg->SetOriginator(myAddr);
     
-    TRACE("adding a message tlv ...\n");
-    // d) Append any message tlv's ...
-    ManetTlv* tlv = msg->AppendTlv(SMF_TLV_RELAY_ALGORITHM, 0);
+    TRACE("adding a message tlv : type:%u len:2...\n", SMF_TLV_RELAY_ALGORITHM);
+    // d) Append a message tlv ...
+    tlv = msg->AppendTlv(SMF_TLV_RELAY_ALGORITHM);
     UINT8 relayAlgorithm = (UINT8)SMF_RELAY_SMPR;
-    tlv->SetValue((char*)&relayAlgorithm, 1);  // set TLV value
+    tlv->SetValue(relayAlgorithm);  // set TLV value
+    
+    // Append another message tlv
+    TRACE("adding a message tlv : type:%u len:1...\n", SMF_TLV_HELLO_INTERVAL);
+    tlv = msg->AppendTlv(SMF_TLV_HELLO_INTERVAL);
+    tlv->SetValue((UINT16)2);  // set TLV value
     
     TRACE("adding an address block ...\n");
     // e) Add an address block 
@@ -90,108 +102,124 @@ int main(int argc, char* argv[])
     TRACE("setting address block head ...\n");
     ProtoAddress prefix;
     prefix.ResolveFromString("192.168.1.0");
-    if (!addrBlk->SetHead(prefix, 3))
-        TRACE("addrBlk.SetHead() error\n");
+    if (!addrBlk->SetHead(prefix, 2)) TRACE("addrBlk.SetHead() error\n");
+    TRACE("setting address block tail ...\n");
+    prefix.ResolveFromString("192.168.1.1");
+    if (!addrBlk->SetTail(prefix, 1)) TRACE("addrBlk.SetHead() error\n");
     
-    // For testing, we add a batch of addresses w/ link status & willingness tlv's for each
+    // For testing, we add a batch of addresses w/ link status & "willingness" tlv's
+    // (Note that we build the tlv's into separate buffers to parallelize addr blk/tlv building)
+    
+    // This one will be a "multi-value" tlv
     UINT8 tlvType = (UINT8)SMF_TLV_LINK_STATUS;
-    UINT8 tlvSemantics = (UINT8)ManetTlv::MULTIVALUE;
-    UINT32* linkStatusTlvBuffer[256];
+    UINT32 linkStatusTlvBuffer[256];
     ManetTlv linkStatusTlv;
-    linkStatusTlv.InitIntoBuffer(tlvType, tlvSemantics, (char*)linkStatusTlvBuffer, 256*sizeof(UINT32));
-    linkStatusTlv.SetIndexRange(0, 7); 
+    linkStatusTlv.InitIntoBuffer(tlvType, (char*)linkStatusTlvBuffer, 256*sizeof(UINT32));
+    linkStatusTlv.SetIndexRange(0, 7, true); 
     
+    // This one will be a "single-value" tlv applied to a subset of addresses
     tlvType = (UINT8)SMF_TLV_RELAY_WILLING;
-    tlvSemantics = (UINT8)ManetTlv::MULTIVALUE;
-    UINT32* willingnessTlvBuffer[256];
+    UINT32 willingnessTlvBuffer[256];
     ManetTlv willingnessTlv;
-    willingnessTlv.InitIntoBuffer(tlvType, tlvSemantics, (char*)willingnessTlvBuffer, 256*sizeof(UINT32));
-    willingnessTlv.SetIndexRange(0, 7);         
+    willingnessTlv.InitIntoBuffer(tlvType, (char*)willingnessTlvBuffer, 256*sizeof(UINT32));
+    willingnessTlv.SetIndexRange(2, 5, false);         
+    willingnessTlv.SetValue((UINT8)2);
                         
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i <= 7; i++)
     {
         char addrString[32];
-        sprintf(addrString, "192.168.1.%d", i+2);
+        sprintf(addrString, "192.168.%d.1", i+2);
         ProtoAddress neighbor;
         neighbor.ResolveFromString(addrString);
         addrBlk->AppendAddress(neighbor);  // should check result
+        // We apply a separate tlv value to each address
+        // (Note these could be applied to a subset 
+        //  of the addresses if desired)
         UINT8 linkStatus;
         if (0 == (i & 0x01))
             linkStatus = SMF_LINK_HEARD;
         else
             linkStatus = SMF_LINK_SYMMETRIC;
         linkStatusTlv.SetValue(linkStatus, i);
-        willingnessTlv.SetValue((UINT8)i, i);
     }
-    
+    // Copy the "pre-built" tlv's into the address block
     if (!addrBlk->AppendTlv(linkStatusTlv))
         TRACE("ManetAddrBlk::AppendTlv(linkStatusTlv) error\n");
     if (!addrBlk->AppendTlv(willingnessTlv))
         TRACE("ManetAddrBlk::AppendTlv(willingnessTlv) error\n");
     
-    // Identify all nodes in block as MPRs (no index needed)
-    tlv = addrBlk->AppendTlv(SMF_TLV_MPR_SELECT, ManetTlv::NO_INDEX);
+    //  Add a non-indexed tlv to address block
+    tlv = addrBlk->AppendTlv(SMF_TLV_MPR_SELECT);
     if (NULL == tlv)
         TRACE("ManetAddrBlk::AppendTlv() error\n");
     if (!tlv->SetValue((UINT8)1))  // set value to TRUE
         TRACE("ManetTlv::SetValue() error\n");
     
-    /*
+    
     // Add another address block for testing purposes
     addrBlk = msg->AppendAddressBlock();
     if (NULL == addrBlk) 
         TRACE("ManetMsg::AppendAddressBlock() error\n");
-    
     prefix.ResolveFromString("192.168.2.0");
     if (!addrBlk->SetHead(prefix, 3))
         TRACE("addrBlk.SetHead() error\n");
-    
     // For testing, we add a batch of addresses
     for (int i = 2; i < 6; i++)
     {
         char addrString[32];
-        sprintf(addrString, "192.168.1.%d", i);
+        sprintf(addrString, "192.168.2.%d", i);
         ProtoAddress neighbor;
         neighbor.ResolveFromString(addrString);
         addrBlk->AppendAddress(neighbor);  
-    }*/
+    }
     
     // f) Finally, "pack" the packet to finalize structure
     TRACE("finalizing packet ...\n");
     pkt.Pack();
-    
-    TRACE("pkt build completed, len:%d (mtype:%d)\n", pkt.GetLength(), msg->GetType());
+    TRACE("Packet build completed, len:%d (mtype:%d)\n\n\n", pkt.GetLength(), msg->GetType());
     
     // OK, let's parse a "received" packet using sent "buffer" and "pktLen"
+    TRACE("Parsing \"recvPkt\" ...\n");
     UINT16 pktLen = pkt.GetLength();
     ManetPkt recvPkt;  // "received" packet in "buffer" already ...
-    if (!recvPkt.InitFromBuffer(pktLen, buffer, PACKET_SIZE_MAX))
+    if (!recvPkt.InitFromBuffer(pktLen, buffer, pktLen))
         TRACE("recvPkt.InitFromBuffer() error\n");
+    
+    
+    // Iterate through any packet TLVs
+    ManetPkt::TlvIterator pktTlvIterator(recvPkt);
+    ManetTlv recvTlv;
+        
+    while (pktTlvIterator.GetNextTlv(recvTlv))    
+        TRACE("   got pkt-tlv, type:%u len:%lu\n", recvTlv.GetType(), recvTlv.GetTlvLength());
+    
+    
     
     // Iterate through messages ...
     ManetPkt::MsgIterator iterator(recvPkt);
     ManetMsg recvMsg;
     while (iterator.GetNextMessage(recvMsg, ProtoAddress::IPv4))
     {
-        ProtoAddress origin;
-        recvMsg.GetOriginator(origin);
-        TRACE("Got message, type:%d len:%d origin:%s\n", 
-              recvMsg.GetType(), recvMsg.GetLength(), origin.GetHostString());
+        TRACE("Got message, type:%d len:%d ", recvMsg.GetType(), recvMsg.GetLength());
+        if (recvMsg.HasOriginator())
+        {
+            ProtoAddress origin;
+            recvMsg.GetOriginator(origin);
+            TRACE("origin:%s", origin.GetHostString());
+        }
+        TRACE("\n");
         
         // Iterate through any message tlv's ...
         ManetMsg::TlvIterator iterator(recvMsg);
-        ManetTlv recvTlv;
         while (iterator.GetNextTlv(recvTlv))
-        {
-            TRACE("   got msg-tlv, type = %d\n", recvTlv.GetType());
-        }
+            TRACE("   got msg-tlv, type:%u len:%lu\n", recvTlv.GetType(), recvTlv.GetTlvLength());
         
-        // Iterate through any address blocks
+        // Iterate through any address blocks in the message
         ManetMsg::AddrBlockIterator addrBlkIterator(recvMsg);
         ManetAddrBlock recvAddrBlock;
         while (addrBlkIterator.GetNextAddressBlock(recvAddrBlock))
         {
-            TRACE("   got addr block w/ %d addresses\n", recvAddrBlock.GetAddressCount());
+            TRACE("   got addr block w/ %d addresses (len:%u)\n", recvAddrBlock.GetAddressCount(), recvAddrBlock.GetLength());
             // Iterate through addresses in this block
             unsigned int addrCount = recvAddrBlock.GetAddressCount();
             for (unsigned int i = 0; i < addrCount; i++)
@@ -223,13 +251,15 @@ int main(int argc, char* argv[])
                                 {
                                     UINT8 status;
                                     recvTlv.GetValue(status, i);
-                                    TRACE("         (link status = %d)\n", status);
+                                    //TRACE("         (link status = %d)\n", status);
+                                    break;
                                 }   
                                 case SMF_TLV_RELAY_WILLING:
                                 {
                                     UINT8 willingness;
                                     recvTlv.GetValue(willingness, i);
-                                    TRACE("         (willingness = %d)\n", willingness);
+                                    //TRACE("         (willingness = %d)\n", willingness);
+                                    break;
                                 }   
                                 default:
                                     break;
@@ -238,8 +268,8 @@ int main(int argc, char* argv[])
                     }
                     else
                     {
-                       TRACE("      got indexed single-value addr-block-tlv, type = %d\n", 
-                             recvTlv.GetType());
+                       TRACE("      got indexed single-value addr-block-tlv, type = %d index range = %u:%u\n", 
+                             recvTlv.GetType(), recvTlv.GetIndexStart(), recvTlv.GetIndexStop());
                     }
                 }
                 else
@@ -250,7 +280,7 @@ int main(int argc, char* argv[])
             }
         }
     }
-    TRACE("receive packet parsing completed\n");
+    TRACE("Receive packet parsing completed.\n");
     
     return 0;
 }  // end main()

@@ -69,15 +69,15 @@ class SmfDuplicateTree
                 Flow();
                 ~Flow();
                 
-                bool Init(const char*         key,
-                          unsigned int        keylen,         // in bits
+                bool Init(const char*         flowId,
+                          unsigned int        flowIdSize,     // in bits
                           UINT8               seqNumSize,     // in bits
                           UINT32              windowSize,     // in packets
                           UINT32              windowPastMax); // in packets
                 
-                const char* GetKey() const {return key;}
+                const char* GetKey() const {return flow_id;}
                 
-                unsigned int GetKeysize() const {return keysize;}
+                unsigned int GetKeysize() const {return flow_id_size;}
                 
                 bool IsDuplicate(UINT32 seqNum)
                     {return window.IsDuplicate(seqNum);}
@@ -97,6 +97,8 @@ class SmfDuplicateTree
                 Flow* GetNext() {return next;}
                 
             private:
+                char*               flow_id;
+                unsigned int        flow_id_size;
                 SmfSlidingWindow    window; 
                 unsigned int        update_time;
                 
@@ -182,8 +184,8 @@ class SmfSequenceMgr
                 bool Init(const char*  theKey,
                           unsigned int theKeylen);
                 
-                const char* GetKey() const {return key;}
-                unsigned int GetKeysize() const {return keysize;}
+                const char* GetKey() const {return flow_id;}
+                unsigned int GetKeysize() const {return flow_id_size;}
                 
                 void SetSequence(UINT32 value)
                     {sequence = value;}
@@ -207,6 +209,8 @@ class SmfSequenceMgr
                     {return next;}
                 
             private:
+                char*         flow_id;
+                unsigned int  flow_id_size;
                 UINT32        sequence;
                 unsigned int  update_time;
                 Flow*         prev;

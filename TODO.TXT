@@ -1,0 +1,20 @@
+THE PLAN
+--------
+
+
+1) Refactor nrlsmf packet handling to abstract packet processing from capture/intercept device.
+   Basically, an SmfInterface() should be notified of inbound packets.  And there would be two
+   SmfInterface outbound packet handling procedures so that outbound packet resequencing and/or
+   mirroring (i.e., to other interfaces) is done as needed.
+   
+   a) Added "HandleInboundPacket()" method to SmfApp that does common forwarding steps
+      regardless of packet capture/intercept.  Next step is to add the SmfDevice option
+      for packet I/O and use this ... then move on to think about unicast forwarding.
+   
+2) Introduce the SMF "device" as an alternative packet I/O mechanism.
+
+3) Add filters for which traffic should and should not be "mirrored"?  E.g., some existing protocol
+   daemons such as mDNS, may already work on multiple interfaces. I suspect this would be true for
+   anything using link local multicast so that may be a default filter rule observed.
+   
+   

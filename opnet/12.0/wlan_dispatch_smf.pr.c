@@ -4,7 +4,7 @@
 
 
 /* This variable carries the header into the object file */
-const char wlan_dispatch_smf_pr_c [] = "MIL_3_Tfile_Hdr_ 120A 30A op_runsim 7 45830DD3 45830DD3 1 wn12jh Jim@Hauser 0 0 none none 0 0 none 0 0 0 0 0 0 0 0 1042 1                                                                                                                                                                                                                                                                                                                                                                                                      ";
+const char wlan_dispatch_smf_pr_c [] = "MIL_3_Tfile_Hdr_ 120A 30A op_runsim 7 460A7540 460A7540 1 wn12jh Jim@Hauser 0 0 none none 0 0 none 0 0 0 0 0 0 0 0 10de 3                                                                                                                                                                                                                                                                                                                                                                                                      ";
 #include <string.h>
 
 

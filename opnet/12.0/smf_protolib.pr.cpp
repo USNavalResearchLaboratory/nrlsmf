@@ -4,7 +4,7 @@
 
 
 /* This variable carries the header into the object file */
-const char smf_protolib_pr_cpp [] = "MIL_3_Tfile_Hdr_ 120A 30A op_runsim 7 45830DD3 45830DD3 1 wn12jh Jim@Hauser 0 0 none none 0 0 none 0 0 0 0 0 0 0 0 1042 1                                                                                                                                                                                                                                                                                                                                                                                                      ";
+const char smf_protolib_pr_cpp [] = "MIL_3_Tfile_Hdr_ 120A 30A modeler 7 461BEDE2 461BEDE2 1 wn12jh Jim@Hauser 0 0 none none 0 0 none 0 0 0 0 0 0 0 0 10de 3                                                                                                                                                                                                                                                                                                                                                                                                        ";
 #include <string.h>
 
 
@@ -347,7 +347,7 @@ OpnetSmfProcess::~OpnetSmfProcess()
 bool OpnetSmfProcess::OnStartup(int argc, const char*const* argv)
 	{
 	FIN (OnStartup(argc,argv));
-    if (!duplicate_tree.Init(seq_word_size, window_size, window_past_max))
+    if (!duplicate_tree.Init(window_size, window_past_max))
 		{
         DMSG(0, "nrlsmf: error initializing duplicate_tree\n");
         FRET (OPC_FALSE);
@@ -395,7 +395,7 @@ void OpnetSmfProcess::OnPktReceive(smfT_wlan_mem* mem)
 	InetT_Address				dest_netaddr = INETC_ADDRESS_INVALID;
 	IpT_Address					src_ip4addr;
 	IpT_Address					dest_ip4addr;
-	int							ttl;
+	int							ttl = -1;
 	int							version = 0;
 	Packet*						ip_pkptr;
 	Packet*						transport_pkptr;
@@ -439,6 +439,10 @@ void OpnetSmfProcess::OnPktReceive(smfT_wlan_mem* mem)
 			version = 6;
 		/* Store the destinaton address also.					*/
 		dest_netaddr = inet_address_copy (ip_dgram_fd_ptr->dest_addr);
+		}
+	else
+		{
+		
 		}
 	
 	
@@ -604,10 +608,10 @@ void OpnetSmfProcess::OnPktReceive(smfT_wlan_mem* mem)
     //srcMac.SetRawHostAddress(ProtoAddress::SIM, (char*)&mem->tx_addr, MAC_ADDR_LEN);
 	srcMac.SimSetAddress(mem->tx_addr);
 	// JPH 3/2/06 - receive side duplicate filtering
-	UINT32 sequence = ip_dgram_fd_ptr->ident;
+	UINT32 pktId = ip_dgram_fd_ptr->ident;
 	bool hasSeq = OPC_TRUE;
 	if (duplicate_filtering)
-		mem->is_duplicate = duplicate_tree.IsDuplicate(srcIp, sequence, current_update_time);
+		mem->is_duplicate = duplicate_tree.IsDuplicate(current_update_time, pktId, 32, srcIp.GetRawHostAddress(), 32);
         
     // 5) Should we forward this packet? (Based on source MAC addr and forwarding policy)
     bool forward = default_forward;
@@ -679,7 +683,7 @@ void OpnetSmfProcess::OnPktReceive(smfT_wlan_mem* mem)
 					FOUT;
 					}
 				}
-			else if (duplicate_tree.IsDuplicate(srcIp, sequence, current_update_time))
+			else if (duplicate_tree.IsDuplicate(current_update_time, pktId, 32, srcIp.GetRawHostAddress(), 32))
 				{
                 dups_count++;
 	        	op_pk_destroy(ip_pkptr);  // don't forward duplicate packets
@@ -759,9 +763,10 @@ void OpnetSmfProcess::OnPktReceive(smfT_wlan_mem* mem)
 
 		sent_count++;	// This counts packets that SMF attempts to forward.
 		mem->forward = forward;  // JPH - Let wlan_mac_smf parent process do forwarding.
-		op_pk_destroy(ip_pkptr);
-		FOUT;
 		}
+	
+	op_pk_destroy(ip_pkptr);
+	FOUT;
 	}
 
 
@@ -1208,7 +1213,7 @@ void smf_tx_erase()
 
 void smf_ttl_erase()
 	{
-	FIN(smf_tx_erase());
+	FIN(smf_ttl_erase());
 	op_anim_igp_drawing_erase (olsr_vid, ttl_did, OPC_ANIM_ERASE_MODE_XOR);
 	ttl_did = -1;
 	FOUT;

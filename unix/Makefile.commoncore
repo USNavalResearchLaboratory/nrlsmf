@@ -30,11 +30,11 @@ all:	nrlsmf
 # SMF depends upon the NRL Protean Group's development library
 LIBPROTO = $(PROTOLIB)/lib/libprotokit.a
 $(PROTOLIB)/lib/libprotokit.a: 
-	cd $(PROTOLIB)/makefiles; $(MAKE) -f Makefile.$(SYSTEM) libprotokit.a
+	cd $(PROTOLIB)/makefiles; $(MAKE) -f Makefile.$(FOOBAR) libprotokit.a
     
 NRLSMF_SRC = $(COMMON)/nrlsmf.cpp $(COMMON)/smf.cpp $(COMMON)/smfDpd.cpp \
 	$(COMMON)/smfHash.cpp $(COMMON)/smfHashMD5.cpp $(COMMON)/smfHashSHA1.cpp \
-	$(COMMON)/smfQueue.cpp $(SYSTEM_SRC)
+	$(SYSTEM_SRC)
    
 NRLSMF_OBJ = $(NRLSMF_SRC:.cpp=.o)
 
@@ -55,9 +55,7 @@ nt:    $(NT_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o $@ $(NT_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
         
     
-NHDP_SRC = $(COMMON)/nhdpTest.cpp $(COMMON)/nhdp.cpp \
-	 $(PROTOLIB)/src/manet/manetMsg.cpp $(PROTOLIB)/src/manet/manetGraph.cpp \
-	 $(PROTOLIB)/src/common/protoGraph.cpp
+NHDP_SRC = $(COMMON)/nhdpTest.cpp $(COMMON)/nhdp.cpp $(PROTOLIB)/manet/manetMsg.cpp 
 NHDP_OBJ = $(NHDP_SRC:.cpp=.o)
 nhdp:    $(NHDP_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o $@ $(NHDP_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)

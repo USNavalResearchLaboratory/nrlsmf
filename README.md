@@ -31,7 +31,7 @@ make Makefile.<ostype> nrlsmf
 
 to build the nrlsmf binary executable.   
 
-For Win32 platforms (TBD), a distribution of "winpcap" is
+For Win32 platforms, a distribution of "winpcap" is
 required to build the nrlsmf.exe executable.  A Visual C++
 workspace (nrlsmf.dsw) and project files are provided in
 the "smf/win32" directory for building nrlsmf.exe. 
@@ -45,5 +45,4 @@ Rawether libraries).  A workspace (nrlsmf.vcw) and project
 files are provided for the Embedded Visual C++ compiler.
 
 See the "nrlsmf.html" or "nrlsmf.pdf" file for further
-instructions.  These files will be updated soon to have
-the "User's Guide" for the new "nrlsmf" code.
+instructions.

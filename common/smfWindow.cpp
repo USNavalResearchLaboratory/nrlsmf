@@ -50,20 +50,20 @@ bool SmfSlidingWindow::Init(UINT8  seqNumSize,   // in bits
     // Make sure all parameters are valid
     if ((seqNumSize < 8) || (seqNumSize > 32))
     {
-        DMSG(0, "SmfSlidingWindow::Init() error: invalid sequence number size: %d\n", seqNumSize);
+        PLOG(PL_ERROR, "SmfSlidingWindow::Init() error: invalid sequence number size: %d\n", seqNumSize);
         return false;
 	}
        
     if (windowSize > ((UINT32)0x01 << (seqNumSize - 1)))
     {
-        DMSG(0, "SmfSlidingWindow::Init() error: invalid windowSize\n");
+        PLOG(PL_ERROR, "SmfSlidingWindow::Init() error: invalid windowSize\n");
         return false;
     }
     
     if ((windowPastMax < windowSize) ||
         (windowPastMax > ((UINT32)0x01 << (seqNumSize - 1))))
     {
-        DMSG(0, "SmfSlidingWindow::Init() error: invalid windowPastMax value\n");
+        PLOG(PL_ERROR, "SmfSlidingWindow::Init() error: invalid windowPastMax value\n");
         return false;
     }
     
@@ -71,7 +71,7 @@ bool SmfSlidingWindow::Init(UINT8  seqNumSize,   // in bits
     UINT32 seqRangeMask = 0xffffffff >> (32 - seqNumSize);
     if (!bitmask.Init(windowSize, seqRangeMask))
     {
-        DMSG(0, "SmfSlidingWindow::Init() bitmask init error: %s\n",
+        PLOG(PL_ERROR, "SmfSlidingWindow::Init() bitmask init error: %s\n",
                 GetErrorString());
         return false;
     }
@@ -120,7 +120,7 @@ bool SmfSlidingWindow::IsDuplicate(UINT32 seq)
                    bitmask.Set(seq);
                return false;
             }
-            else if (delta < window_past_max)
+            else if (delta < (INT32)window_past_max)
             {
                 // It's "very old", so assume it's a duplicate (but no reset)
                 return true;   
@@ -128,7 +128,7 @@ bool SmfSlidingWindow::IsDuplicate(UINT32 seq)
             else
             {
                 // It's so very "ancient", we reset our window to it
-                DMSG(0, "SmfSlidingWindow::IsDuplicate() resetting window ...\n");
+                PLOG(PL_ERROR, "SmfSlidingWindow::IsDuplicate() resetting window ...\n");
                 bitmask.Clear();
                 bitmask.Set(seq);
                 return false;

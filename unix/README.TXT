@@ -1,6 +1,6 @@
 TO BUILD:
 
-Type: "make -f Makefile.<system> smurf"
+Type: "make -f Makefile.<system> nrlsmf"
 
 For example, for Linux:
 
@@ -14,3 +14,9 @@ Brian Adamson
 <mailto:adamson@itd.nrl.navy.mil>
 16 MAR 2005
 
+CORE Namespaces build notes.
+Temporary fix until linux kernel is patched to avoid pid issues related to namespaces.
+Use make -f Makefile.core 
+this will include Makefile.corecommon
+
+These files can be removed when new kernel issues are resolved.
