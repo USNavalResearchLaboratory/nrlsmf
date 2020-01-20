@@ -4422,7 +4422,7 @@ bool SmfApp::OnIgmpQueryTimeout(ProtoTimer& theTimer)
                 ipPkt.SetSrcAddr(srcIp);
                 ipPkt.FinalizeChecksum();
                 ethPkt.SetSrcAddr(iface->GetInterfaceAddress());
-                if (!vif->Write(ethPkt.GetBuffer(), ethPkt.GetLength()))
+                if (!vif->Write((char*)ethPkt.GetBuffer(), ethPkt.GetLength()))
                     PLOG(PL_ERROR, "SmfApp::OnIgmpQueryTimeout() error: unable to write IGMP query packet to kernel!\n");
             }
         }
@@ -5225,7 +5225,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
                 // up here. (Need to confirm for other ICMP message types, but likely true for all)
                 //if (protocol != ProtoPktIP::ICMP)  // TBD - investigate ICMP6 handling
                 {
-                    if (!vif->Write(ethPkt.GetBuffer(), ethPkt.GetLength()))
+                    if (!vif->Write((char*)ethPkt.GetBuffer(), ethPkt.GetLength()))
                         PLOG(PL_ERROR, "SmfApp::HandleInboundPacket() error: unable to write incoming packet to kernel!\n");
                 }
             }

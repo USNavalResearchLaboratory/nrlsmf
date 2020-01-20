@@ -11,9 +11,9 @@ const UINT16 SmartPkt::ADAPTIVE_MAX_TOS = 66;
 const UINT16 SmartPkt::ADAPTIVE_DSCP_MIN = 14;
 const UINT16 SmartPkt::ADAPTIVE_DSCP_MAX = 23;
 
-SmartPkt::SmartPkt(UINT32*        bufferPtr,
-                       unsigned int   bufferBytes,
-                       bool           freeOnDestruct)
+SmartPkt::SmartPkt(void*          bufferPtr,
+                   unsigned int   bufferBytes,
+                   bool           freeOnDestruct)
  : ProtoPkt(bufferPtr, bufferBytes, freeOnDestruct)
 {
     initFromBuffer();
@@ -48,9 +48,9 @@ unsigned int SmartPkt::getAddressFieldLength(AddressType addrType)
     }
 }  // end SmartPkt::GetAddressFieldLength()
 
-bool SmartPkt::initFromBuffer(UINT32*         bufferPtr,
-                                unsigned int    numBytes,
-                                bool            freeOnDestruct)
+bool SmartPkt::initFromBuffer(void*           bufferPtr,
+                              unsigned int    numBytes,
+                              bool            freeOnDestruct)
 {
     if (NULL != bufferPtr)
         AttachBuffer(bufferPtr, numBytes, freeOnDestruct);
@@ -85,7 +85,7 @@ float SmartPkt::getCFactor() const
     return ntohl(value);
 }
 
-bool SmartPkt::initIntoBuffer(UINT32*       bufferPtr,
+bool SmartPkt::initIntoBuffer(void*         bufferPtr,
                               unsigned int  bufferBytes,
                               bool          freeOnDestruct)
 {
@@ -125,9 +125,9 @@ bool SmartPkt::setCFactor(float C)
 
 
 
-SmartDataPkt::SmartDataPkt(UINT32*        bufferPtr,
-                       unsigned int   bufferBytes,
-                       bool           freeOnDestruct)
+SmartDataPkt::SmartDataPkt(void*          bufferPtr,
+                           unsigned int   bufferBytes,
+                           bool           freeOnDestruct)
  : SmartPkt(bufferPtr, bufferBytes, freeOnDestruct)
 {
     //initFromBuffer();
@@ -218,7 +218,7 @@ bool SmartDataPkt::pathContains(const ProtoAddress& addr)
     return false;
 }
 
-bool SmartDataPkt::initFromBuffer(UINT32*         bufferPtr,
+bool SmartDataPkt::initFromBuffer(void*           bufferPtr,
                                   unsigned int    numBytes,
                                   bool            freeOnDestruct)
 {
@@ -247,7 +247,7 @@ bool SmartDataPkt::initFromBuffer(UINT32*         bufferPtr,
     }
 }  // end SmartDataPkt::initFromBuffer()
 
-bool SmartDataPkt::initIntoBuffer(UINT32* bufferPtr, unsigned int bufferBytes, bool freeOnDestruct)
+bool SmartDataPkt::initIntoBuffer(void*   bufferPtr, unsigned int bufferBytes, bool freeOnDestruct)
 {
     unsigned int minLength = offsetPath()*4; // words into bytes
     if (NULL != bufferPtr)
@@ -374,9 +374,9 @@ bool SmartDataPkt::getSrcIPAddr(ProtoAddress& addr) const
 }  // end SmartPkt::GetSrcAddr()
 
 
-SmartAck::SmartAck(UINT32*        bufferPtr,
-                       unsigned int   bufferBytes,
-                       bool           freeOnDestruct)
+SmartAck::SmartAck(void*          bufferPtr,
+                   unsigned int   bufferBytes,
+                   bool           freeOnDestruct)
  : SmartPkt(bufferPtr, bufferBytes, freeOnDestruct)
 {
     initFromBuffer(bufferPtr,bufferBytes);
@@ -396,9 +396,9 @@ SmartAck::~SmartAck()
 {
 }
 
-bool SmartAck::initFromBuffer(UINT32*         bufferPtr,
-                                unsigned int    numBytes,
-                                bool            freeOnDestruct)
+bool SmartAck::initFromBuffer(void*           bufferPtr,
+                              unsigned int    numBytes,
+                              bool            freeOnDestruct)
 {
     if (NULL != bufferPtr)
         AttachBuffer(bufferPtr, numBytes, freeOnDestruct);
@@ -736,9 +736,9 @@ bool SmartAck::setPath(Path p, int numAddresses)
     return true;
 }
 
-SmartPathAd::SmartPathAd(UINT32*        bufferPtr,
-                       unsigned int   bufferBytes,
-                       bool           freeOnDestruct)
+SmartPathAd::SmartPathAd(void*          bufferPtr,
+                         unsigned int   bufferBytes,
+                         bool           freeOnDestruct)
  : SmartPkt(bufferPtr, bufferBytes, freeOnDestruct)
 {
     initFromBuffer();
@@ -758,9 +758,9 @@ SmartPathAd::~SmartPathAd()
 {
 }
 
-bool SmartPathAd::initFromBuffer(UINT32*         bufferPtr,
-                                unsigned int    numBytes,
-                                bool            freeOnDestruct)
+bool SmartPathAd::initFromBuffer(void*           bufferPtr,
+                                 unsigned int    numBytes,
+                                 bool            freeOnDestruct)
 {
     if (NULL != bufferPtr)
         AttachBuffer(bufferPtr, numBytes, freeOnDestruct);

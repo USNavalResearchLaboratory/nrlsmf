@@ -121,9 +121,9 @@
 class SmartPkt : public ProtoPkt
 {
     public:
-        SmartPkt(UINT32*        bufferPtr = NULL,
-                   unsigned int   bufferBytes = 0,
-                   bool           freeOnDestruct = false);
+        SmartPkt(void*          bufferPtr = NULL,
+                 unsigned int   bufferBytes = 0,
+                 bool           freeOnDestruct = false);
         ~SmartPkt();
 
 
@@ -158,7 +158,7 @@ class SmartPkt : public ProtoPkt
         };
 
         // Use these to parse
-        bool initFromBuffer(UINT32*         bufferPtr = NULL,
+        bool initFromBuffer(void*           bufferPtr = NULL,
                             unsigned int    numBytes = 0,
                             bool            freeOnDestruct = false);
 
@@ -199,7 +199,7 @@ class SmartPkt : public ProtoPkt
         bool getPathNodeAt(UINT8 index, ProtoAddress& addr) const;
 
         // Use these to build (MUST call in order)
-        bool initIntoBuffer(UINT32*         bufferPtr = NULL,
+        bool initIntoBuffer(void*           bufferPtr = NULL,
                             unsigned int    bufferBytes = 0,
                             bool            freeOnDestruct = false);
 
@@ -260,15 +260,15 @@ class SmartPkt : public ProtoPkt
 class SmartDataPkt : public SmartPkt
 {
     public:
-        SmartDataPkt(UINT32*        bufferPtr = NULL,
+        SmartDataPkt(void*          bufferPtr = NULL,
                      unsigned int   bufferBytes = 0,
                      bool           freeOnDestruct = false);
         ~SmartDataPkt();
 
-        bool initFromBuffer(UINT32*         bufferPtr = NULL,
+        bool initFromBuffer(void*           bufferPtr = NULL,
                             unsigned int    numBytes = 0,
                             bool            freeOnDestruct = false);
-        bool initIntoBuffer(UINT32* bufferPtr = NULL,unsigned int bufferBytes = 0, bool freeOnDestruct  = false);
+        bool initIntoBuffer(void* bufferPtr = NULL,unsigned int bufferBytes = 0, bool freeOnDestruct  = false);
         bool setSrcIPAddr(const ProtoAddress& addr);
         bool setSrcIPAddr(AddressType addrType, const char* addrPtr, unsigned int addrLen);
         bool getSrcIPAddr(ProtoAddress& addr) const;
@@ -276,7 +276,7 @@ class SmartDataPkt : public SmartPkt
         bool getPathNodeAt(UINT8 index, ProtoAddress& addr) const;
         bool pathContains(const ProtoAddress& addr);
 
-        const UINT32* getPayload() const
+        const void* getPayload() const
             {return GetBuffer32(offsetPayload());}
 
         void setPayload(const char* payload, UINT16 numBytes)
@@ -314,12 +314,12 @@ class SmartDataPkt : public SmartPkt
 class SmartAck : public SmartPkt
 {
     public:
-        SmartAck(UINT32*        bufferPtr = NULL,
+        SmartAck(void*          bufferPtr = NULL,
                  unsigned int   bufferBytes = 0,
                  bool           freeOnDestruct = false);
         ~SmartAck();
 
-        bool initFromBuffer(UINT32*         bufferPtr = NULL,
+        bool initFromBuffer(void*           bufferPtr = NULL,
                             unsigned int    numBytes = 0,
                             bool            freeOnDestruct = false);
         bool setDstMACAddr(const ProtoAddress& addr);
@@ -379,12 +379,12 @@ class SmartAck : public SmartPkt
 class SmartPathAd : public SmartPkt
 {
     public:
-        SmartPathAd(UINT32*        bufferPtr = NULL,
+        SmartPathAd(void*         bufferPtr = NULL,
                    unsigned int   bufferBytes = 0,
                    bool           freeOnDestruct = false);
         ~SmartPathAd();
 
-        bool initFromBuffer(UINT32*         bufferPtr = NULL,
+        bool initFromBuffer(void*           bufferPtr = NULL,
                             unsigned int    numBytes = 0,
                             bool            freeOnDestruct = false);
         bool setPath( Path p, int numAddresses);

@@ -78,7 +78,7 @@ void SmfHash::ComputeHashIPv6(ProtoPktIPv6& ipv6Pkt)
         if (ext.IsOptionHeader())
         {
             // Update hash over ext NEXT_HDR/LENGTH fields (2 bytes)
-            Update(ext.GetBuffer(), 2);
+            Update((char*)ext.GetBuffer(), 2);
             // Iterate through and parse options
             ProtoPktIPv6::Option::Iterator optIterator(ext);
             ProtoPktIPv6::Option opt;
@@ -93,7 +93,7 @@ void SmfHash::ComputeHashIPv6(ProtoPktIPv6& ipv6Pkt)
         }
         else
         {
-            Update(ext.GetBuffer(), ext.GetLength());
+            Update((char*)ext.GetBuffer(), ext.GetLength());
         }  
         extHeaderLength += ext.GetLength();    
     }

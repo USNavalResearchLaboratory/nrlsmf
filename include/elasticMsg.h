@@ -52,7 +52,7 @@
 class ElasticAck : public ProtoPkt
 {
     public:
-        ElasticAck(UINT32*        bufferPtr = NULL,
+        ElasticAck(void*          bufferPtr = NULL,
                    unsigned int   bufferBytes = 0,
                    bool           freeOnDestruct = false);
         ~ElasticAck();
@@ -77,7 +77,7 @@ class ElasticAck : public ProtoPkt
         };
             
         // Use these to parse    
-        bool InitFromBuffer(UINT32*         bufferPtr = NULL, 
+        bool InitFromBuffer(void*           bufferPtr = NULL, 
                             unsigned int    numBytes = 0, 
                             bool            freeOnDestruct = false);
         bool FlagIsSet(Flag flag)
@@ -102,7 +102,7 @@ class ElasticAck : public ProtoPkt
         bool GetUpstreamAddr(UINT8 index, ProtoAddress& addr) const;
         
         // Use these to build (MUST call in order)
-        bool InitIntoBuffer(UINT32*         bufferPtr = NULL, 
+        bool InitIntoBuffer(void*           bufferPtr = NULL, 
                             unsigned int    bufferBytes = 0, 
                             bool            freeOnDestruct = false);
         

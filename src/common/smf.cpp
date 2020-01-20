@@ -462,7 +462,7 @@ Smf::DpdType Smf::GetIPv6PktID(ProtoPktIPv6&   ip6Pkt,      // input
                                unsigned int*   pktIdSize)   // input/output, in bits
 {
     ProtoPktIP::Protocol nextHeader = ip6Pkt.GetNextHeader();
-    UINT32* nextBuffer = ip6Pkt.AccessPayload();
+    void* nextBuffer = ip6Pkt.AccessPayload();
     unsigned int extHeaderLength = 0;
     if (ProtoPktIP::IsExtension(nextHeader))//(ip6Pkt.HasExtendedHeader())
     {
@@ -534,7 +534,7 @@ Smf::DpdType Smf::GetIPv6PktID(ProtoPktIPv6&   ip6Pkt,      // input
                 case ProtoPktIP::FRAG:
                 {
                     ProtoPktFRAG frag;
-                    if (frag.InitFromBuffer(ext.AccessBuffer32(), ext.GetLength()))
+                    if (frag.InitFromBuffer(ext.AccessBuffer(), ext.GetLength()))
                     {
                         // flowId == srcAddr:dstAddr (256 bits)
                         ASSERT(*flowIdSize >= 256);
@@ -556,7 +556,7 @@ Smf::DpdType Smf::GetIPv6PktID(ProtoPktIPv6&   ip6Pkt,      // input
                 case ProtoPktIP::AUTH:
                 {
                     ProtoPktAUTH ah;
-		            if (ah.InitFromBuffer(ext.AccessBuffer32(), ext.GetLength()))
+		            if (ah.InitFromBuffer(ext.AccessBuffer(), ext.GetLength()))
                     {
                         // flowId == ipSecType:srcAddr:dstAddr:spi (296 bits)
                         ASSERT(*flowIdSize >= 328);
@@ -588,7 +588,7 @@ Smf::DpdType Smf::GetIPv6PktID(ProtoPktIPv6&   ip6Pkt,      // input
     {
         unsigned int espLength = ip6Pkt.GetPayloadLength() - extHeaderLength;
         ProtoPktESP esp;
-        if (esp.InitFromBuffer(espLength, ip6Pkt.AccessPayload() + (extHeaderLength >> 2), espLength))
+        if (esp.InitFromBuffer(espLength, (char*)ip6Pkt.AccessPayload() + extHeaderLength, espLength))
         {
             // flowId == ipSecType:srcAddr:dstAddr:spi (296 bits)
             ASSERT(*flowIdSize >= 328);

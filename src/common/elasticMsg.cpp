@@ -9,7 +9,7 @@
 const ProtoAddress ElasticAck::ELASTIC_ADDR = ProtoAddress("224.0.0.55");
 const UINT16 ElasticAck::ELASTIC_PORT = 5555;
         
-ElasticAck::ElasticAck(UINT32*        bufferPtr, 
+ElasticAck::ElasticAck(void*          bufferPtr, 
                        unsigned int   bufferBytes, 
                        bool           freeOnDestruct)
  : ProtoPkt(bufferPtr, bufferBytes, freeOnDestruct)
@@ -37,7 +37,7 @@ unsigned int ElasticAck::GetAddressFieldLength(AddressType addrType)
     }
 }  // end ElasticAck::GetAddressFieldLength()
 
-bool ElasticAck::InitFromBuffer(UINT32*         bufferPtr, 
+bool ElasticAck::InitFromBuffer(void*           bufferPtr, 
                                 unsigned int    numBytes, 
                                 bool            freeOnDestruct)
 {
@@ -143,7 +143,7 @@ bool ElasticAck::GetUpstreamAddr(UINT8 index, ProtoAddress& addr) const
     return addr.SetRawHostAddress(addrType, addrPtr, addrLen);
 }  // end ElasticAck::GetUpstreamAddr()
 
-bool ElasticAck::InitIntoBuffer(UINT32*       bufferPtr, 
+bool ElasticAck::InitIntoBuffer(void*         bufferPtr, 
                                 unsigned int  bufferBytes, 
                                 bool          freeOnDestruct)
 {
