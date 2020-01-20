@@ -939,7 +939,7 @@ class ElasticMulticastController
                     unsigned int                          pktCount,
                     unsigned int                          pktInterval);
 
-        void HandleIGMP(const ProtoPktIGMP& igmpMsg, const ProtoAddress& srcIp, unsigned int ifaceIndex, bool inbound);
+        void HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAddress& srcIp, unsigned int ifaceIndex, bool inbound);
 
         bool AddManagedMembership(unsigned int ifaceIndex, const ProtoAddress& groupAddr);
 

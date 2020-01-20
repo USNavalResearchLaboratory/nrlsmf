@@ -58,7 +58,7 @@ void SmfHash::ComputeHashIPv4(ProtoPktIPv4& ipv4Pkt)
             Update(option.GetBuffer(), option.GetLength());   
     }
     // c) Update CRC using packet payload
-    Update(ipv4Pkt.GetPayload(), ipv4Pkt.GetPayloadLength());
+    Update((const char*)ipv4Pkt.GetPayload(), ipv4Pkt.GetPayloadLength());
     Finalize();
 }  // end SmfHash::ComputeHashIPv4()
 

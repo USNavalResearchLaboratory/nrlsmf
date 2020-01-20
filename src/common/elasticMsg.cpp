@@ -82,7 +82,7 @@ bool ElasticAck::GetDstAddr(ProtoAddress& addr) const
             PLOG(PL_ERROR, "ElasticAck::GetDstAddr() error: invalid address type!\n");
             return false;
     }
-    return addr.SetRawHostAddress(addrType, (char*)(buffer_ptr+OFFSET_DST_ADDR), addrLen);
+    return addr.SetRawHostAddress(addrType, (char*)GetBuffer32(OFFSET_DST_ADDR), addrLen);
 }  // end ElasticAck::GetDstAddr()
 
 bool ElasticAck::GetSrcAddr(ProtoAddress& addr) const
@@ -107,7 +107,7 @@ bool ElasticAck::GetSrcAddr(ProtoAddress& addr) const
             PLOG(PL_ERROR, "ElasticAck::GetDstAddr() error: invalid address type!\n");
             return false;
     }
-    return addr.SetRawHostAddress(addrType, (const char*)(buffer_ptr+OffsetSrcAddr()), addrLen);
+    return addr.SetRawHostAddress(addrType, (const char*)GetBuffer32(OffsetSrcAddr()), addrLen);
 }  // end ElasticAck::GetSrcAddr()
 
 bool ElasticAck::GetUpstreamAddr(UINT8 index, ProtoAddress& addr) const
@@ -138,7 +138,7 @@ bool ElasticAck::GetUpstreamAddr(UINT8 index, ProtoAddress& addr) const
             PLOG(PL_ERROR, "ElasticAck::GetUpstreamAddr() error: invalid address type!\n");
             return false;
     }
-    const char* addrPtr = (const char*)(buffer_ptr + OffsetUpstreamList());
+    const char* addrPtr = (const char*)GetBuffer32(OffsetUpstreamList());
     addrPtr += (index * fieldLen);
     return addr.SetRawHostAddress(addrType, addrPtr, addrLen);
 }  // end ElasticAck::GetUpstreamAddr()
@@ -159,7 +159,7 @@ bool ElasticAck::InitIntoBuffer(UINT32*       bufferPtr,
     {
         return false;
     }
-    memset(buffer_ptr, 0, minLength);
+    memset((char*)AccessBuffer(), 0, minLength);
     SetLength(minLength);
     return true;
 }  // end ElasticAck::InitIntoBuffer()
@@ -203,8 +203,7 @@ bool ElasticAck::SetDstAddr(AddressType addrType, const char* addrPtr, unsigned 
     UINT8 field = GetUINT8(OFFSET_ATYPE) & 0xf0;
     field |= (UINT8)addrType;
     SetUINT8(OFFSET_ATYPE, field);
-    char* ptr = (char*)(buffer_ptr + OFFSET_DST_ADDR);
-    memcpy(ptr, addrPtr, addrLen);
+    memcpy((char*)AccessBuffer32(OFFSET_DST_ADDR), addrPtr, addrLen);
     return true;
 }  // end ElasticAck::SetDstAddr()
 
@@ -246,7 +245,7 @@ bool ElasticAck::SetSrcAddr(AddressType addrType, const char* addrPtr, unsigned 
     UINT8 field = GetUINT8(OFFSET_ATYPE) & 0xf0;
     field |= (UINT8)addrType;
     SetUINT8(OFFSET_ATYPE, field);
-    char* ptr = (char*)(buffer_ptr + OffsetSrcAddr());
+    char* ptr = (char*)AccessBuffer32(OffsetSrcAddr());
     memcpy(ptr, addrPtr, addrLen);
     return true;
 }  // end ElasticAck::SetSrcAddr()
@@ -300,7 +299,7 @@ bool ElasticAck::AppendUpstreamAddr(const ProtoAddress& addr)
         field |= (UINT8)utype;
         SetUINT8(OFFSET_UTYPE, field);
     }
-    char* addrPtr = (char*)(buffer_ptr + OffsetUpstreamList());
+    char* addrPtr = (char*)AccessBuffer32(OffsetUpstreamList());
     addrPtr += (index * fieldLen);
     unsigned int addrLen = addr.GetLength();
     if (fieldLen > addrLen)

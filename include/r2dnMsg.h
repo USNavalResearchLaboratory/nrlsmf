@@ -241,7 +241,7 @@ class SmartPkt : public ProtoPkt
             OFFSET_PTYPE    = OFFSET_PLEN,          // 4 least significant bits
             OFFSET_PROTOCOL = OFFSET_PTYPE + 1,     // UINT8 offset
             OFFSET_CLASS    = OFFSET_PROTOCOL + 1,  // UINT8 offset
-            OFFSET_Q_FACTOR = (OFFSET_CLASS/4) + 1,  // UINT32 offset
+            OFFSET_Q_FACTOR = (OFFSET_CLASS/4) + 1, // UINT32 offset
             OFFSET_C_FACTOR = OFFSET_Q_FACTOR + 1
         };
 
@@ -261,8 +261,8 @@ class SmartDataPkt : public SmartPkt
 {
     public:
         SmartDataPkt(UINT32*        bufferPtr = NULL,
-                   unsigned int   bufferBytes = 0,
-                   bool           freeOnDestruct = false);
+                     unsigned int   bufferBytes = 0,
+                     bool           freeOnDestruct = false);
         ~SmartDataPkt();
 
         bool initFromBuffer(UINT32*         bufferPtr = NULL,
@@ -276,25 +276,22 @@ class SmartDataPkt : public SmartPkt
         bool getPathNodeAt(UINT8 index, ProtoAddress& addr) const;
         bool pathContains(const ProtoAddress& addr);
 
-        UINT32* getPayload() const
-            {return (buffer_ptr + offsetPayload());}
+        const UINT32* getPayload() const
+            {return GetBuffer32(offsetPayload());}
 
         void setPayload(const char* payload, UINT16 numBytes)
-        {
-            memcpy((char*)(buffer_ptr+offsetPayload()), payload, numBytes);
-        }
+            {memcpy((char*)AccessBuffer32(offsetPayload()), payload, numBytes);}
+        
         int getHeaderLengthNoPath() {return offsetPath();}
 
 
 
 
     private:
-        unsigned int offsetSrcIPAddr() const
-        {
-           return OFFSET_C_FACTOR+1;
-
-        }
-        unsigned int offsetPayload() const
+        unsigned int offsetSrcIPAddr() const  // UINT32 offset
+            {return OFFSET_C_FACTOR + 1;}
+        
+        unsigned int offsetPayload() const  // UINT32 offset
         {
 //            switch (getAddressType())
 //            {
@@ -310,20 +307,16 @@ class SmartDataPkt : public SmartPkt
 
 //            }
         }
-        unsigned int offsetPath() const
-        {
-            return offsetSrcIPAddr() +1;
-        }
-
-
-};
+        unsigned int offsetPath() const  // UINT32 offset
+            {return offsetSrcIPAddr() + 1;}
+};  // end class SmartDataPkt
 
 class SmartAck : public SmartPkt
 {
     public:
         SmartAck(UINT32*        bufferPtr = NULL,
-                   unsigned int   bufferBytes = 0,
-                   bool           freeOnDestruct = false);
+                 unsigned int   bufferBytes = 0,
+                 bool           freeOnDestruct = false);
         ~SmartAck();
 
         bool initFromBuffer(UINT32*         bufferPtr = NULL,
@@ -333,23 +326,17 @@ class SmartAck : public SmartPkt
         bool setSrcMACAddr(const ProtoAddress& addr);
         bool setDstIPAddr(const ProtoAddress& addr);
         bool setDstIPAddr(AddressType addrType, const char* addrPtr, unsigned int addrLen);
-        bool setFragmentOffset (UINT32 fragOffset)
-       {
+        void setFragmentOffset(UINT32 fragOffset)
+        {
             PLOG (PL_DEBUG,"Setting frag offset of %d\n",fragOffset);
-
-            //SetUINT32(offsetFragOffset(),fragOffset);
-            char* ptr = (char*)(buffer_ptr + offsetFragOffset());
-            memcpy(ptr, &fragOffset, 4);
-            return true;
+            SetWord32(offsetFragOffset(), fragOffset);
         }
-        UINT32 getFragmentOffset () const
-            {
-                float value;
-                memcpy(&value, (char*)(buffer_ptr + offsetFragOffset()), 4);
-
-                return ntohl(value);
-            }
-
+        UINT32 getFragmentOffset() const
+        {
+            float value;
+            memcpy(&value, (char*)GetBuffer32(offsetFragOffset()), 4);
+            return ntohl(value);
+        }
         bool getDstMACAddr(ProtoAddress& addr) const;
         bool getSrcMACAddr(ProtoAddress& addr) const;
         bool getDstIPAddr(ProtoAddress& addr) const;
@@ -387,7 +374,7 @@ class SmartAck : public SmartPkt
         {
             return offsetDstIPAddr() + 1;
         }
-};
+};  // end class SmartAck
 
 class SmartPathAd : public SmartPkt
 {

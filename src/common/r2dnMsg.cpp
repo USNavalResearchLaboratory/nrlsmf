@@ -72,7 +72,7 @@ bool SmartPkt::initFromBuffer(UINT32*         bufferPtr,
 float SmartPkt::getQFactor() const
 {
     float value;
-    memcpy(&value, (char*)(buffer_ptr + OFFSET_Q_FACTOR), 4);
+    memcpy(&value, (char*)GetBuffer32(OFFSET_Q_FACTOR), 4);
     return value;
     return ntohl(value);
 }
@@ -80,14 +80,14 @@ float SmartPkt::getQFactor() const
 float SmartPkt::getCFactor() const
 {
     float value;
-    memcpy(&value, (char*)(buffer_ptr + OFFSET_C_FACTOR), 4);
+    memcpy(&value, (char*)GetBuffer32(OFFSET_C_FACTOR), 4);
     return value;
     return ntohl(value);
 }
 
 bool SmartPkt::initIntoBuffer(UINT32*       bufferPtr,
-                                unsigned int  bufferBytes,
-                                bool          freeOnDestruct)
+                              unsigned int  bufferBytes,
+                              bool          freeOnDestruct)
 {
     PLOG(PL_DEBUG, "smartPkt::initIntoBuffer(): function call\n");
     unsigned int minLength = OFFSET_C_FACTOR*4;
@@ -102,7 +102,7 @@ bool SmartPkt::initIntoBuffer(UINT32*       bufferPtr,
     {
         return false;
     }
-    memset(buffer_ptr, 0, minLength);
+    memset((char*)AccessBuffer(), 0, minLength);
     SetLength(minLength);
     return true;
 }  // end SmartPkt::InitIntoBuffer()
@@ -111,14 +111,14 @@ bool SmartPkt::initIntoBuffer(UINT32*       bufferPtr,
 
 bool SmartPkt::setQFactor(float Q)
 {
-    char* ptr = (char*)(buffer_ptr + OFFSET_Q_FACTOR);
+    char* ptr = (char*)AccessBuffer32(OFFSET_Q_FACTOR);
     memcpy(ptr, &Q, 4);
     return true;
 }
 
 bool SmartPkt::setCFactor(float C)
 {
-    char* ptr = (char*)(buffer_ptr + OFFSET_C_FACTOR);
+    char* ptr = (char*)AccessBuffer32(OFFSET_C_FACTOR);
     memcpy(ptr, &C, 4);
     return true;
 }
@@ -182,7 +182,7 @@ bool SmartDataPkt::appendNodeToPath(const ProtoAddress& addr)
         field |= (UINT8)ptype;
         SetUINT8(OFFSET_PTYPE, field);
     }
-    char* addrPtr = (char*)(buffer_ptr + offsetPath());
+    char* addrPtr = (char*)AccessBuffer32(offsetPath());
     addrPtr += ((index) * fieldLen);
     unsigned int addrLen = addr.GetLength();
     if (fieldLen > addrLen)
@@ -219,38 +219,35 @@ bool SmartDataPkt::pathContains(const ProtoAddress& addr)
 }
 
 bool SmartDataPkt::initFromBuffer(UINT32*         bufferPtr,
-                                unsigned int    numBytes,
-                                bool            freeOnDestruct)
+                                  unsigned int    numBytes,
+                                  bool            freeOnDestruct)
 {
     if (NULL != bufferPtr)
         AttachBuffer(bufferPtr, numBytes, freeOnDestruct);
     else
         ProtoPkt::SetLength(0);
-    unsigned int headerLength =4;
+    unsigned int headerLength = 4;
     unsigned int addrLen = getAddressFieldLength(getAddressType());
-         // for src addr
     headerLength += addrLen;  // for source addr
     headerLength += 4; // for Q factor
     headerLength += 4; // for C factor
     //headerLength += 8; // for timestamp
     headerLength += getPathLength() * getAddressFieldLength(getPathType()); // most likely one byte per hop
-
-
     if (numBytes >= headerLength)
     {
        // pkt_length = headerLength+payloadLength;
+        ProtoPkt::SetLength(numBytes);
         return true;
     }
     else
     {
-        pkt_length = 0;
+        ProtoPkt::SetLength(0);
         if (NULL != bufferPtr) DetachBuffer();
         return false;
     }
+}  // end SmartDataPkt::initFromBuffer()
 
-}
-
-bool SmartDataPkt::initIntoBuffer(UINT32* bufferPtr,unsigned int bufferBytes, bool freeOnDestruct)
+bool SmartDataPkt::initIntoBuffer(UINT32* bufferPtr, unsigned int bufferBytes, bool freeOnDestruct)
 {
     unsigned int minLength = offsetPath()*4; // words into bytes
     if (NULL != bufferPtr)
@@ -264,7 +261,7 @@ bool SmartDataPkt::initIntoBuffer(UINT32* bufferPtr,unsigned int bufferBytes, bo
     {
         return false;
     }
-    memset(buffer_ptr, 0, minLength);;
+    memset((char*)AccessBuffer(), 0, minLength);;
     SetLength(minLength);
     return true;
 }
@@ -297,9 +294,8 @@ bool SmartDataPkt::getPathNodeAt(UINT8 index, ProtoAddress& addr) const
             PLOG(PL_ERROR, "SmartDataPkt::getPathNodeAt() error: invalid address type!\n");
             return false;
     }
-    const char* addrPtr = (const char*)(buffer_ptr + offsetPath());
+    const char* addrPtr = (const char*)GetBuffer32(offsetPath());
     addrPtr += (index * fieldLen);
-    //PLOG(PL_DEBUG, "SmartDataPkt::getPathNodeAt(): getting address at index %d\n", addrPtr - (char*)buffer_ptr);
     return addr.SetRawHostAddress(addrType, addrPtr, addrLen);
 }  // end SmartPkt::getPathNodeAt()
 
@@ -339,7 +335,7 @@ bool SmartDataPkt::setSrcIPAddr(AddressType addrType, const char* addrPtr, unsig
     UINT8 field = GetUINT8(OFFSET_ATYPE) & 0xf0;
     field |= (UINT8)addrType;
     SetUINT8(OFFSET_ATYPE, field);
-    char* ptr = (char*)(buffer_ptr + offsetSrcIPAddr());
+    char* ptr = (char*)AccessBuffer32(offsetSrcIPAddr());
     memcpy(ptr, addrPtr, addrLen);
     return true;
 }
@@ -366,7 +362,7 @@ bool SmartDataPkt::getSrcIPAddr(ProtoAddress& addr) const
             PLOG(PL_ERROR, "ElasticAck::GetDstAddr() error: invalid address type!\n");
             return false;
     }
-    if(addr.SetRawHostAddress(addrType, (const char*)(buffer_ptr+offsetSrcIPAddr()), addrLen))
+    if(addr.SetRawHostAddress(addrType, (const char*)GetBuffer32(offsetSrcIPAddr()), addrLen))
     {
         //PLOG(PL_DEBUG,"SmartDataPkt::getSrcIPAddr() getting address from offset %d: %s\n", offsetSrcIPAddr(), addr.GetHostString());
         return true;
@@ -444,7 +440,7 @@ bool SmartAck::setSrcMACAddr(const ProtoAddress& addr)
     UINT8 field = GetUINT8(OFFSET_ATYPE) & 0xf0;
     field |= (UINT8)ADDR_ETHER;
     SetUINT8(OFFSET_ATYPE, field);
-    char* ptr = (char*)(buffer_ptr + offsetSrcMACAddr());
+    char* ptr = (char*)AccessBuffer32(offsetSrcMACAddr());
     memcpy(ptr, addr.GetRawHostAddress(), addrLen);
     return true;
 }
@@ -467,7 +463,7 @@ bool SmartAck::setDstMACAddr(const ProtoAddress& addr)
     UINT8 field = GetUINT8(OFFSET_ATYPE) & 0xf0;
     field |= (UINT8)ADDR_ETHER;
     SetUINT8(OFFSET_ATYPE, field);
-    char* ptr = (char*)(buffer_ptr + offsetDstMACAddr());
+    char* ptr = (char*)AccessBuffer32(offsetDstMACAddr());
     memcpy(ptr, addr.GetRawHostAddress(), addrLen);
     return true;
 }  // end SmartPkt::SetSrcAddr()
@@ -509,7 +505,7 @@ bool SmartAck::setDstIPAddr(AddressType addrType, const char* addrPtr, unsigned 
     UINT8 field = GetUINT8(OFFSET_ATYPE) & 0xf0;
     field |= (UINT8)addrType;
     SetUINT8(OFFSET_ATYPE, field);
-    char* ptr = (char*)(buffer_ptr + offsetDstIPAddr());
+    char* ptr = (char*)AccessBuffer32(offsetDstIPAddr());
     memcpy(ptr, addrPtr, addrLen);
     return true;
 }
@@ -522,7 +518,7 @@ bool SmartAck::getSrcMACAddr(ProtoAddress& addr) const
     addrType = ProtoAddress::ETH;
     addrLen = 6;
 
-    return addr.SetRawHostAddress(addrType, (const char*)(buffer_ptr+offsetSrcMACAddr()), addrLen);
+    return addr.SetRawHostAddress(addrType, (const char*)GetBuffer32(offsetSrcMACAddr()), addrLen);
 }
 
 bool SmartAck::getDstMACAddr(ProtoAddress& addr) const
@@ -533,7 +529,7 @@ bool SmartAck::getDstMACAddr(ProtoAddress& addr) const
     addrType = ProtoAddress::ETH;
     addrLen = 6;
 
-    return addr.SetRawHostAddress(addrType, (const char*)(buffer_ptr+offsetDstMACAddr()), addrLen);
+    return addr.SetRawHostAddress(addrType, (const char*)GetBuffer32(offsetDstMACAddr()), addrLen);
 }
 
 bool SmartAck::getDstIPAddr(ProtoAddress& addr) const
@@ -558,7 +554,7 @@ bool SmartAck::getDstIPAddr(ProtoAddress& addr) const
             PLOG(PL_ERROR, "ElasticAck::GetDstAddr() error: invalid address type!\n");
             return false;
     }
-    return addr.SetRawHostAddress(addrType, (const char*)(buffer_ptr+offsetDstIPAddr()), addrLen);
+    return addr.SetRawHostAddress(addrType, (const char*)GetBuffer32(offsetDstIPAddr()), addrLen);
 }
 
 bool SmartAck::appendNodeToPath(const ProtoAddress& addr)
@@ -606,7 +602,7 @@ bool SmartAck::appendNodeToPath(const ProtoAddress& addr)
         field |= (UINT8)ptype;
         SetUINT8(OFFSET_PTYPE, field);
     }
-    char* addrPtr = (char*)(buffer_ptr + offsetPath());
+    char* addrPtr = (char*)AccessBuffer32(offsetPath());
     addrPtr += ((index) * fieldLen);
     unsigned int addrLen = addr.GetLength();
     if (fieldLen > addrLen)
@@ -678,7 +674,7 @@ bool SmartAck::getPathNodeAt(UINT8 index, ProtoAddress& addr) const
     addrType = ProtoAddress::ETH;
     fieldLen = 8;
     addrLen = 6;
-    const char* addrPtr = (const char*)(buffer_ptr + offsetPath());
+    const char* addrPtr = (const char*)GetBuffer32(offsetPath());
     addrPtr += (index * fieldLen);
     return addr.SetRawHostAddress(addrType, addrPtr, addrLen);
 }
@@ -716,7 +712,7 @@ bool SmartAck::setPath(Path p, int numAddresses)
     UINT8 index = getPathLength();
 
 
-    char* addrPtr = (char*)(buffer_ptr + offsetPath());
+    char* addrPtr = (char*)AccessBuffer32(offsetPath());
     int addr_idx = 0;
     unsigned int addrLen = 6;
     Path * path_ptr = &p;
@@ -800,7 +796,7 @@ bool SmartPathAd::setPath(Path p, int numAddresses)
     UINT8 index = getPathLength();
 
 
-    char* addrPtr = (char*)(buffer_ptr + offsetPath());
+    char* addrPtr = (char*)AccessBuffer32(offsetPath());
     int addr_idx = 0;
     unsigned int addrLen = 6;
     Path * path_ptr = &p;
@@ -835,7 +831,7 @@ int SmartPathAd::getPath(ProtoAddressList& addr_list)
     {
         ProtoAddress addr;
         addrType = ProtoAddress::ETH;
-        addr.SetRawHostAddress(addrType, (const char*)(buffer_ptr+offsetPath()+fieldLen*idx), addrLen);
+        addr.SetRawHostAddress(addrType, (const char*)GetBuffer32(offsetPath()+fieldLen*idx), addrLen);
         addr_list.Insert(addr);
     }
     return plen;
@@ -855,7 +851,7 @@ bool SmartPathAd::getPathNodeAt(UINT8 index, ProtoAddress& addr) const
     addrType = ProtoAddress::ETH;
     fieldLen = 8;
     addrLen = 6;
-    const char* addrPtr = (const char*)(buffer_ptr + offsetPath());
+    const char* addrPtr = (const char*)GetBuffer32(offsetPath());
     addrPtr += (index * fieldLen);
     return addr.SetRawHostAddress(addrType, addrPtr, addrLen);
 }

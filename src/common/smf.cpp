@@ -455,17 +455,12 @@ void Smf::DeleteInterface(Interface* iface)
 }  // end Smf::DeleteInterface()
 
 
-// (TBD) We may want this function to return some richer than a "bool"
-//       For example, we might like to know if it detected a corrupt
-//       packet somehow.
 Smf::DpdType Smf::GetIPv6PktID(ProtoPktIPv6&   ip6Pkt,      // input
                                char*           flowId,      // output
                                unsigned int*   flowIdSize,  // input/output, in bits
                                char*           pktId,       // output
                                unsigned int*   pktIdSize)   // input/output, in bits
 {
-
-
     ProtoPktIP::Protocol nextHeader = ip6Pkt.GetNextHeader();
     UINT32* nextBuffer = ip6Pkt.AccessPayload();
     unsigned int extHeaderLength = 0;
@@ -539,7 +534,7 @@ Smf::DpdType Smf::GetIPv6PktID(ProtoPktIPv6&   ip6Pkt,      // input
                 case ProtoPktIP::FRAG:
                 {
                     ProtoPktFRAG frag;
-                    if (frag.InitFromBuffer(ext.AccessBuffer(), ext.GetLength()))
+                    if (frag.InitFromBuffer(ext.AccessBuffer32(), ext.GetLength()))
                     {
                         // flowId == srcAddr:dstAddr (256 bits)
                         ASSERT(*flowIdSize >= 256);
@@ -561,7 +556,7 @@ Smf::DpdType Smf::GetIPv6PktID(ProtoPktIPv6&   ip6Pkt,      // input
                 case ProtoPktIP::AUTH:
                 {
                     ProtoPktAUTH ah;
-		    if (ah.InitFromBuffer(ext.AccessBuffer(), ext.GetLength()))
+		            if (ah.InitFromBuffer(ext.AccessBuffer32(), ext.GetLength()))
                     {
                         // flowId == ipSecType:srcAddr:dstAddr:spi (296 bits)
                         ASSERT(*flowIdSize >= 328);
@@ -575,7 +570,7 @@ Smf::DpdType Smf::GetIPv6PktID(ProtoPktIPv6&   ip6Pkt,      // input
                         *pktIdSize = 32;
                         return DPD_IPSEC;
                     }
-		    else
+		            else
                     {
                         PLOG(PL_ERROR, "Smf::GetIPv6PktID() error: bad AUTH header!\n");
                         return DPD_NONE;  // (TBD) return error condition?
