@@ -4,6 +4,9 @@ protolib/
 # build executables
 makefiles/nrlsmf
 
+# object files
+*.o
+
 # OS generated files #
 .DS_Store
 .DS_Store?

@@ -75,7 +75,7 @@ bool SmartController::AddManagedMembership(unsigned int ifaceIndex, const ProtoA
 // The external input mechanism passes these in
 // (Right this only handles "outbound" (locally generated) IGMP messages.
 //  In the future, full router IGMP queries, timeouts, etc will be supported)
-void SmartController::HandleIGMP(const ProtoPktIGMP& igmpMsg, const ProtoAddress& srcIp, unsigned int ifaceIndex, bool inbound)
+void SmartController::HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAddress& srcIp, unsigned int ifaceIndex, bool inbound)
 {
     if (inbound) return;  // only pay attention to outbound (locally generated) IGMP messages for an interface
     switch (igmpMsg.GetType())
@@ -552,11 +552,7 @@ unsigned int SmartController::BuildAck(UINT32*                buffer,
 //    }
 //    TRACE("\n");
     PLOG(PL_DEBUG,"SmartController::BuildAck() : fragment offset = %d\n", fragOffset);
-    if (!ack.setFragmentOffset(fragOffset))
-    {
-        PLOG(PL_ERROR, "MulticastFIB::BuildAck() error: insufficient 'buffer' length!\n");
-        return 0;
-    }
+    ack.setFragmentOffset(fragOffset);
 //    PLOG(PL_DEBUG,"SmartController::BuildAck(): Ack contents = ");
 //    ptr = (unsigned char*)ack.AccessBuffer();
 //    for (int idx = 0; idx < 36; idx++)

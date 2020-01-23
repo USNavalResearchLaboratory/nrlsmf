@@ -49,7 +49,7 @@ class SmartController
                     unsigned int                          pktInterval);
 
         // From Elastic multicast: Not used.
-        void HandleIGMP(const ProtoPktIGMP& igmpMsg, const ProtoAddress& srcIp, unsigned int ifaceIndex, bool inbound);
+        void HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAddress& srcIp, unsigned int ifaceIndex, bool inbound);
         // From Elastic Multicast: Not used
         bool AddManagedMembership(unsigned int ifaceIndex, const ProtoAddress& groupAddr);
 

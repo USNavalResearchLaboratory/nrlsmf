@@ -4522,39 +4522,39 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                             forwarded = true;
                             // If process packet decides to send the packet...
                             if (dstCount > 0)
-
-                            // If the "tap" (diversion to another process) has been activated, pass the packet that
-                            // would have been forwarded this process.  That process may filter the packet and use
-                            // the "smfInject" command to return the packet to "nrlsmf" for final forwarding.
-                            if (tap_active)
                             {
-                                // To save on byte copying, we left space at the beginning of our "alignedBuffer"
-                                // for the "smfPkt" message header in case it is needed.
-                                if (!ForwardFrameToTap(iface->GetIndex(), dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ProtoPktETH::HDR_LEN))
+                                // If the "tap" (diversion to another process) has been activated, pass the packet that
+                                // would have been forwarded this process.  That process may filter the packet and use
+                                // the "smfInject" command to return the packet to "nrlsmf" for final forwarding.
+                                if (tap_active)
                                 {
-                                    PLOG(PL_ERROR, "SmfApp::OnPktOutput() error: unable to forward packet to \"tap\" process\n");
-                                }
+                                    // To save on byte copying, we left space at the beginning of our "alignedBuffer"
+                                    // for the "smfPkt" message header in case it is needed.
+                                    if (!ForwardFrameToTap(iface->GetIndex(), dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ProtoPktETH::HDR_LEN))
+                                    {
+                                        PLOG(PL_ERROR, "SmfApp::OnPktOutput() error: unable to forward packet to \"tap\" process\n");
+                                    }
 
-                            }
+                                }
 #ifdef _PROTO_DETOUR
-                            else if (firewall_forward)
-                            {
-                                if (!ForwardPacket(dstCount, dstIfIndices, (char*)ipPkt.GetBuffer(), ipPkt.GetLength()))
+                                else if (firewall_forward)
                                 {
-                                    PLOG(PL_ERROR, "SmfApp::OnPktOutput() error: unable to forward packet via ProtoDetour\n");
+                                    if (!ForwardPacket(dstCount, dstIfIndices, (char*)ipPkt.GetBuffer(), ipPkt.GetLength()))
+                                    {
+                                        PLOG(PL_ERROR, "SmfApp::OnPktOutput() error: unable to forward packet via ProtoDetour\n");
+                                    }
                                 }
-
-                            }
 #endif // _PROTO_DETOUR
-                            else
-                            {
-                                if (!ForwardFrame(dstCount, dstIfIndices, (char *)ethPkt.GetBuffer(), ethPkt.GetLength()))
+                                else
                                 {
-                                    PLOG(PL_ERROR, "SmfApp::OnPktOutput() error: unable to forward packet via ProtoCap device\n");
-                                }
+                                    if (!ForwardFrame(dstCount, dstIfIndices, (char *)ethPkt.GetBuffer(), ethPkt.GetLength()))
+                                    {
+                                        PLOG(PL_ERROR, "SmfApp::OnPktOutput() error: unable to forward packet via ProtoCap device\n");
+                                    }
 
-                            }
-                        }  // end if (dstCount > 0)
+                                }
+                            }  // end if (dstCount > 0)
+                        }
                     }
                 }
             }

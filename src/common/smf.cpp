@@ -1689,10 +1689,10 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 
                 PLOG(PL_DEBUG, "Smf::ProcessPacket(): Marking... Original IP Length: %d\n", ipv4Pkt.GetPayloadLength());
                 // Get a pointer to the user data.
-                UINT32* payloadPtr = smartPkt.getPayload();
-                unsigned int dataLen = ipv4Pkt.GetPayloadLength() - 4*(payloadPtr-ipv4Pkt.AccessPayload()); //convert word to bytes
+                char* payloadPtr = (char*) smartPkt.getPayload();
+                unsigned int dataLen = ipv4Pkt.GetPayloadLength() - (payloadPtr - (char*)ipv4Pkt.AccessPayload()); //convert word to bytes
                  // Shift the memory contents in the buffer to the right by 4 bytes (for an extra address) in the SmartPkt header.
-                memmove((char *)payloadPtr + 4, (char *)payloadPtr, dataLen);
+                memmove(payloadPtr + 4, payloadPtr, dataLen);
                 // Add the extra node to the path
                 smartPkt.appendNodeToPath(srcIface.GetIpAddress());
                 // Update packet lengths of all involved protocols.
@@ -2382,15 +2382,15 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 // Packet length = 16 bytes + 4 * (length of path). This might change...
                 PLOG(PL_DEBUG, "Smf::ProcessPacket(): Removing SRR header \n ");
                 // Get a pointer to the original UDP data
-                 UINT32* ipDataPtr = smartPkt.getPayload();
+                char* ipDataPtr = (char*)smartPkt.getPayload();
                 // Get a pointer to the start of the smartPkt.
                 char* pktPtr = (char*) ipv4Pkt.GetPayload();
                 // Figure out how long the data is
-                unsigned int dataLen = ipv4Pkt.GetPayloadLength() - 4*(ipDataPtr-ipv4Pkt.AccessPayload()); //convert word to bytes
+                unsigned int dataLen = ipv4Pkt.GetPayloadLength() - (ipDataPtr - (char*)ipv4Pkt.AccessPayload()); //convert word to bytes
                  PLOG(PL_DEBUG, "Smf::ProcessPacket(): Data Length: %d \n ", dataLen);
-                 PLOG(PL_DEBUG, "Smf::ProcessPacket(): Header Length: %d \n ", (char* )ipDataPtr - (char *)pktPtr);
+                 PLOG(PL_DEBUG, "Smf::ProcessPacket(): Header Length: %d \n ", ipDataPtr - pktPtr);
                  // Shift the memory contents in the buffer to the right by 4 bytes (for an extra address) in the SmartPkt header.
-                memmove((char *)pktPtr, (char *)ipDataPtr, dataLen);
+                memmove(pktPtr, ipDataPtr, dataLen);
                 // Update packet lengths of all involved protocols.
                 ipv4Pkt.SetPayloadLength(dataLen);
                 ipPkt.SetLength(ipv4Pkt.GetLength());
