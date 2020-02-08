@@ -191,6 +191,12 @@ class Smf
                 bool IsLayered() const
                     {return is_layered;}
                 
+                // These enable/disable reliable forwarding for the interface
+                void SetReliable(bool state)
+                    {is_reliable = state;}
+                bool IsReliable() const
+                    {return is_reliable;}
+                
                 void SetEncapsulation(bool state)
                     {ip_encapsulate = state;}
                 bool IsEncapsulating() const
@@ -357,6 +363,7 @@ class Smf
                 bool                resequence;
                 bool                is_tunnel;
                 bool                is_layered;
+                bool                is_reliable;
                 bool                ip_encapsulate;
                 ProtoAddress        encapsulation_link;  // MAC addr of next hop for encapsulated packets
                 SmfDpd*             dup_detector;

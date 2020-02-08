@@ -873,6 +873,7 @@ const char* const SmfApp::CMD_LIST[] =
     "+forward",     // {on | off}  : forwarding enable/disable (default = "on")
     "+relay",       // {on | off}  : act as relay node (default = "on")
     "+elastic",     // <ifaceGroup> : enable Elastic Multicast for specific interface group
+    "+reliable",    // <ifaceList> : experimental reliable hop-by-hop forwarding option (adds UMP option to IPv4 packets)
     "+adaptive",    // <ifaceGroup>: enable Smart Routing for specific interface group
     "+unicast",     // {unicastPrefix | off}  : allow unicast forwarding for a given prefix, or off (default = "off")
     "+filterDups",  // {on | off} : filter received duplicates for "device" operation (default = "on")
@@ -1502,9 +1503,25 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
 #endif // ELASTIC_MCAST
         elastic_mcast = true;
     }
+    else if (!strncmp("reliable", cmd, len))
+    {
+        ProtoTokenator tk(val, ',');
+        const char* ifaceName;
+        while (NULL != (ifaceName = tk.GetNextItem()))
+        {
+            unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(ifaceName);
+            Smf::Interface*iface = smf.GetInterface(ifaceIndex);
+            if (NULL == iface)
+            {
+                PLOG(PL_ERROR, "OnCommand(reliable) error: invalid interface \"%s\"\n", ifaceName);
+                return false;
+            }
+            iface->SetReliable(true);
+        }
+    }
     else if (!strncmp("adaptive", cmd, len))
     {
-        // elastic <groupName>
+        // adaptive <groupName>
         Smf::InterfaceGroup* ifaceGroup = smf.FindInterfaceGroup(val);
         if (NULL == ifaceGroup)
         {
@@ -4447,7 +4464,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
     // TBD - We could pre-size and align the "ethBuffer" here to allow
     // for possible forwarding IP encapsulation
     const int BUFFER_MAX = 4096;
-    bool forwarded = false;
+    bool packetHandled = false;
     UINT32 alignedBuffer[BUFFER_MAX/sizeof(UINT32)];
     // offset by 2-bytes so IP content is 32-bit aligned
     const unsigned int ENCAPS_OFFSET = 20;  // fixed20 bytes for IPIP encapsulation
@@ -4518,8 +4535,8 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                             // Call to process packet with outbound = true;
                             // This skips the packet reception part of process packet, adds the SRR header, and forwards.
                             int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, *iface, dstIfIndices, IF_COUNT_MAX,ethPkt, true);
-                            // We set this bool to true here to make sure that later attempts to send a packet dont work.
-                            forwarded = true;
+                            // We set this bool to true here to make sure that later attempts to inform code below this was sent
+                            packeHandled = true;
                             // If process packet decides to send the packet...
                             if (dstCount > 0)
                             {
@@ -4571,149 +4588,173 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
         bool elasticUnicast = (NULL != assoc) ? assoc->GetInterfaceGroup().GetElasticUnicast() : false;
         if (elasticMulticast || elasticUnicast)
         {
-            if (ProtoPktETH::IP == ethPkt.GetType())
+            ProtoPktIP ipPkt;
+            bool isValidIP = (ProtoPktETH::IP == ethPkt.GetType()) && 
+                             ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), (UINT32*)ethPkt.GetPayload(), ethPkt.GetPayloadLength());
+            if (isValidIP)
             {
-                ProtoPktIP ipPkt;
-                if (ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), (UINT32*)ethPkt.GetPayload(), ethPkt.GetPayloadLength()))
+                bool isUnicast = false;
+                if (4 == ipPkt.GetVersion())
                 {
-                    if (4 == ipPkt.GetVersion())
+                    ProtoPktIPv4 ip4Pkt(ipPkt);
+                    ProtoAddress src, dst;
+                    ip4Pkt.GetSrcAddr(src);
+                    ip4Pkt.GetDstAddr(dst);
+                    isUnicast = dst.IsUnicast();
+                    if (elasticMulticast && (ProtoPktIP::IGMP == ip4Pkt.GetProtocol()))
                     {
-                        ProtoPktIPv4 ip4Pkt(ipPkt);
-                        ProtoAddress src, dst;
-                        ip4Pkt.GetSrcAddr(src);
-                        ip4Pkt.GetDstAddr(dst);
-                        if (elasticMulticast && (ProtoPktIP::IGMP == ip4Pkt.GetProtocol()))
+                        // This is an outbound IGMP message, so intercept it
+                        ProtoAddress srcAddr;
+                        ip4Pkt.GetSrcAddr(srcAddr);
+                        ProtoPktIGMP igmpMsg(ip4Pkt.AccessPayload(), ip4Pkt.GetPayloadLength());
+                        if (igmpMsg.InitFromBuffer(ip4Pkt.GetPayloadLength()))
                         {
-                            // This is an outbound IGMP message, so intercept it
-                            ProtoAddress srcAddr;
-                            ip4Pkt.GetSrcAddr(srcAddr);
-                            ProtoPktIGMP igmpMsg(ip4Pkt.AccessPayload(), ip4Pkt.GetPayloadLength());
-                            if (igmpMsg.InitFromBuffer(ip4Pkt.GetPayloadLength()))
-                            {
-                                mcast_controller.HandleIGMP(igmpMsg, srcAddr, iface->GetIndex(), false);
-                                numBytes = BUFFER_MAX - BUFFER_RESERVE;  // reset "numBytes" for next vif.Read() call
-                                continue;
-                            }
-                            else
-                            {
-                                PLOG(PL_WARN, "SmfApp::OnPktOutput() warning: invalid IGMP message?!\n");
-                            }
+                            mcast_controller.HandleIGMP(igmpMsg, srcAddr, iface->GetIndex(), false);
+                            numBytes = BUFFER_MAX - BUFFER_RESERVE;  // reset "numBytes" for next vif.Read() call
+                            continue;
                         }
-                        if (elasticUnicast)
+                        else
                         {
-                            // For elastic unicast, we need to change the ETH 
-                            // destination  address since ARP is disabled, etc
-                            // TBD - support ARP interception instead?
-                            ProtoAddress dstAddr;
-                            ip4Pkt.GetDstAddr(dstAddr);
-                            if (dstAddr.IsUnicast())
-                            {
-                                char addrBuffer[6];
-			                    memset(addrBuffer, 0XFF, 6);
-                                ProtoAddress bcastAddr;
-			                    bcastAddr.SetRawHostAddress(ProtoAddress::ETH, addrBuffer, 6);        
-                                ethPkt.SetDstAddr(bcastAddr);
-                            }
+                            PLOG(PL_WARN, "SmfApp::OnPktOutput() warning: invalid IGMP message?!\n");
                         }
                     }
                 }
-                else
+                else if (6 == ipPkt.GetVersion())
                 {
-                    PLOG(PL_WARN, "SmfApp::OnPktOutput() warning: invalid IP packet?!\n");
+                    ProtoPktIPv6 ip6Pkt(ipPkt);
+                    ProtoAddress dst;
+                    ip6Pkt.GetDstAddr(dst);
+                    isUnicast = dst.IsUnicast();
+                }   
+                if (elasticUnicast && isUnicast)
+                {
+                    // For elastic unicast, we need to change the ETH 
+                    // destination  address since ARP is disabled, etc
+                    // TBD - support ARP interception instead?
+                    // TBD - do this _after_ smf.ProcessPacket() is called???
+                    char addrBuffer[6];
+			        memset(addrBuffer, 0XFF, 6);
+                    ProtoAddress bcastAddr;
+			        bcastAddr.SetRawHostAddress(ProtoAddress::ETH, addrBuffer, 6);        
+                    ethPkt.SetDstAddr(bcastAddr);
                 }
-            }
+                // Use Smf::ProcessPacket() to decide if packet should be sent instead of default packet transmission behavior
+                unsigned int dstIfIndices[IF_COUNT_MAX];
+                // Grab the source MAC address
+                ProtoAddress srcMacAddr;
+                ethPkt.GetSrcAddr(srcMacAddr);
+                int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, *iface, dstIfIndices, IF_COUNT_MAX, ethPkt, true);
+                for (int i = 0; i < dstCount; i++)
+                {
+                    // TBD - perhaps we should have a more efficient way to dereference the dstIface ???
+                    // (e.g., instead of dstIfIndices array, pass an array of Smf::Interface pointers)
+                    Smf::Interface* dstIface = smf.GetInterface(dstIfIndices[i]);
+                    ASSERT(NULL != dstIface);
+                    if (!SendFrame(*dstIface, (char*)ethPkt.GetBuffer(), ethPkt.GetLength()))
+                    {
+                        char ifaceName[32], dstIfaceName[32];
+                        ifaceName[31] = dstIfaceName[31] = '\0';
+                        ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, 31);
+                        ProtoNet::GetInterfaceName(dstIface->GetIndex(), dstIfaceName, 31);
+                        PLOG(PL_WARN, "SmfApp::OnPktOutput(%s) warning: blocked sending frame via iface %s\n", ifaceName, dstIfaceName);
+                    }
+                }
+                packetHandled =  true;
+            }  // end if (isValidIP)
         }
 #endif // ELASTIC_MCAST
-        if (iface->IsEncapsulating())
+        // Note even it ELASTIC_MCAST or ADAPTIVE_ROUTING, non-IP packets need to be sent
+        // The IP-IP encapsulation code here should be moved elsewhere 
+        //  (e.g., within ForwardFrame() on a per-interface basis
+        if (!packetHandled)
         {
-            PLOG(PL_WARN, "SmfApp::OnPktOutput() note : Packet Encapsulation\n");
-            // a) Encapsulate IP Unicast only, so we need to get the dstAddr to check
-            ProtoAddress dstAddr; // stays "invalid" if not an IP packet
-            ProtoPktIP ipPkt;//((UINT32*)ethPkt.GetPayload(), ethPkt.GetPayloadLength());
-            ProtoPktETH::Type ethType = ethPkt.GetType();
-            if ((ProtoPktETH::IP == ethType) || (ProtoPktETH::IPv6 == ethType))
+            if (iface->IsEncapsulating())
             {
-                if (ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), (UINT32*)ethPkt.GetPayload(), ethPkt.GetPayloadLength()))
-                    ipPkt.GetDstAddr(dstAddr);
+                PLOG(PL_WARN, "SmfApp::OnPktOutput() note : Packet Encapsulation\n");
+                // a) Encapsulate IP Unicast only, so we need to get the dstAddr to check
+                ProtoAddress dstAddr; // stays "invalid" if not an IP packet
+                ProtoPktIP ipPkt;//((UINT32*)ethPkt.GetPayload(), ethPkt.GetPayloadLength());
+                ProtoPktETH::Type ethType = ethPkt.GetType();
+                if ((ProtoPktETH::IP == ethType) || (ProtoPktETH::IPv6 == ethType))
+                {
+                    if (ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), (UINT32*)ethPkt.GetPayload(), ethPkt.GetPayloadLength()))
+                        ipPkt.GetDstAddr(dstAddr);
+                    else
+                        PLOG(PL_WARN, "SmfApp::OnPktOutput() warning: invalid IP packet?!\n");
+
+                }
+                // b) Look up next hop for encapsulation
+                ProtoAddress nextHopAddr;  // stays "invalid" if not to encapsulate
+                if (dstAddr.IsValid() && dstAddr.IsUnicast())
+                {
+                    unsigned int prefixLen = dstAddr.GetLength() << 3; // addr length in bits
+                    unsigned int nextHopIndex;
+                    int metric;
+                    if (!route_table.GetRoute(dstAddr, prefixLen, nextHopAddr, nextHopIndex, metric))
+                        PLOG(PL_WARN, "SmfApp::OnPktOutput() warning: no route for encapsulating packet to %s\n", dstAddr.GetHostString());
+                }
+                if (ProtoAddress::IPv6 == nextHopAddr.GetType())
+                {
+                    PLOG(PL_WARN, "SmfApp::OnPktOutput() error: IPv6 encapsulation not yet supported!\n");
+                    nextHopAddr.Invalidate();  // TBD - support IPv6 encapsulation
+                }
+                // c) If valid next hop and not equal to destination, encapsulate
+                if (nextHopAddr.IsValid() && !nextHopAddr.HostIsEqual(dstAddr))
+                {
+                    // Perform the encapsulation.  Current initial proof-of-concept limitations:
+                    // 1) IPv4-only RFC 2003 IPIP encapsulation (IPv4 over IPv4)
+                    // 2) We don't deal with fragmentation or MTU Discovery issues yet
+                    // 3) No ICMP handling
+                    // 4) TBD - handle these issues and provide RFC 2003 IPIP encapsulation when needed (incl. IPv6 variant)
+                    // RFC 2004 minimal encapsulation (IPv4 only) is <modified IP Header> + <minimal Encapsulation Header> + <IP Payload>
+                    UINT16* ethBuffer2 = ethBuffer - ENCAPS_OFFSET / 2;
+                    memcpy(ethBuffer2, ethBuffer, 14);  // slide 14 bytes of Ethernet header into "reserved" buffer space
+                    ProtoPktETH ethPkt2((UINT32*)ethBuffer2, BUFFER_MAX - BUFFER_RESERVE + ENCAPS_OFFSET);
+                    ethPkt2.InitFromBuffer(ethPkt.GetLength());
+                    // We use some info from the inner packet we are encapsulating
+                    ProtoPktIPv4 ip4Pkt(ipPkt); // we know it's an IPv4 packet
+
+                    // TBD - We should check here if the inner packet we plan to encapsulate is one
+                    // that had already been encapsulated but ended up being queued because of flow
+                    // control. If that's the case we should not re-encapsulate and refresh the next
+                    // hop address instead!
+
+                    // Initialize and build our outer, encapsulating IPv4 packet header
+                    ProtoPktIPv4 ip4Pkt2((UINT32*)ethPkt2.GetPayload(), ethPkt2.GetPayloadLength() + ENCAPS_OFFSET);
+                    ip4Pkt2.SetTOS(ip4Pkt.GetTOS());
+                    ip4Pkt2.SetID(ip4Pkt.GetID()); // TBD - set the IP ID field differently?
+                    ip4Pkt2.SetTTL(ip4Pkt.GetTTL());
+                    ip4Pkt2.SetProtocol(ProtoPktIP::IPIP);  // IPIP encapsulation (protocol 4)
+                    ip4Pkt2.SetSrcAddr(iface->GetIpAddress());
+                    ip4Pkt2.SetDstAddr(nextHopAddr);
+                    // We don't copy the enclosed packet as a payload since it _should_
+                    // already be in the right place due to our ENCAPS_OFFSET.
+                    // but we do need to set the payload length and calculate the checksum
+                    ip4Pkt2.SetPayloadLength(ip4Pkt.GetLength(), true);
+                    ethPkt2.SetPayloadLength(ip4Pkt2.GetLength());
+
+                    // If an explicit encapsulation link dst MAC addr has been set, use it.
+                    // Otherwise assume the frame already has the proper next hop MAC addr
+                    // (THis should be the case if a system default route is set for the
+                    //  egress point for this encapsulating host/router; i.e, a tactical radio)
+                    if (iface->GetEncapsulationLink().IsValid())
+                        ethPkt2.SetDstAddr(iface->GetEncapsulationLink());
+
+                    // Send our frame with IPIP encapsulated packet ...
+                    //PLOG(PL_WARN, "SmfApp::OnPktOutput() note : Call to Send Frame 1!\n");
+                    SendFrame(*iface, (char*)ethBuffer2, ethPkt2.GetLength());
+                }
                 else
-                    PLOG(PL_WARN, "SmfApp::OnPktOutput() warning: invalid IP packet?!\n");
-
-            }
-            // b) Look up next hop for encapsulation
-            ProtoAddress nextHopAddr;  // stays "invalid" if not to encapsulate
-            if (dstAddr.IsValid() && dstAddr.IsUnicast())
-            {
-                unsigned int prefixLen = dstAddr.GetLength() << 3; // addr length in bits
-                unsigned int nextHopIndex;
-                int metric;
-                if (!route_table.GetRoute(dstAddr, prefixLen, nextHopAddr, nextHopIndex, metric))
-                    PLOG(PL_WARN, "SmfApp::OnPktOutput() warning: no route for encapsulating packet to %s\n", dstAddr.GetHostString());
-            }
-            if (ProtoAddress::IPv6 == nextHopAddr.GetType())
-            {
-                PLOG(PL_WARN, "SmfApp::OnPktOutput() error: IPv6 encapsulation not yet supported!\n");
-                nextHopAddr.Invalidate();  // TBD - support IPv6 encapsulation
-            }
-            // c) If valid next hop and not equal to destination, encapsulate
-            if (nextHopAddr.IsValid() && !nextHopAddr.HostIsEqual(dstAddr))
-            {
-                // Perform the encapsulation.  Current initial proof-of-concept limitations:
-                // 1) IPv4-only RFC 2003 IPIP encapsulation (IPv4 over IPv4)
-                // 2) We don't deal with fragmentation or MTU Discovery issues yet
-                // 3) No ICMP handling
-                // 4) TBD - handle these issues and provide RFC 2003 IPIP encapsulation when needed (incl. IPv6 variant)
-                // RFC 2004 minimal encapsulation (IPv4 only) is <modified IP Header> + <minimal Encapsulation Header> + <IP Payload>
-                UINT16* ethBuffer2 = ethBuffer - ENCAPS_OFFSET / 2;
-                memcpy(ethBuffer2, ethBuffer, 14);  // slide 14 bytes of Ethernet header into "reserved" buffer space
-                ProtoPktETH ethPkt2((UINT32*)ethBuffer2, BUFFER_MAX - BUFFER_RESERVE + ENCAPS_OFFSET);
-                ethPkt2.InitFromBuffer(ethPkt.GetLength());
-                // We use some info from the inner packet we are encapsulating
-                ProtoPktIPv4 ip4Pkt(ipPkt); // we know it's an IPv4 packet
-
-                // TBD - We should check here if the inner packet we plan to encapsulate is one
-                // that had already been encapsulated but ended up being queued because of flow
-                // control. If that's the case we should not re-encapsulate and refresh the next
-                // hop address instead!
-
-                // Initialize and build our outer, encapsulating IPv4 packet header
-                ProtoPktIPv4 ip4Pkt2((UINT32*)ethPkt2.GetPayload(), ethPkt2.GetPayloadLength() + ENCAPS_OFFSET);
-                ip4Pkt2.SetTOS(ip4Pkt.GetTOS());
-                ip4Pkt2.SetID(ip4Pkt.GetID()); // TBD - set the IP ID field differently?
-                ip4Pkt2.SetTTL(ip4Pkt.GetTTL());
-                ip4Pkt2.SetProtocol(ProtoPktIP::IPIP);  // IPIP encapsulation (protocol 4)
-                ip4Pkt2.SetSrcAddr(iface->GetIpAddress());
-                ip4Pkt2.SetDstAddr(nextHopAddr);
-                // We don't copy the enclosed packet as a payload since it _should_
-                // already be in the right place due to our ENCAPS_OFFSET.
-                // but we do need to set the payload length and calculate the checksum
-                ip4Pkt2.SetPayloadLength(ip4Pkt.GetLength(), true);
-                ethPkt2.SetPayloadLength(ip4Pkt2.GetLength());
-
-                // If an explicit encapsulation link dst MAC addr has been set, use it.
-                // Otherwise assume the frame already has the proper next hop MAC addr
-                // (THis should be the case if a system default route is set for the
-                //  egress point for this encapsulating host/router; i.e, a tactical radio)
-                if (iface->GetEncapsulationLink().IsValid())
-                    ethPkt2.SetDstAddr(iface->GetEncapsulationLink());
-
-                // Send our frame with IPIP encapsulated packet ...
-                //PLOG(PL_WARN, "SmfApp::OnPktOutput() note : Call to Send Frame 1!\n");
-                SendFrame(*iface, (char*)ethBuffer2, ethPkt2.GetLength());
-            }
+                {
+                   // PLOG(PL_WARN, "SmfApp::OnPktOutput() note : Call to Send Frame 2!\n");
+                    SendFrame(*iface, (char*)ethBuffer, numBytes);
+                }
+            }  // end if (ip_encapsulate)
             else
             {
-               // PLOG(PL_WARN, "SmfApp::OnPktOutput() note : Call to Send Frame 2!\n");
                 SendFrame(*iface, (char*)ethBuffer, numBytes);
             }
-        }  // end if (ip_encapsulate)
-        else
-        {
-            // Add a check to make sure this packet wasn't already forwarded by AR code.
-            if (!forwarded)
-            {
-                SendFrame(*iface, (char*)ethBuffer, numBytes);
-            }
-        }
+        }  // end if (!packetHandled)
         if (!vif.InputNotification()) break;
         numBytes = BUFFER_MAX - BUFFER_RESERVE;  // reset "numBytes" for next vif.Read() call
     }  // end while (vif.Read())
@@ -4793,11 +4834,11 @@ void SmfApp::OnPktCapture(ProtoChannel&              theChannel,
 // Forward IP packet encapsulated in ETH frame using "ProtoCap" (i.e. pcap or similar) device
 bool SmfApp::ForwardFrame(unsigned int dstCount, unsigned int* dstIfIndices, char* frameBuffer, unsigned int frameLength)
 {
-    unsigned int numBytes = frameLength;
     bool result = false;
     for (unsigned int i = 0; i < dstCount; i++)
     {
         // TBD - perhaps we should have a more efficient way to dereference the dstIface ???
+        // (e.g., instead of dstIfIndices array, pass an array of Smf::Interface pointers)
         int dstIfIndex = dstIfIndices[i];
         Smf::Interface* dstIface = smf.GetInterface(dstIfIndex);
         ASSERT(NULL != dstIface);

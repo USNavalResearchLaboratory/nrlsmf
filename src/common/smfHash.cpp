@@ -55,7 +55,7 @@ void SmfHash::ComputeHashIPv4(ProtoPktIPv4& ipv4Pkt)
     while (iterator.GetNextOption(option))
     {
         if (!option.IsMutable())
-            Update(option.GetBuffer(), option.GetLength());   
+            Update((char*)option.GetBuffer(), option.GetLength());   
     }
     // c) Update CRC using packet payload
     Update((const char*)ipv4Pkt.GetPayload(), ipv4Pkt.GetPayloadLength());
@@ -86,9 +86,9 @@ void SmfHash::ComputeHashIPv6(ProtoPktIPv6& ipv6Pkt)
             {
                 // If mutable, update hash over "opt" type/len fields only, else over entire "opt"
                 if (opt.IsMutable())
-                    Update(opt.GetBuffer(), 2);
+                    Update((char*)opt.GetBuffer(), 2);
                 else
-                    Update(opt.GetBuffer(), opt.GetLength());
+                    Update((char*)opt.GetBuffer(), opt.GetLength());
             }  // end while (optIterator.GetNextOption())
         }
         else

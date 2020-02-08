@@ -54,9 +54,9 @@ Smf::Interface::Extension::~Extension()
 }
 
 Smf::Interface::Interface(unsigned int ifIndex)
- : if_index(ifIndex), resequence(false), is_tunnel(false), ip_encapsulate(false), dup_detector(NULL),
-   unicast_group_count(0),recv_count(0), mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0),
-   extension(NULL)
+ : if_index(ifIndex), resequence(false), is_tunnel(false), is_layered(false), is_reliable(false),
+   ip_encapsulate(false), dup_detector(NULL), unicast_group_count(0), recv_count(0), mrcv_count(0), 
+   dups_count(0), asym_count(0), fwd_count(0), extension(NULL)
 {
 }
 
@@ -1326,7 +1326,6 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 }  // end switch(ipv4Pkt.GetProtocol())
             }  // end if/else (isFragment)
 
-
             // If hashing is enabled, compute and append "pktId" with hashValue
             if (SmfHash::NONE != GetHashType())
             {
@@ -1373,7 +1372,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 return 0;
             }
             ipv6Pkt.GetSrcAddr(srcIp);
-            if (IsOwnAddress(srcIp))       // don't forward locally-generated packets
+            if (!outbound && IsOwnAddress(srcIp))       // don't forward locally-generated packets
             {
                 PLOG(PL_DETAIL, "Smf::ProcessPacket() skipping locally-generated IPv6 pkt\n");
                 return 0;
@@ -1842,7 +1841,6 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 		            // regardless of the ECDS status. Compute the interface array
 		            // as if the node was a relay, and return (unsigned int)-1 if the relay was disabled.
 		            forward = true;
-
 		            // Locally generated unicast packets should not be blocked by ECDS
 		            // They are identified as they do not have a valid source MAC address.
 		            if (srcMac.IsValid())
@@ -1954,15 +1952,15 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             }
         }
 
-	    if (srcMac.IsValid() && IsOwnAddress(srcMac)) // don't forward outbound locally-generated packets captured
+	    if (srcMac.IsValid() && IsOwnAddress(srcMac) && !outbound) // don't forward locally-generated packets captured
 	    {
-            #ifdef ADAPTIVE_ROUTING
+#ifdef ADAPTIVE_ROUTING
                 int temp = 0;
                 PLOG(PL_DEBUG, "Smf::ProcessPacket(): Local packet, noop.\n");
-            #else
+#else
                 PLOG(PL_DETAIL, "Smf::ProcessPacket() skipping locally-generated IP pkt\n");
                 return 0;
-            #endif // ADAPTIVE_ROUTING
+#endif // ADAPTIVE_ROUTING
 	    }
 
 #ifdef ADAPTIVE_ROUTING
