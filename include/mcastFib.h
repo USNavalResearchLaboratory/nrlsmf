@@ -123,6 +123,35 @@ class MulticastFIB
                 TokenBucket* FindBucket(unsigned int ifaceIndex) const
                     {return Find((char*)&ifaceIndex, sizeof(unsigned int) << 3);}
         }; // end class MulticastFIB::BucketList
+        
+        // This is a tick-based "age" tracker used to manage
+        // UpstreamRelay, UpstreamHistory, and FibEntry status
+        class ActivityStatus
+        {
+            public:
+                ActivityStatus() : age_tick(0), age_max(true) {}
+                ~ActivityStatus() {}
+                
+                unsigned int Age(unsigned int currentTick);
+                
+                void Refresh(unsigned int currentTick)
+                {
+                    age_tick = currentTick;
+                    age_max = false;
+                }
+                
+                unsigned int GetAgeTick() const
+                    {return age_tick;}
+                
+                bool IsValid() const
+                    {return !age_max;}
+                void Invalidate()
+                    {age_max = true;}
+            
+            private:
+                unsigned int age_tick;   // units of microseconds (last time entry was tickled)
+                bool         age_max;    // if "true", the "age_tick" value is invalid
+        };  // end class MulticastFIB::Age
 
         class Entry;
 
@@ -142,26 +171,28 @@ class MulticastFIB
                     {return iface_index;}
 
                 // Set start of update count/interval (if non-zero count)
-                void Reset(unsigned int currentTick, unsigned int count = 1)
+                void Reset(unsigned int currentTick)
                 {
-                    update_count = count;
-                    update_start = age_tick = currentTick;
-                    update_max = age_max = count ? false : true;
+                    update_count = 1;
+                    update_start = currentTick;
+                    update_max = false; 
+                    activity_status.Refresh(currentTick);
                 }
 
                 void Preset(unsigned int count)
                 {
                     update_count = count;
-                    update_max = age_max = true;
+                    update_max = true;
+                    activity_status.Invalidate();
                 }
 
                 // This is called upon receiving a packet from the upstream
-                void Refresh(unsigned int currentTick, unsigned int count = 1);
+                void Refresh(unsigned int currentTick);
 
-                // This is called to "age" tick count status
+                // This is called to "age" activity status
                 unsigned int Age(unsigned int currentTick);
 
-                unsigned int GetAge(unsigned int currentTick) const;
+                //unsigned int GetAge(unsigned int currentTick) const;
                 unsigned int GetUpdateCount() const
                     {return update_count;}
                 unsigned int GetUpdateInterval() const;
@@ -180,8 +211,7 @@ class MulticastFIB
                 unsigned int    update_count;
                 unsigned int    update_start; // tick when update_count started
                 bool            update_max;
-                unsigned int    age_tick;     // last time of packet from this upstream
-                bool            age_max;
+                ActivityStatus  activity_status; // last time of packet from this upstream
 
         };  // end class MulticastFIB::UpstreamRelay
 
@@ -191,7 +221,54 @@ class MulticastFIB
                 UpstreamRelay* FindUpstreamRelay(const ProtoAddress& addr) const
                     {return Find(addr.GetRawHostAddress(), addr.GetLength() << 3);}
         }; // end class MulticastFIB::UpstreamRelayList
+        
+         // This class keeps state for the optional
+        // reliable hop-by-hop forwarding.  We only
+        // NACK Elastic Multicast upstream relays.
+        class UpstreamHistory : public ProtoTree::Item
+        {
+            public:
+                UpstreamHistory(const ProtoAddress& addr);
+                ~UpstreamHistory();
+                
+                void SetSequence(UINT16 seq)
+                    {seq_prev = seq;}
+                UINT16 GetSequence() const
+                    {return seq_prev;}
+                
+                void Refresh(unsigned int currentTick)
+                    {activity_status.Refresh(currentTick);}
+                unsigned int Age(unsigned int currentTick)
+                    {return activity_status.Age(currentTick);}
+                
+                void ResetIdleCount()
+                    {idle_count = 0;}
+                void IncrementIdleCount(unsigned int count = 1)
+                    {idle_count += count;}
+                unsigned int GetIdleCount() const
+                    {return idle_count;}
+                
+            private:
+                // ProtoTree::Item required overrides
+                const char* GetKey() const
+                    {return (src_addr.GetRawHostAddress());}
+                unsigned int GetKeysize() const
+                    {return (src_addr.GetLength() << 3);}    
+                    
+                ProtoAddress        src_addr;
+                UINT16              seq_prev;
+                ActivityStatus      activity_status;
+                unsigned int        idle_count;
+        };  // end class MulticastFIB::UpstreamHistory
+        
+        class UpstreamHistoryTable : public ProtoTreeTemplate<UpstreamHistory>
+        {
+            public:
+                UpstreamHistory* FindUpstreamHistory(const ProtoAddress& addr) const
+                    {return Find(addr.GetRawHostAddress(), addr.GetLength() << 3);}
+        };  // end class MulticastFIB::UpstreamHistoryTable
 
+#ifdef ADAPTIVE_ROUTING
         // The following classes have been added as part of the R2DN program
         // Author: Matt Johnston, Boeing Research & Technology.
 
@@ -269,7 +346,8 @@ class MulticastFIB
                 RL_Data* addFlow(const FlowDescription& flow);
 		};
 
-
+#endif // ADAPTIVE_ROUTING
+        
         // The MulticastFIB::Entry class is used to keep state for flows detected
         class Entry : public FlowEntryTemplate<ProtoTree>
         {
@@ -348,8 +426,7 @@ class MulticastFIB
 
                 void Refresh(unsigned int currentTick)
                 {
-                    age_tick = currentTick;
-                    age_max = false;
+                    activity_status.Refresh(currentTick);
                     RefreshTokenBuckets(currentTick);
                     AgeUpstreamRelays(currentTick);
                 }
@@ -372,7 +449,7 @@ class MulticastFIB
                     {unicast_probability = prob;}
                 double getUnicastProb()
                     {return unicast_probability;}
-
+                
                 // List linking (used for aging/pruning entries)
                 void Append(Entry* entry)
                     {active_next = entry;}
@@ -388,8 +465,7 @@ class MulticastFIB
                 ForwardingStatus        default_forwarding_status;
                 unsigned int            forwarding_count;   // how many interfaces forwarding to ...
 
-                unsigned int            age_tick;           // units of microseconds (last time entry was tickled)
-                bool                    age_max;            // if "true", the "age_tick" value is invalid
+                ActivityStatus             activity_status;
                 BucketList              bucket_list;        // list of token buckets for outbound interfaces (allows independent interface policies)
                 UpstreamRelayList       upstream_list;
                 UpstreamRelay           downstream_relay;       // Next unicast hop (MAC address / Interface)
@@ -403,7 +479,7 @@ class MulticastFIB
                 Entry*                  active_next;
 
         };  // end class MulticastFIB::Entry
-
+        /*
         class MaskLengthList
         {
             public:
@@ -428,7 +504,7 @@ class MulticastFIB
 
                     private:
                         const MaskLengthList& mask_list;
-                        int                   list_index;
+                        unsigned int          ist_index;
 
                 };  // end class MulticastFIB::MaskLengthList::Iterator
 
@@ -444,7 +520,7 @@ class MulticastFIB
                 UINT8           list_length;
                 unsigned int    ref_count[129];
         };  // end class MulticastFIB::MaskLengthList
-
+        */
         class EntryTable : public FlowTableTemplate<Entry, ProtoTree> {};
 
         EntryTable& AccessFlowTable()
@@ -589,6 +665,7 @@ class MulticastFIB
                             {return ((const char*)static_cast<const Membership&>(item).GetTimeoutPtr());}
                         virtual unsigned int GetKeysize(const Item& item) const
                             {return (sizeof(unsigned int) << 3);}
+                        ProtoTree::Endian GetEndian() const {return ProtoTree::GetNativeEndian();}
                 };  // end class MemberhipTable::Ring
 
                 // The AgeIterator class lets us iterate over the "activated" memberships
@@ -942,6 +1019,7 @@ class ElasticMulticastController
         void HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAddress& srcIp, unsigned int ifaceIndex, bool inbound);
 
         bool AddManagedMembership(unsigned int ifaceIndex, const ProtoAddress& groupAddr);
+        void RemoveManagedMembership(unsigned int ifaceIndex, const ProtoAddress& groupAddr);
 
         void HandleAck(const ElasticAck& ack, unsigned int ifaceIndex, const ProtoAddress& srcMac);
         bool ActivateMembership(MulticastFIB::Membership&       membership,

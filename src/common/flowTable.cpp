@@ -606,7 +606,6 @@ void FlowTable::Iterator::Reset(const FlowDescription* description, int flags)
     if (NULL != description)
     {
         
-        bool fullMatch = false;
         const char* prefix = description->GetKey();
         unsigned int prefixSize = 0;  
         bool extendPrefix = true;

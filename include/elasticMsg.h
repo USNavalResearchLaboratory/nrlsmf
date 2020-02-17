@@ -5,6 +5,85 @@
 #include "protoPktIP.h"
 #include "protoAddress.h"
 
+
+// This is a base class so that the different message types can
+// inherit some common enums and type definitions
+
+// ElasticMsg types can be bundled with each message having a common
+// type-length message header ...
+//
+//       0               1               2               3               
+//       0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |   Msg Type    |    Msg Len    |        ...
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+class ElasticMsg : public ProtoPkt
+{
+    public:
+        ElasticMsg(void*          bufferPtr = NULL,
+                   unsigned int   bufferBytes = 0,
+                   bool           initFromBuffer = true,
+                   bool           freeOnDestruct = false);
+        ~ElasticMsg();
+        
+        static const ProtoAddress ELASTIC_ADDR;  // 224.0.0.55
+        static const ProtoAddress ELASTIC_MAC;   // ethernet MAC for ELASTIC_ADDR
+        static const UINT16 ELASTIC_PORT;        // 5555
+        
+        enum Type
+        {
+            MSG_INVALID = 0,
+            ACK,
+            ADV,
+            NACK
+        };
+            
+        // Flow description address types and flags
+        enum AddressType
+        {
+            ADDR_INVALID = 0,
+            ADDR_IPV4,
+            ADDR_IPV6,
+            ADDR_ETH
+        };
+
+        enum Flag
+        {
+            FLAG_SOURCE     = 0x01,
+            FLAG_PROTOCOL   = 0x02,
+            FLAG_CLASS      = 0x04,
+            FLAG_RESERVED   = 0x08
+        };   
+            
+        void SetType(Type msgType)
+            {SetUINT8(OFFSET_TYPE, (UINT8)msgType);}
+        void SetMsgLength(unsigned int numBytes)
+        {
+            SetUINT8(OFFSET_LENGTH, (UINT8)(numBytes >> 2));
+            ProtoPkt::SetLength(numBytes);
+        }
+        
+        
+        // Use these to parse    
+        bool InitFromBuffer(void*           bufferPtr = NULL, 
+                            unsigned int    numBytes = 0, 
+                            bool            freeOnDestruct = false);
+        Type GetType() const
+            {return (Type)GetUINT8(OFFSET_TYPE);}
+        unsigned int GetMsgLength() const
+            {return ((unsigned int)GetUINT8(OFFSET_LENGTH)) << 2;}
+        
+           
+    protected:
+        enum
+        {
+            OFFSET_TYPE = 0,  // one byte, UINT7 offset
+            OFFSET_LENGTH = OFFSET_TYPE+1
+        };
+                
+};  // end class ElasticMsg
+
 // IMPORTANT NOTE:  This current ElasticAck message is an interim
 // format that is being used to validate functionality of the
 // Elastic Routing extensions to "nrlsmf".  Eventually, a finalized
@@ -14,7 +93,9 @@
 //       0               1               2               3               
 //       0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//      |S|P|C|R| atype | ulen  | utype |  protocol   |  traffic class  |
+//      | Msg Type = 1  |    Msg Len    |            reserved           |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |S|P|C|R| atype | ulen  | utype |    protocol   | traffic class |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //      |                                                               |
 //      +                       Destination Address                     +
@@ -47,40 +128,24 @@
 // src_addr :   Flow source address   (atype dependent)
 // ups_list :   Upstream address list (utype and ulen dependent)
 
-// NOTE upstream address list items are 4-byte aligned
+// NOTE upstream address list items are 4-byte aligned so padding may be required (e.g., ADDR_ETH)
 
-class ElasticAck : public ProtoPkt
+
+class ElasticAck : public ElasticMsg
 {
     public:
         ElasticAck(void*          bufferPtr = NULL,
                    unsigned int   bufferBytes = 0,
+                   bool           initFromBuffer = true,
                    bool           freeOnDestruct = false);
+        ElasticAck(ElasticMsg& elasticMsg);
         ~ElasticAck();
-
-        static const ProtoAddress ELASTIC_ADDR;  // 224.0.0.55
-        static const UINT16 ELASTIC_PORT;        // 5555
-
-        enum AddressType
-        {
-            ADDR_INVALID = 0,
-            ADDR_IPV4,
-            ADDR_IPV6,
-            ADDR_ETHER
-        };
-
-        enum Flag
-        {
-            FLAG_SOURCE     = 0x01,
-            FLAG_PROTOCOL   = 0x02,
-            FLAG_CLASS      = 0x04,
-            FLAG_RESERVED   = 0x08
-        };
             
         // Use these to parse    
         bool InitFromBuffer(void*           bufferPtr = NULL, 
                             unsigned int    numBytes = 0, 
                             bool            freeOnDestruct = false);
-        bool FlagIsSet(Flag flag)
+        bool FlagIsSet(Flag flag) const
             {return (0 != (flag & (GetUINT8(OFFSET_FLAGS) >> 4)));}
         
         AddressType GetAddressType() const
@@ -125,7 +190,8 @@ class ElasticAck : public ProtoPkt
     private:
         enum
         {
-            OFFSET_FLAGS    = 0,                    // 4 most significant bits
+            OFFSET_RESERVED = OFFSET_LENGTH + 1,    // UINT8 offset
+            OFFSET_FLAGS    = OFFSET_RESERVED + 2,  // 4 most significant bits
             OFFSET_ATYPE    = OFFSET_FLAGS,         // 4 least significant bits
             OFFSET_ULEN     = OFFSET_ATYPE + 1,     // 4 most significant bits
             OFFSET_UTYPE    = OFFSET_ULEN,          // 4 least significant bits
@@ -143,24 +209,28 @@ class ElasticAck : public ProtoPkt
                     return (OFFSET_DST_ADDR + 1);  // 1 32-bit word per addr
                 case ADDR_IPV6:
                     return (OFFSET_DST_ADDR + 4);  // 4 32-bit words per addr
+                case ADDR_ETH:
+                    return (OFFSET_DST_ADDR + 2);  // 6 bytes addr + 2 bytes padding
                 default:
-                    // TBD - allow for ADDR_ETHER?
-                    return 0;
+                    return OFFSET_DST_ADDR;
             }
         }
         
         unsigned int OffsetUpstreamList() const
         {
             // Returns UINT32 offset
+            unsigned offset = OffsetSrcAddr();
+            if (!FlagIsSet(FLAG_SOURCE)) return offset;
             switch (GetAddressType())
             {
                 case ADDR_IPV4:
-                    return (OFFSET_DST_ADDR + 2);  // 1 32-bit word per addr (dst + src)
+                    return offset + 1;  // 1 32-bit word per addr
                 case ADDR_IPV6:
-                    return (OFFSET_DST_ADDR + 8);  // 4 32-bit words per addr (dst + src)
+                    return offset + 4;  // 4 32-bit words per addr 
+                case ADDR_ETH:
+                    return offset + 2;  // 3 bytes addr + 1 byte padding
                 default:
-                    // TBD - allow for ADDR_ETHER?
-                    return 0;
+                    return offset;
             }
         }
         
@@ -180,9 +250,9 @@ class ElasticAck : public ProtoPkt
 //       0             1               2               3               4
 //       0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//      |                               |          DPD ID               |
+//      | Msg Type = 2  |    Msg Len    |          DPD ID               |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//      |S|P|C|G| atype | ulen  | utype |  protocol   |  traffic class  |
+//      |S|P|C|G| atype | ulen  | utype |    protocol   | traffic class |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //      |                                                               |
 //      +                       Destination Address                     +
@@ -194,7 +264,7 @@ class ElasticAck : public ProtoPkt
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //      |                                                               |
 //      +                      [Advertiser Address]                     +
-//      |                                 ...                           |
+//      |                              ...                              |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //
 // FLAGS:
@@ -203,5 +273,79 @@ class ElasticAck : public ProtoPkt
 // P        : protocol type valid (1 bit)
 // C        : traffic class valid (1 bit)
 // R        : reserved flag (1 bit)
+
+
+// ElasticNack Message - to support hop-by-hop reliability ARQ
+// (This is a _preliminary_ definition.  Longer-term will allow
+//  for a sliding window Selective ARQ of some type)
+//
+//       0               1               2               3               
+//       0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      | Msg Type = 3  |    Msg Len    |        reserved       | utype |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |                       Upstream Address                        |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |          Seq Start            |        Seq Stop               |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+
+class ElasticNack : public ElasticMsg
+{
+    public:
+        ElasticNack(void*          bufferPtr = NULL,
+                    unsigned int   bufferBytes = 0,
+                    bool           initFromBuffer = true,
+                    bool           freeOnDestruct = false);
+        ElasticNack(ElasticMsg& elasticMsg);
+        ~ElasticNack();
+            
+        bool InitIntoBuffer(void*           bufferPtr = NULL, 
+                            unsigned int    bufferBytes = 0, 
+                            bool            freeOnDestruct = false);
+        bool SetUpstreamAddress(const ProtoAddress& addr);
+        void SetSeqStart(UINT16 seq)
+            {SetWord16(OffsetSeqStart(), seq);}
+        void SetSeqStop(UINT16 seq)
+            {SetWord16(OffsetSeqStop(), seq);}
+        
+        // Note: use ElasticMsg::InitFromBuffer() when needed
+        AddressType GetAddressType() const
+            {return (AddressType)(GetUINT8(OFFSET_UTYPE) & 0x0f);}
+        bool GetUpstreamAddress(ProtoAddress& addr) const;
+        UINT16 GetSeqStart() const
+            {return GetWord16(OffsetSeqStart());}
+        UINT16 GetSeqStop() const
+            {return GetWord16(OffsetSeqStop());}
+            
+    private:
+        enum
+        {
+            OFFSET_RESERVED = OFFSET_LENGTH + 1,    // UINT8 offset
+            OFFSET_UTYPE = OFFSET_RESERVED + 1,     // UINT8 offset
+            OFFSET_UPSTREAM = (OFFSET_UTYPE + 1)/4, // UINT32 offset
+        };
+            
+        unsigned int OffsetSeqStart() const
+        {
+            // returns UINT16 offset
+            unsigned int offset = OFFSET_UPSTREAM << 1;
+            // Returns UINT32 offset
+            switch (GetAddressType())
+            {
+                case ADDR_IPV4:
+                    return offset + 2; // 2 16-bit words per addr
+                case ADDR_IPV6:
+                    return offset + 8;  // 8 16-bit words per addr
+                case ADDR_ETH:
+                    return offset + 4;  // 3 16-bit words per addr + 1 pad
+                default:
+                    return offset;
+            }
+        }
+        unsigned int OffsetSeqStop() const
+            {return (OffsetSeqStart() + 1);}
+        
+};  // end class ElasticNack
 
 #endif // !_ELASTIC_MSG

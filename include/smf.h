@@ -113,7 +113,7 @@ class Smf
             return ip6_seq_mgr.IncrementSequence(current_update_time, dstAddr, srcAddr);
         }
         
-        class InterfaceGroup;  // really an association group, if you will
+       class InterfaceGroup;  // really an association group, if you will
         
         // We derive from "ProtoQueue::Item here so we can keep multiple lists of 
         // "Interfaces" indexed by their "ifIndex", "ifName", etc
@@ -196,6 +196,7 @@ class Smf
                     {is_reliable = state;}
                 bool IsReliable() const
                     {return is_reliable;}
+                bool SetUMPOption(ProtoPktIPv4& ipPkt);
                 
                 void SetEncapsulation(bool state)
                     {ip_encapsulate = state;}
@@ -234,9 +235,9 @@ class Smf
                     private:
                         InterfaceGroup& iface_group;
                         Interface&      target_iface;
-                        RelayType  relay_type;
-                        bool       elastic_mcast;
-                        bool        adaptive_routing;
+                        RelayType       relay_type;
+                        bool            elastic_mcast;
+                        bool            adaptive_routing;
                 };  // end class Smf::Interface::Associate
                 
                 class AssociateList : public ProtoSimpleQueueTemplate<Associate>
@@ -267,6 +268,13 @@ class Smf
                     {unicast_assoc_count++;}
                 void DecrementUnicastAssociateCount()
                 {*/
+                        
+                MulticastFIB::UpstreamHistory* FindUpstreamHistory(const ProtoAddress& upstreamAddr)
+                    {return upstream_history_table.FindUpstreamHistory(upstreamAddr);}
+                void AddUpstreamHistory(MulticastFIB::UpstreamHistory& upstreamHistory)
+                    {upstream_history_table.Insert(upstreamHistory);}
+                void RemoveUpstreamHistory(MulticastFIB::UpstreamHistory& upstreamHistory)
+                    {upstream_history_table.Remove(upstreamHistory);}
                 
                 // This is for adding an opaque "decorator" extension to the interface
                 // for external use purposes.  If an extension is set for the interface,
@@ -288,6 +296,10 @@ class Smf
                     extension = NULL;
                     return ext;
                 }
+                
+                UINT16 GetUmpSequence() const 
+                    {return ump_sequence;}
+        
                 
                 bool IsQueuing() const
                     {return (0 != pkt_queue.GetQueueLimit());}
@@ -323,6 +335,8 @@ class Smf
                 // (TBD - provide Reset methods
                 void IncrementSentCount()
                     {sent_count++;}
+                void IncrementRetransmissionCount()
+                    {retr_count++;}
                 void IncrementRecvCount()
                     {recv_count++;}
                 void IncrementMcastCount()
@@ -336,6 +350,8 @@ class Smf
                 
                 unsigned int GetSentCount()
                     {return sent_count;}
+                unsigned int GetRetransmissionCount() 
+                    {return retr_count;}
                 unsigned int GetRecvCount()
                     {return recv_count;}
                 unsigned int GetMcastCount()
@@ -356,29 +372,32 @@ class Smf
                     {return (8*sizeof(unsigned int));}
                     
             private:
-                unsigned int        if_index;
-                ProtoAddress        if_addr;
-                ProtoAddressList    addr_list;     // list of IP addresses of the interface
-                ProtoAddress        ip_addr;       // used as source addr for IPIP encapsulation
-                bool                resequence;
-                bool                is_tunnel;
-                bool                is_layered;
-                bool                is_reliable;
-                bool                ip_encapsulate;
-                ProtoAddress        encapsulation_link;  // MAC addr of next hop for encapsulated packets
-                SmfDpd*             dup_detector;
-                AssociateList       assoc_source_list; // associates targeting this Interface
-                AssociateList       assoc_target_list; // associates that this Interface targets
-                unsigned int        unicast_group_count;
-                SmfQueueList        queue_list;  // TBD - per flow (or next hop?) queues
-                SmfQueue            pkt_queue;
+                unsigned int                          if_index;                                                                 
+                ProtoAddress                          if_addr;                                                                  
+                ProtoAddressList                      addr_list;     // list of IP addresses of the interface                   
+                ProtoAddress                          ip_addr;       // used as source addr for IPIP encapsulation              
+                bool                                  resequence;                                                               
+                bool                                  is_tunnel;                                                                
+                bool                                  is_layered;                                                               
+                bool                                  is_reliable;                                                              
+                UINT16                                ump_sequence;                                                             
+                bool                                  ip_encapsulate;                                                           
+                ProtoAddress                          encapsulation_link;  // MAC addr of next hop for encapsulated packets     
+                SmfDpd*                               dup_detector;                                                             
+                AssociateList                         assoc_source_list;   // associates targeting this Interface                 
+                AssociateList                         assoc_target_list;   // associates that this Interface targets              
+                unsigned int                          unicast_group_count;                                                      
+                SmfQueueTable                         queue_table;         // TBD - per flow (or next hop?) queues                      
+                SmfQueue                              pkt_queue;           // interface output queue
+                MulticastFIB::UpstreamHistoryTable    upstream_history_table;
                 
-                unsigned int        sent_count;  // count of outbound (sent) packets for iface
-                unsigned int        recv_count;  // count of inbound (unicast and multicast) packets
-                unsigned int        mrcv_count;  // count of inbound IP multicast packets received
-                unsigned int        dups_count;  // count of outbound duplicate detected (non-forwarded)
-                unsigned int        asym_count;  // count of inbound packets received from non-symmetric neighbors
-                unsigned int        fwd_count;   // count of inbound packets forwarded to at least one other iface
+                unsigned int                          sent_count;  // count of outbound (sent) packets for iface
+                unsigned int                          retr_count;  // count of retransmissions ('reliable' option)
+                unsigned int                          recv_count;  // count of inbound (unicast and multicast) packets
+                unsigned int                          mrcv_count;  // count of inbound IP multicast packets received
+                unsigned int                          dups_count;  // count of outbound duplicate detected (non-forwarded)
+                unsigned int                          asym_count;  // count of inbound packets received from non-symmetric neighbors
+                unsigned int                          fwd_count;   // count of inbound packets forwarded to at least one other iface
                 
                 // The "extension" is used by SmfApp to optionally associate
                 // an "InterfaceMechanism" instance with the Interface
@@ -556,9 +575,9 @@ class Smf
         // Notes:
         // 1) This decrements the ttl/hopLimit of the "ipPkt"
         // 2)
-         int ProcessPacket(ProtoPktIP& ipPkt, const ProtoAddress& srcMac, Interface& srcIface,
-                           unsigned int dstIfArray[], unsigned int dstIfArraySize, 
-                           ProtoPktETH& ethPkt, bool outbound = false, bool* recvDup = NULL);
+        int ProcessPacket(ProtoPktIP& ipPkt, const ProtoAddress& srcMac, Interface& srcIface,
+                          unsigned int dstIfArray[], unsigned int dstIfArraySize, 
+                          ProtoPktETH& ethPkt, bool outbound = false, bool* recvDup = NULL);
 		unsigned int GetInterfaceList(Interface& srcIface, unsigned int dstIfArray[], int dstIfArrayLength);
         void SetRelayEnabled(bool state);
         bool GetRelayEnabled() const
@@ -643,6 +662,8 @@ class Smf
         static const unsigned int DEFAULT_AGE_MAX; // (in seconds)
         static const unsigned int PRUNE_INTERVAL;  // (in seconds)
         
+        
+        
         InterfaceGroup* AddInterfaceGroup(const char* groupName);
         InterfaceGroup* FindInterfaceGroup(const char* groupName)
             {return iface_group_list.FindGroup(groupName);}
@@ -655,6 +676,13 @@ class Smf
         bool SendAck(unsigned int           ifaceIndex, 
                      const ProtoAddress&    relayAddr,
                      const FlowDescription& flowDescription);
+        
+        
+        // For reliable forwarding option
+        static const unsigned int DEFAULT_REPAIR_CACHE_SIZE;
+        bool CreatePacketCache(Interface& iface, unsigned int cacheSize);
+        bool CachePacket(const Interface& iface, UINT16 sequence, char* frameBuffer, unsigned int frameLength);
+        
 #endif // ELASTIC_MCAST
         
     private:
@@ -676,6 +704,9 @@ class Smf
         bool                ihash_only;
         bool                idpd_enable;
         bool                use_window;
+        
+        SmfCacheTable           cache_table;  // used for optional reliable forwarding
+        SmfIndexedPacket::Pool  indexed_pkt_pool;
         
         InterfaceList       iface_list;
         InterfaceGroupList  iface_group_list;

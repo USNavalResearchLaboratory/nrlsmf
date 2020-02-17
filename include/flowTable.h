@@ -265,7 +265,7 @@ class FlowTable
                     
                     private:
                         const MaskLengthList& mask_list;
-                        int                   list_index;
+                        unsigned int          list_index;
                         
                 };  // end class MulticastFIB::MaskLengthList::Iterator
                 

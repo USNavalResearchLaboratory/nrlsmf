@@ -388,7 +388,7 @@ SmfApp::InterfaceMechanism::~InterfaceMechanism()
 void SmfApp::InterfaceMechanism::Close()
 {
     // TBD - move this stuff to a ::Close() method?
-    PLOG(PL_INFO, "This is a test, SmfApp::InterfaceMechanism::Close() was called\n");
+    PLOG(PL_DEBUG, "SmfApp::InterfaceMechanism::Close() was called\n");
     if (NULL != proto_vif)
     {
         // If the associated "proto_cap" has no addresses,
@@ -425,11 +425,7 @@ void SmfApp::InterfaceMechanism::Close()
                     ProtoRouteTable::Entry* entry;
                     while (NULL != (entry = it.GetNextEntry()))
                     {
-                        if (entry->GetGateway().IsValid())
-                        {
-                            TRACE("%s\n", entry->GetGateway().GetHostString());
-                        }
-                        else
+                        if (!entry->GetGateway().IsValid())
                         {
                             unsigned int ifIndex = entry->GetInterfaceIndex();
                             char ifName[Smf::IF_NAME_MAX+1];
@@ -463,6 +459,7 @@ void SmfApp::InterfaceMechanism::Close()
 				}
             }
 #ifdef LINUX
+            // TBD - which did this code
             // Restore ICMP message delivery to physical interface
             char capName[Smf::IF_NAME_MAX + 1];
             capName[Smf::IF_NAME_MAX ] = '\0';
@@ -514,7 +511,7 @@ bool SmfApp::InterfaceMechanism::AddCidElement(ProtoCap& protoCap, int flags)
 }  // end SmfApp::InterfaceMechanism::AddCidElement()
 
 SmfApp::CidElement::CidElement(ProtoCap& protoCap, int flags)
-  : proto_cap(protoCap), cid_flags(flags)
+  : cid_flags(flags), proto_cap(protoCap)
 {
 }
 
@@ -803,10 +800,11 @@ SmfApp::SmfApp()
     smart_controller(GetTimerMgr()),
 #endif  // ADAPTIVE_ROUTING
    filter_duplicates(true),
+   iface_monitor(NULL), 
    control_pipe(ProtoPipe::MESSAGE),
-   server_pipe(ProtoPipe::MESSAGE),
+   server_pipe(ProtoPipe::MESSAGE), 
    tap_pipe(ProtoPipe::MESSAGE), tap_active(false),
-   iface_monitor(NULL), serr_count(0)
+   serr_count(0)
 {
     control_pipe.SetNotifier(&GetSocketNotifier());
     control_pipe.SetListener(this, &SmfApp::OnControlMsg);
@@ -938,7 +936,7 @@ SmfApp::CmdType SmfApp::GetCmdType(const char* cmd)
         nextCmd++;
     }
     return type;
-};  // end SmfApp::GetCmdType()
+}  // end SmfApp::GetCmdType()
 
 bool SmfApp::OnStartup(int argc, const char*const* argv)
 {
@@ -1080,8 +1078,16 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
     }
 
 #ifdef ELASTIC_MCAST
-    /*  NOT USED AT THIS TIME
-    if (elastic_mcast)
+    // At the moment IGMP Queries are just used _internally_
+    // (with "nrlsmf device" virtual interfaces.  This will be
+    // expanded to allow and SMF Elastic Multicast router query
+    // neighbors for membership replies on configured interfaces.
+    // Similar to IGMP wired LAN operation, non-router (i.e. host-only)
+    // nodes should only reply to one querying router when multiple routers
+    // are detected (generally the router w/ lowest ID or something)
+    
+    // This code is disabled for the moment
+    /*if (elastic_mcast)
     {
         igmp_query_timer.SetInterval(0.0);  // for first timeout
         igmp_query_timer.SetRepeat(-1);
@@ -1516,7 +1522,17 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                 PLOG(PL_ERROR, "OnCommand(reliable) error: invalid interface \"%s\"\n", ifaceName);
                 return false;
             }
-            iface->SetReliable(true);
+            ASSERT(iface->GetIpAddress().IsValid());
+            // TBD - provide command-line option and/or config for per-interface cache limit
+            if (smf.CreatePacketCache(*iface, 32))
+            {
+                iface->SetReliable(true);
+            }
+            else
+            {
+                PLOG(PL_ERROR, " SmfApp::OnCommand(reliable) error: unable to create packet cache!\n");
+                return false;
+            }
         }
     }
     else if (!strncmp("adaptive", cmd, len))
@@ -2249,7 +2265,6 @@ bool SmfApp::LoadConfig(const char* configPath)
     ProtoJson::Entry* entry;
     while (NULL != (entry =  iterator.GetNextEntry()))
     {
-        TRACE("handling config entry '%s'\n", entry->GetKey());
         ProtoJson::Value* value = entry->AccessValue();
         if ((NULL == value) || (ProtoJson::Item::OBJECT != value->GetType()))
         {
@@ -3556,10 +3571,8 @@ bool SmfApp::RemoveInterfaces(const char* ifaceList)
     groupName[glen] = '\0';
     const char* ifaceListPtr = ptr + 1;  // point to next item in list
     bool isTemplateGroup = false;  // Will be set if was PUSH group name with wildcarded source interface name
-    bool groupOnly = false;  // Will be set to true if no ifaces listed or PUSH group with srcIface only
     // Is this a PUSH group base name
     Smf::InterfaceGroup* ifaceGroup = smf.AccessInterfaceGroupList().FindClosestMatch(groupName, glen << 3);
-    char* srcIfaceName = NULL;
     if ((NULL != ifaceGroup) &&
         (0 == strncmp(ifaceGroup->GetName(), groupName, glen)) &&
         (Smf::PUSH == ifaceGroup->GetForwardingMode()))
@@ -3577,7 +3590,6 @@ bool SmfApp::RemoveInterfaces(const char* ifaceList)
         {
             groupName[glen++] = ':';
             strncpy(groupName + glen, ifaceListPtr, ilen);
-            srcIfaceName = groupName + glen;
             glen += ilen;
             groupName[glen] = '\0';
         }
@@ -3662,7 +3674,6 @@ bool SmfApp::RemoveInterfaces(const char* ifaceList)
 // If "ifaceGroup" is NULL, the interface is removed from all groups
 bool SmfApp::RemoveInterface(Smf::InterfaceGroup* ifaceGroup, const char* ifaceName)
 {
-    bool removeGroup = false;
     if (NULL != ifaceName)
     {
         unsigned int prefixLen = 0;
@@ -3809,7 +3820,6 @@ void SmfApp::RemoveMatchers(const char* groupName)
 
 unsigned int SmfApp::AddDevice(const char* vifName, const char* ifaceName, bool stealAddrs)
 {
-    TRACE("enter  SmfApp::AddDevice((%s, %s)\n", vifName, ifaceName);
     // Create an Smf::Interface that establishes a virtual interface named "vifName" on behalf
     // behalf of the given "ifaceName".  Create a ProtoVif and ProtoCap pair to support this.
     // 1) Create the ProtoVif, ProtoCap, and InterfaceMechanism to glue them together with an Smf::Interface
@@ -3924,30 +3934,19 @@ unsigned int SmfApp::AddDevice(const char* vifName, const char* ifaceName, bool 
             ProtoRouteTable rtTable;
             rtMgr->GetAllRoutes(ProtoAddress::IPv4, rtTable);
             rtMgr->GetAllRoutes(ProtoAddress::IPv6, rtTable);
+            // TBD- This section of code is incomplete
             ProtoRouteTable::Iterator it(rtTable);
             ProtoRouteTable::Entry* entry;
-
             entry = rtTable.GetDefaultEntry();
-            if (NULL != entry)
-            {
-                TRACE("default entry exists! dst = %s/%u\n", entry->GetDestination().GetHostString(), entry->GetPrefixSize());
-            }
             while (NULL != (entry = it.GetNextEntry()))
             {
-                TRACE("pre-device route to %s/%u via ", entry->GetDestination().GetHostString(), entry->GetPrefixSize());
-                if (entry->GetGateway().IsValid())
-                {
-                    // Save gateway routes for restoration so any relevant to new iface will be reinstated
-                    TRACE("%s\n", entry->GetGateway().GetHostString());
-                }
-                else
+                if (!entry->GetGateway().IsValid())
                 {
                     unsigned int ifIndex = entry->GetInterfaceIndex();
                     char ifName[Smf::IF_NAME_MAX+1];
                     ifName[Smf::IF_NAME_MAX] = '\0';
                     if (!ProtoNet::GetInterfaceName(ifIndex, ifName, Smf::IF_NAME_MAX))
                         PLOG(PL_ERROR, "SmfApp::AddDevice() error: unable to get ifName for iface:%s (index:%u)\n", ifIndex);
-                    TRACE("%s (index:%u)\n", ifName, ifIndex);
                 }
             }
         }
@@ -4207,9 +4206,9 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 		            const unsigned int ETHER_BYTES_MAX = 4096;
 		            const unsigned int IP_BYTES_MAX = (ETHER_BYTES_MAX - 16);
 		            const unsigned int UDP_BYTES_MAX = (IP_BYTES_MAX - 20);
-		            bufPtr = (UINT8*)(buffer+msgHdrLen); // Points to the Ethernet header (reserves space for 'tap' msgHdr
-		            ProtoPktETH ethPkt((UINT32*)bufPtr, ETHER_BYTES_MAX);
-		            if (!ethPkt.InitFromBuffer(len-msgHdrLen))
+		            bufPtr = (UINT8*)(buffer + msgHdrLen); // Points to the Ethernet header (reserves space for 'tap' msgHdr
+		            ProtoPktETH ethPkt(bufPtr, ETHER_BYTES_MAX);
+		            if (!ethPkt.InitFromBuffer(len - msgHdrLen))
 		            {
 		                PLOG(PL_ERROR, "SmfApp::OnControlMsg() error: bad Ether frame\n");
 		                return;
@@ -4230,7 +4229,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 			                // Update checksum for UDP packets if it hasn't been computed already
 			                if(ipv4Pkt.GetProtocol() == 17)
                             {
-			                    ProtoPktUDP udpPkt((UINT32*)bufPtr, UDP_BYTES_MAX);
+			                    ProtoPktUDP udpPkt(bufPtr, UDP_BYTES_MAX);
 			                    if (!udpPkt.InitFromPacket(ipPkt))
 			                    {
 				                    PLOG(PL_ERROR, "SmfApp::OnControlMsg() Error: bad UDP packet\n");
@@ -4243,7 +4242,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 				                }
 			                }
 			                // Increment the packet ID for the new packets generated by outside processes
-			                UINT16 chksum = ipv4Pkt.CalculateChecksum(true);
+			                ipv4Pkt.CalculateChecksum(true);
 			                ProtoAddress srcIP;
 			                ipv4Pkt.GetSrcAddr(srcIP);
 			                UINT16 newseq = smf.IncrementIPv4LocalSequence(&srcIP);
@@ -4431,11 +4430,18 @@ bool SmfApp::OnIgmpQueryTimeout(ProtoTimer& theTimer)
             ProtoVif* vif = (NULL != mech) ? mech->GetProtoVif() : NULL;
             if (NULL != vif)
             {
-                TRACE("sending IGMP query to iface index %d\n", iface->GetIndex());
+                PLOG(PL_DEBUG, "SmfApp::OnIgmpQueryTimeout() sending IGMP query to iface index %d\n", iface->GetIndex());
                 // Send the IGMP Query to the vif\n");
-                //ipPkt.SetSrcAddr(iface->GetIpAddress());
+                ProtoAddress ifaceIp = iface->GetIpAddress();
+                // This code finds a compatible  address for the given interface's subnet
+                // for us to use to generate internal IGMP queries.
+                unsigned int prefixLen = ProtoNet::GetInterfaceAddressMask(iface->GetIndex(), ifaceIp);
+                unsigned prefixMax = (ifaceIp.GetLength() << 3) - 2;
+                if (prefixLen > prefixMax) prefixLen = prefixMax;
                 ProtoAddress srcIp;
-                srcIp.ConvertFromString("224.0.0.1");
+                ifaceIp.GetSubnetAddress(prefixLen, srcIp);
+                srcIp.Increment();
+                if (srcIp.HostIsEqual(ifaceIp)) srcIp.Increment();
                 ipPkt.SetSrcAddr(srcIp);
                 ipPkt.FinalizeChecksum();
                 ethPkt.SetSrcAddr(iface->GetInterfaceAddress());
@@ -4458,16 +4464,13 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
     // Read packets from IP stack and output to associated ProtoCap
     ProtoVif& vif = static_cast<ProtoVif&>(theChannel);
     Smf::Interface* iface = reinterpret_cast<Smf::Interface*>((void*)vif.GetUserData());
-    InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
-    ProtoCap* cap = mech->GetProtoCap();
-
     // TBD - We could pre-size and align the "ethBuffer" here to allow
     // for possible forwarding IP encapsulation
     const int BUFFER_MAX = 4096;
     bool packetHandled = false;
     UINT32 alignedBuffer[BUFFER_MAX/sizeof(UINT32)];
     // offset by 2-bytes so IP content is 32-bit aligned
-    const unsigned int ENCAPS_OFFSET = 20;  // fixed20 bytes for IPIP encapsulation
+    const unsigned int ENCAPS_OFFSET = 20;  // fixed 20 bytes for IPIP encapsulation
     UINT16* ethBuffer = ((UINT16*)alignedBuffer) + 1 + ENCAPS_OFFSET/2;
     const unsigned int BUFFER_RESERVE = 2 + ENCAPS_OFFSET;  // space reserved for alignment and encapsulation purposes
     unsigned int numBytes = BUFFER_MAX - BUFFER_RESERVE;
@@ -4477,7 +4480,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
     {
         if (0 == numBytes) break;  // no more packets to output
         // This is just a check
-        ProtoPktETH ethPkt((UINT32*)ethBuffer, BUFFER_MAX - 2);
+        ProtoPktETH ethPkt(ethBuffer, BUFFER_MAX - 2);
         if (!ethPkt.InitFromBuffer(numBytes))
         {
             PLOG(PL_ERROR, "SmfApp::OnPktOutput() error: bad Ether frame\n");
@@ -4490,7 +4493,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
         if (igmpSnoop && (ProtoPktETH::IP == ethPkt.GetType())) // TBD - support IPv6 and MLD
         {
             ProtoPktIPv4 ip4Pkt;
-            if (!ip4Pkt.InitFromBuffer((UINT32*)ethPkt.GetPayload(), ethPkt.GetPayloadLength()))
+            if (!ip4Pkt.InitFromBuffer(ethPkt.AccessPayload(), ethPkt.GetPayloadMax()))
             {
                 PLOG(PL_WARN, "SmfApp::OnPktOutput() warning: invalid IPv4 packet?!\n");
                 numBytes = BUFFER_MAX - BUFFER_RESERVE;  // reset "numBytes" for next vif.Read() call
@@ -4518,7 +4521,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
             if (ProtoPktETH::IP == ethPkt.GetType())
             {
                 ProtoPktIP ipPkt;
-                if (ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), (UINT32*)ethPkt.GetPayload(), ethPkt.GetBufferLength()-16))
+                if (ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), ethPkt.AccessPayload(), ethPkt.GetPayloadMax()))
                 {
                     if (4 == ipPkt.GetVersion())
                     {
@@ -4536,7 +4539,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                             // This skips the packet reception part of process packet, adds the SRR header, and forwards.
                             int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, *iface, dstIfIndices, IF_COUNT_MAX,ethPkt, true);
                             // We set this bool to true here to make sure that later attempts to inform code below this was sent
-                            packeHandled = true;
+                            packetHandled = true;
                             // If process packet decides to send the packet...
                             if (dstCount > 0)
                             {
@@ -4590,7 +4593,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
         {
             ProtoPktIP ipPkt;
             bool isValidIP = (ProtoPktETH::IP == ethPkt.GetType()) && 
-                             ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), (UINT32*)ethPkt.GetPayload(), ethPkt.GetPayloadLength());
+                             ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), ethPkt.AccessPayload(), ethPkt.GetPayloadMax());
             if (isValidIP)
             {
                 bool isUnicast = false;
@@ -4630,7 +4633,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                 {
                     // For elastic unicast, we need to change the ETH 
                     // destination  address since ARP is disabled, etc
-                    // TBD - support ARP interception instead?
+                    // TBD - support ARP interception instead? (i.e. do our own ARP cache)
                     // TBD - do this _after_ smf.ProcessPacket() is called???
                     char addrBuffer[6];
 			        memset(addrBuffer, 0XFF, 6);
@@ -4650,6 +4653,16 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                     // (e.g., instead of dstIfIndices array, pass an array of Smf::Interface pointers)
                     Smf::Interface* dstIface = smf.GetInterface(dstIfIndices[i]);
                     ASSERT(NULL != dstIface);
+                    if (dstIface->IsReliable() && (4 == ipPkt.GetVersion()))
+                    {
+                        // add (or update) UMP option
+                        ProtoPktIPv4 ip4Pkt(ipPkt);
+                        UINT16 sequence = dstIface->GetUmpSequence();
+                        dstIface->SetUMPOption(ip4Pkt);
+                        ethPkt.SetPayloadLength(ip4Pkt.GetLength());
+                        // Cache the packet for possible retransmission if NACKed
+                        smf.CachePacket(*dstIface, sequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+                    }
                     if (!SendFrame(*dstIface, (char*)ethPkt.GetBuffer(), ethPkt.GetLength()))
                     {
                         char ifaceName[32], dstIfaceName[32];
@@ -4659,7 +4672,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                         PLOG(PL_WARN, "SmfApp::OnPktOutput(%s) warning: blocked sending frame via iface %s\n", ifaceName, dstIfaceName);
                     }
                 }
-                packetHandled =  true;
+                packetHandled =  true;  // so code below doesn't also send the packet
             }  // end if (isValidIP)
         }
 #endif // ELASTIC_MCAST
@@ -4677,7 +4690,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                 ProtoPktETH::Type ethType = ethPkt.GetType();
                 if ((ProtoPktETH::IP == ethType) || (ProtoPktETH::IPv6 == ethType))
                 {
-                    if (ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), (UINT32*)ethPkt.GetPayload(), ethPkt.GetPayloadLength()))
+                    if (ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), (UINT32*)ethPkt.GetPayload(), ethPkt.GetPayloadMax()))
                         ipPkt.GetDstAddr(dstAddr);
                     else
                         PLOG(PL_WARN, "SmfApp::OnPktOutput() warning: invalid IP packet?!\n");
@@ -4871,21 +4884,21 @@ bool SmfApp::IsPriorityFrame(UINT32* frameBuffer, unsigned int frameLength)
         return false;
     }
     ProtoPktIP::Protocol protocol;
-    UINT8 trafficClass;
+    //UINT8 trafficClass;
     switch (ipPkt.GetVersion())
     {
         case 4:
         {
             ProtoPktIPv4 ipv4Pkt(ipPkt);
             protocol = ipv4Pkt.GetProtocol();
-            trafficClass = ipv4Pkt.GetTOS();
+            //trafficClass = ipv4Pkt.GetTOS();
             break;
         }
         case 6:
         {
             ProtoPktIPv6 ipv6Pkt(ipPkt);
             protocol = ipv6Pkt.GetNextHeader();
-            trafficClass = ipv6Pkt.GetTrafficClass();
+            //trafficClass = ipv6Pkt.GetTrafficClass();
             break;
         }
         default:
@@ -4900,7 +4913,6 @@ bool SmfApp::IsPriorityFrame(UINT32* frameBuffer, unsigned int frameLength)
     }
     return false;
 }  // end SmfApp::IsPriorityFrame()
-
 
 // Send a single frame via a single interface (used for ElasticMulticast control plane messaging)
 bool SmfApp::SendFrame(unsigned int ifaceIndex, char* buffer, unsigned int length)
@@ -4976,6 +4988,7 @@ bool SmfApp::SendFrame(Smf::Interface& iface, char* frameBuffer, unsigned int fr
                     vif->StopInputNotification();
                 }
             }
+            iface.IncrementSentCount();
             return true;
         }
         else
@@ -5065,24 +5078,24 @@ void SmfApp::HandleIGMP(ProtoPktIGMP igmpMsg, Smf::Interface& iface, bool inboun
     char ifaceName[256];
     ifaceName[255] = '\0';
     ProtoNet::GetInterfaceName(iface.GetIndex(), ifaceName, 255);
-    TRACE("SmfApp::HandleIGMP() %s IGMP message on interface %s ...\n", inbound ? "inbound" : "outbound", ifaceName);
+    PLOG(PL_DEBUG, "SmfApp::HandleIGMP() %s IGMP message on interface %s ...\n", inbound ? "inbound" : "outbound", ifaceName);
     switch (igmpMsg.GetType())
     {
         case ProtoPktIGMP::REPORT_V3:
         {
-            TRACE("   IGMPv3 report with %d group records ...\n", igmpMsg.GetNumRecords());
+            PLOG(PL_DEBUG, "   IGMPv3 report with %d group records ...\n", igmpMsg.GetNumRecords());
             ProtoPktIGMP::GroupRecord groupRecord;
             while (igmpMsg.GetNextGroupRecord(groupRecord))
             {
                 ProtoAddress groupAddr;
                 groupRecord.GetGroupAddress(groupAddr);
-                TRACE("      type:%d group:%s nsrc:%d\n", groupRecord.GetType(), groupAddr.GetHostString(), groupRecord.GetNumSources());
+                PLOG(PL_DEBUG, "      type:%d group:%s nsrc:%d\n", groupRecord.GetType(), groupAddr.GetHostString(), groupRecord.GetNumSources());
                 unsigned int nsrc = groupRecord.GetNumSources();
                 for (unsigned int i = 0; i < nsrc; i++)
                 {
                     ProtoAddress srcAddr;
                     groupRecord.GetSourceAddress(i, srcAddr);
-                    TRACE("         (src: %s)\n", srcAddr.GetHostString());
+                    PLOG(PL_DEBUG, "         (src: %s)\n", srcAddr.GetHostString());
                 }
             }
             break;
@@ -5090,10 +5103,10 @@ void SmfApp::HandleIGMP(ProtoPktIGMP igmpMsg, Smf::Interface& iface, bool inboun
 
         default:
         {
-            TRACE("   non-IGMPv3 report message type %d...\n", igmpMsg.GetType());
+            PLOG(PL_DEBUG, "   non-IGMPv3 report message type %d...\n", igmpMsg.GetType());
             ProtoAddress groupAddr;
             igmpMsg.GetGroupAddress(groupAddr);
-            TRACE("   groupAddr = %s\n", groupAddr.GetHostString());
+            PLOG(PL_DEBUG, "   groupAddr = %s\n", groupAddr.GetHostString());
             break;
         }
     }
@@ -5236,13 +5249,13 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
         }
     }
 
-    // If this "srcIface" is a "SMF Device", we need to write a copy of the packet to the
-    // kernel via our virtual interface (vif) mechanism
+    // If this "srcIface" is a "SMF Device", we need to write a copy up to the
+    // kernel as a received packet via our virtual interface (vif) mechanism
     // (Note we do this _before_ forwarding, since forwarding modifies the Ethernet frame / IP packet
     InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(srcIface.GetExtension());
     ASSERT(NULL != mech);
     ProtoVif* vif = mech->GetProtoVif();
-    if (NULL != vif && dstCount >= 0)  // A non-NULL vif indicates it's an SmfDevice interface
+    if ((NULL != vif) && (dstCount >= 0))  // A non-NULL vif indicates it's an SmfDevice interface
     {
         //PLOG(PL_DEBUG, "SmfApp::HandleInboundPacket(): Non-Null VIF \n" );
         // Is it for me? (check for multicast/broadcast MAC dest or matching MAC address for us
@@ -5272,7 +5285,35 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
             }
         }
     }
-
+#ifdef ELASTIC_MCAST   
+    for (int i = 0; i < dstCount; i++)
+    {
+        // TBD - perhaps we should have a more efficient way to dereference the dstIface ???
+        // (e.g., instead of dstIfIndices array, pass an array of Smf::Interface pointers)
+        Smf::Interface* dstIface = smf.GetInterface(dstIfIndices[i]);
+        ASSERT(NULL != dstIface);
+        if (dstIface->IsReliable() && (4 == ipPkt.GetVersion()))
+        {
+            // add (or update) UMP option
+            ProtoPktIPv4 ip4Pkt(ipPkt);
+            UINT16 sequence = dstIface->GetUmpSequence();
+            dstIface->SetUMPOption(ip4Pkt);
+            ethPkt.SetPayloadLength(ip4Pkt.GetLength());
+            // Cache the packet for potential retransmission if NACKed
+            smf.CachePacket(*dstIface, sequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+        }
+        if (!SendFrame(*dstIface, (char*)ethPkt.GetBuffer(), ethPkt.GetLength()))
+        {
+            char ifaceName[32], dstIfaceName[32];
+            ifaceName[31] = dstIfaceName[31] = '\0';
+            ProtoNet::GetInterfaceName(srcIfIndex, ifaceName, 31);
+            ProtoNet::GetInterfaceName(dstIface->GetIndex(), dstIfaceName, 31);
+            PLOG(PL_WARN, "SmfApp::HandleInboundPacket(%s) warning: blocked sending frame via iface %s\n", ifaceName, dstIfaceName);
+        }
+    }
+#else
+    // This code will be deprecated since "firewall" operation is supplanted by the
+    //  "nrlsmf device" option and the "tap" could be handled differently.
     if (dstCount > 0)
     {
         //PLOG(PL_DEBUG, "SmfApp::HandleInboundPacket():Forwarding \n" );
@@ -5305,7 +5346,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
             }
         }
     }  // end if (dstCount > 0)
-
+#endif  // if/else ELASTIC_MCAST
     return result;
 }  // end SmfApp::HandleInboundPacket()
 //bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, Smf::Interface& srcIface)
@@ -5500,7 +5541,6 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
             }
             if (ProtoNet::Monitor::Event::NULL_EVENT == theEvent.GetType()) break;
 
-            bool ifaceDown = false;
             switch(theEvent.GetType())
             {
                 case ProtoNet::Monitor::Event::IFACE_UP:
@@ -5510,7 +5550,6 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
                 case ProtoNet::Monitor::Event::IFACE_DOWN:
                     PLOG(PL_DEBUG, "SmfApp::MonitorEventHandler() IFACE_DOWN \"%s\" (index:%d)\n",
                                 theEvent.GetInterfaceName(), theEvent.GetInterfaceIndex());
-                    ifaceDown = true;
                     break;
                 case ProtoNet::Monitor::Event::IFACE_ADDR_NEW:
                 {
@@ -5666,7 +5705,7 @@ bool SmfApp::BlockICMP(const char* ifaceName, bool enable)
 bool SmfApp::ForwardPacket(unsigned int dstCount, unsigned int* dstIfIndices, char* pktBuffer, unsigned int pktLength)
 {
     bool result = false;
-    for (int i = 0; i < dstCount; i++)
+    for (unsigned int i = 0; i < dstCount; i++)
     {
         int dstIfIndex = dstIfIndices[i];
         Smf::Interface* dstIface = smf.GetInterface(dstIfIndex);
@@ -5788,7 +5827,7 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
 				                int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, *srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt);
                                 // To save on byte copying, we left space at the beginning of our "alignedBuffer"
                                 // for the "smfPkt" message header in case it is needed.
-				                if(dstCount == (unsigned int)-1) dstCount = 0;
+				                if(dstCount == -1) dstCount = 0;
                                 if (!ForwardFrameToTap(ifIndex, dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ProtoPktETH::HDR_LEN))
                                     PLOG(PL_ERROR, "SmfApp::OnPktIntercept() error: unable to send packet to \"tap\" process\n");
 			                }
@@ -5880,7 +5919,7 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
 
                         // Finally, process packet for possible forwarding given ipPkt, srcMacAddr, and srcIfIndex
                         unsigned int dstIfIndices[IF_COUNT_MAX];
-                        unsigned int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, *srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt);
+                        int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, *srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt);
                         if ((dstCount > 0) || (tap_active && (-1 == dstCount)))
                         {
                             if (tap_active || !firewall_forward)
@@ -5941,7 +5980,7 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
 				                    destPktFlag = true;
 			                }
 
-			                if(dstCount == (unsigned int)-1) dstCount = 0;
+			                if(dstCount == -1) dstCount = 0;
 
                             // If the "tap" (diversion to another process) has been activated, pass the packet
                             // that would have been forwarded this process.  That process may filter the packet

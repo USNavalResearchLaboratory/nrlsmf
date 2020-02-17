@@ -45,7 +45,7 @@ nrlsmf:    $(NRLSMF_OBJ) $(LIBPROTO)
 
 # Builds "nrlsmf" with embedded experimental Elastic Multicast code
 ELASTIC_SRC = $(NRLSMF_SRC) $(COMMON)/mcastFib.cpp $(COMMON)/flowTable.cpp \
-	$(COMMON)/elasticMsg.cpp $(COMMON)/r2dnMsg.cpp
+	$(COMMON)/elasticMsg.cpp
 
 ELASTIC_OBJ = $(ELASTIC_SRC:.cpp=.o)
 
