@@ -1,21 +1,76 @@
 
 #include "elasticMsg.h"
 
+ElasticMsg::ElasticMsg(void*        bufferPtr,
+                       unsigned int bufferBytes,
+                       bool         initFromBuffer,
+                       bool         freeOnDestruct)
+  : ProtoPkt(bufferPtr, bufferBytes, freeOnDestruct)  
+{
+    if (initFromBuffer && (NULL != bufferPtr))
+        InitFromBuffer();
+}
+
+ElasticMsg::~ElasticMsg() 
+{
+}
+              
+bool ElasticMsg::InitFromBuffer(void*        bufferPtr, 
+                                unsigned int numBytes, 
+                                bool         freeOnDestruct)
+{
+    if (NULL != bufferPtr) 
+        AttachBuffer(bufferPtr, numBytes, freeOnDestruct);
+    else
+        ProtoPkt::SetLength(0);
+    if (GetBufferLength() > OFFSET_LENGTH)
+    {
+        unsigned int len = GetMsgLength();
+        if (len > GetBufferLength())
+        {
+            PLOG(PL_ERROR, "ElasticMsg::InitFromBuffer() error: insufficient buffer size\n");
+            return false;
+        }
+        ProtoPkt::SetLength(len);
+    }
+    else
+    {
+        PLOG(PL_ERROR, "ElasticMsg::InitFromBuffer() error: insufficient buffer size\n");
+        return false;
+    }
+    return true;
+}  // end ElasticMsg::InitFromBuffer()
+
 ///////////////////////////////////////////////////////////////////////////////////
 // class ElasticAck implementation
 // methods for building and parsing Elastic Multicast ACK packets
 //
 
-const ProtoAddress ElasticAck::ELASTIC_ADDR = ProtoAddress("224.0.0.55");
-const UINT16 ElasticAck::ELASTIC_PORT = 5555;
+const ProtoAddress ElasticMsg::ELASTIC_ADDR = ProtoAddress("224.0.0.55");
+const ProtoAddress ElasticMsg::ELASTIC_MAC = ProtoAddress().GetEthernetMulticastAddress(ELASTIC_ADDR);
+const UINT16 ElasticMsg::ELASTIC_PORT = 5555;
+
         
 ElasticAck::ElasticAck(void*          bufferPtr, 
                        unsigned int   bufferBytes, 
+                       bool           initFromBuffer,
                        bool           freeOnDestruct)
- : ProtoPkt(bufferPtr, bufferBytes, freeOnDestruct)
+ : ElasticMsg(bufferPtr, bufferBytes, false, freeOnDestruct)
 {
-    InitFromBuffer();
+    if (NULL != bufferPtr) 
+    {
+        if (initFromBuffer)
+            InitFromBuffer();
+        else
+            InitIntoBuffer();
+    }
 }
+
+ElasticAck::ElasticAck(ElasticMsg& elasticMsg)
+{
+    InitFromBuffer(elasticMsg.AccessBuffer(), elasticMsg.GetBufferLength());
+}
+
 
 ElasticAck::~ElasticAck()
 {
@@ -23,14 +78,13 @@ ElasticAck::~ElasticAck()
 
 unsigned int ElasticAck::GetAddressFieldLength(AddressType addrType)
 {
-    unsigned int addrLen = 0;
     switch (addrType)
     {
         case ADDR_IPV4:
             return 4;
         case ADDR_IPV6:
             return 16;
-        case ADDR_ETHER:
+        case ADDR_ETH:
             return 8; // includes padding
         default:
             return 0;
@@ -47,14 +101,13 @@ bool ElasticAck::InitFromBuffer(void*           bufferPtr,
         ProtoPkt::SetLength(0);
     if (GetBufferLength() >= OFFSET_CLASS)
     {
-        // compute required length based on atype, ulen and utype
-        unsigned pktLength = 4;  // 4 bytes of "header info"
-        unsigned int addrLen = GetAddressFieldLength(GetAddressType());
-        pktLength += addrLen;  // for dest addr
-        if (FlagIsSet(FLAG_SOURCE))
-            pktLength += addrLen;  // for source addr
-        pktLength += GetUpstreamListLength() * GetAddressFieldLength(GetUpstreamListType());
-        if (ProtoPkt::InitFromBuffer(pktLength)) return true;
+        unsigned int len = GetMsgLength();
+        if (len <= GetBufferLength())
+        {
+            ProtoPkt::SetLength(len);
+            return true;
+        }
+        PLOG(PL_ERROR, "ElasticMsg::InitFromBuffer() error: insufficient buffer size\n");
     }
     if (NULL != bufferPtr) DetachBuffer();
     return false;
@@ -74,7 +127,7 @@ bool ElasticAck::GetDstAddr(ProtoAddress& addr) const
             addrType = ProtoAddress::IPv6;
             addrLen = 16;
             break;
-        case ADDR_ETHER:
+        case ADDR_ETH:
             addrType = ProtoAddress::ETH;
             addrLen = 6;
             break;
@@ -99,7 +152,7 @@ bool ElasticAck::GetSrcAddr(ProtoAddress& addr) const
             addrType = ProtoAddress::IPv6;
             addrLen = 16;
             break;
-        case ADDR_ETHER:
+        case ADDR_ETH:
             addrType = ProtoAddress::ETH;
             addrLen = 6;
             break;
@@ -129,7 +182,7 @@ bool ElasticAck::GetUpstreamAddr(UINT8 index, ProtoAddress& addr) const
             addrType = ProtoAddress::IPv6;
             addrLen = fieldLen = 16;
             break;
-        case ADDR_ETHER:
+        case ADDR_ETH:
             addrType = ProtoAddress::ETH;
             fieldLen = 8;
             addrLen = 6;
@@ -147,7 +200,7 @@ bool ElasticAck::InitIntoBuffer(void*         bufferPtr,
                                 unsigned int  bufferBytes, 
                                 bool          freeOnDestruct)
 {
-    unsigned int minLength = OFFSET_DST_ADDR*4;
+    unsigned int minLength = OFFSET_CLASS + 1;
     if (NULL != bufferPtr)
     {
         if (bufferBytes < minLength)
@@ -160,7 +213,8 @@ bool ElasticAck::InitIntoBuffer(void*         bufferPtr,
         return false;
     }
     memset((char*)AccessBuffer(), 0, minLength);
-    SetLength(minLength);
+    SetType(ACK);
+    SetMsgLength(minLength);
     return true;
 }  // end ElasticAck::InitIntoBuffer()
 
@@ -177,7 +231,7 @@ bool ElasticAck::SetDstAddr(const ProtoAddress& addr)
             addrType = ADDR_IPV6;
             break;
         case ProtoAddress::ETH:
-            addrType = ADDR_ETHER;
+            addrType = ADDR_ETH;
             break;
         default:
             PLOG(PL_ERROR, "ElasticAck::SetSrcAddr() error: invalid address type!\n");
@@ -198,7 +252,7 @@ bool ElasticAck::SetDstAddr(AddressType addrType, const char* addrPtr, unsigned 
     }
     else if (minLength > GetLength())
     {
-        SetLength(minLength);
+        SetMsgLength(minLength);
     }
     UINT8 field = GetUINT8(OFFSET_ATYPE) & 0xf0;
     field |= (UINT8)addrType;
@@ -219,7 +273,7 @@ bool ElasticAck::SetSrcAddr(const ProtoAddress& addr)
             addrType = ADDR_IPV6;
             break;
         case ProtoAddress::ETH:
-            addrType = ADDR_ETHER;
+            addrType = ADDR_ETH;
             break;
         default:
             PLOG(PL_ERROR, "ElasticAck::SetSrcAddr() error: invalid address type!\n");
@@ -239,7 +293,7 @@ bool ElasticAck::SetSrcAddr(AddressType addrType, const char* addrPtr, unsigned 
     }
     else if (minLength > GetLength())
     {
-        SetLength(minLength);
+        SetMsgLength(minLength);
     }
     SetFlag(FLAG_SOURCE);
     UINT8 field = GetUINT8(OFFSET_ATYPE) & 0xf0;
@@ -265,7 +319,7 @@ bool ElasticAck::AppendUpstreamAddr(const ProtoAddress& addr)
             fieldLen = 16;
             break;
         case ProtoAddress::ETH:
-            utype = ADDR_ETHER;
+            utype = ADDR_ETH;
             fieldLen = 8;
             break;
         default:
@@ -309,6 +363,107 @@ bool ElasticAck::AppendUpstreamAddr(const ProtoAddress& addr)
     UINT8 field = GetUINT8(OFFSET_ULEN) & 0x0f;
     field |= (index << 4);
     SetUINT8(OFFSET_ULEN, field);
-    SetLength(minLength);
+    SetMsgLength(minLength);
     return true;
 }  // end ElasticAck::AppendUpstreamAddr()
+
+
+///////////////////////////////////////////
+// ElasticNack implementation
+
+ElasticNack::ElasticNack(void*          bufferPtr,
+                         unsigned int   bufferBytes,
+                         bool           initFromBuffer,
+                         bool           freeOnDestruct)
+  : ElasticMsg(bufferPtr, bufferBytes, false, freeOnDestruct)
+{
+    if (NULL != bufferPtr)
+    {
+        if (initFromBuffer)
+            InitFromBuffer();
+        else
+            InitIntoBuffer();
+    }
+}
+
+ElasticNack::ElasticNack(ElasticMsg& elasticMsg)
+{
+    InitFromBuffer(elasticMsg.AccessBuffer(), elasticMsg.GetBufferLength());
+}
+        
+ElasticNack::~ElasticNack()
+{
+}
+            
+bool ElasticNack::InitIntoBuffer(void*           bufferPtr, 
+                                 unsigned int    bufferBytes, 
+                                 bool            freeOnDestruct)
+{
+    unsigned int minLength = OFFSET_UPSTREAM*4;
+    if (NULL != bufferPtr)
+    {
+        if (bufferBytes < minLength)
+            return false;
+        else
+            AttachBuffer(bufferPtr, bufferBytes, freeOnDestruct);
+    }
+    else if (GetBufferLength() < minLength) 
+    {
+        return false;
+    }
+    SetType(NACK);
+    SetMsgLength(2);
+    return true;
+}  // end ElasticNack::InitIntoBuffer()
+        
+bool ElasticNack::SetUpstreamAddress(const ProtoAddress& addr)
+{
+    AddressType utype = ADDR_INVALID;
+    switch (addr.GetType())
+    {
+        case ProtoAddress::IPv4:
+            utype = ADDR_IPV4;
+            break;
+        case ProtoAddress::IPv6:
+            utype = ADDR_IPV6;
+            break;
+        case ProtoAddress::ETH:
+            utype = ADDR_ETH;
+            break;
+        default:
+            PLOG(PL_ERROR, " ElasticNack::SetUpstreamAddress() error: invalid address type\n");
+            return false;
+    }
+    // Need space for address length + seq start/stop and padding
+    unsigned int minLength = OFFSET_UPSTREAM*4 + addr.GetLength() + 4;
+    if (ProtoAddress::ETH == addr.GetType())
+        minLength += 2;  // 2 bytes padding
+    if (GetBufferLength() < minLength) 
+    {
+        return false;
+    }
+    memcpy(AccessBuffer32(OFFSET_UPSTREAM), addr.GetRawHostAddress(), addr.GetLength());
+    SetUINT8(OFFSET_UTYPE, (UINT8)utype);
+    SetMsgLength((OFFSET_UPSTREAM << 2) + addr.GetLength() + 4);
+    return true;
+}  // end ElasticNack::SetUpstreamAddress()
+
+bool ElasticNack::GetUpstreamAddress(ProtoAddress& addr) const
+{
+    switch (GetAddressType())
+    {
+        case ADDR_IPV4:
+            addr.SetRawHostAddress(ProtoAddress::IPv4, (char*)GetBuffer32(OFFSET_UPSTREAM), 4);
+            break;
+        case ADDR_IPV6:
+            addr.SetRawHostAddress(ProtoAddress::IPv6, (char*)GetBuffer32(OFFSET_UPSTREAM), 16);
+            break;
+        case ADDR_ETH:
+            addr.SetRawHostAddress(ProtoAddress::ETH, (char*)GetBuffer32(OFFSET_UPSTREAM), 6);
+            break;
+        default:
+            PLOG(PL_ERROR, "ElasticNack::GetUpstreamAddress() error: invalid address type\n");
+            return false;
+    }
+    return true;
+}  // end ElasticNack::GetUpstreamAddress()

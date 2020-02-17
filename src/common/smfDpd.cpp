@@ -526,7 +526,7 @@ bool SmfDpdWindow::Flow::IsDuplicate(UINT32 seq)
         {
             // It's an "old" packet, so how old is it?
             delta = -delta;
-            if (delta < bitmask.GetSize())
+            if ((unsigned int)delta < bitmask.GetSize())
             {
                 // It's old, but in our window ...
                if (bitmask.Test(seq))

@@ -2,22 +2,20 @@
 #define _SMF_QUEUE
 
 //#include <protoList.h>
-
 #include <protoTree.h>
-
 #include <protoAddress.h>
-
 #include <protoPktIP.h>
 
 // Per-flow packet queuing classes
 
-class SmfPacket : public ProtoList::Item
+template <class ITEM_TYPE>
+class SmfPacketTemplate : public ITEM_TYPE
 {
     public:
         enum {PKT_SIZE_MAX = 2048};
     
-        SmfPacket();
-        ~SmfPacket();
+        SmfPacketTemplate() : pkt_length(0) {}
+        ~SmfPacketTemplate() {}
         
         UINT32* AccessBuffer()
             {return pkt_buffer;}
@@ -28,19 +26,16 @@ class SmfPacket : public ProtoList::Item
             {return pkt_buffer;}
         unsigned int GetLength() const
             {return pkt_length;}
-        
-        class Pool : public ProtoListTemplate<SmfPacket>::ItemPool {};
     
     private:
         // We make the packet an extra few bytes so we can align
         // ProtoPktETH and ProtoPktIP into the same buffer here as needed
         UINT32       pkt_buffer[PKT_SIZE_MAX/sizeof(UINT32) + 1];
         unsigned int pkt_length;
-        
-};  // end class SmfPacket
+       
+};  // end class SmfPacketTemplate
 
-
-class SmfQueue : protected ProtoListTemplate<SmfPacket>, public ProtoTree::Item
+class SmfQueueBase : public ProtoTree::Item
 {
     public:
         typedef int Mode;  // mode identified by set of flags
@@ -56,11 +51,11 @@ class SmfQueue : protected ProtoListTemplate<SmfPacket>, public ProtoTree::Item
         };    
             
         // The default params here define a mode zero (no classification) queue
-        SmfQueue(const ProtoAddress&  dst = PROTO_ADDR_NONE, 
-                 const ProtoAddress&  src = PROTO_ADDR_NONE,
-                 ProtoPktIP::Protocol proto = ProtoPktIP::RESERVED,
-                 UINT8                trafficClass = 255);             
-        ~SmfQueue();
+        SmfQueueBase(const ProtoAddress&  dst = PROTO_ADDR_NONE, 
+                     const ProtoAddress&  src = PROTO_ADDR_NONE,
+                     ProtoPktIP::Protocol proto = ProtoPktIP::RESERVED,
+                     UINT8                trafficClass = 255);             
+        virtual ~SmfQueueBase();
         
         void SetQueueLimit(int limit)
             {queue_limit = limit;}
@@ -70,44 +65,135 @@ class SmfQueue : protected ProtoListTemplate<SmfPacket>, public ProtoTree::Item
         unsigned int GetQueueLength() const
             {return queue_length;}
         
-        bool EnqueuePacket(SmfPacket& pkt, bool prioritize = false, SmfPacket::Pool* pool = NULL);
-        SmfPacket* DequeuePacket();
-        SmfPacket* PreviewPacket();
-        
-        bool IsEmpty() const
-            {return ProtoList::IsEmpty();}
         bool IsFull() const
-            {return ((queue_limit > 0) ? (queue_length >= queue_limit) : false);}
+            {return ((queue_limit > 0) ? (queue_length >= (unsigned int)queue_limit) : false);}
         
-        void EmptyToPool(SmfPacket::Pool& pktPool);
-        
-    private:
+        static unsigned int BuildKey(char* keyBuffer,  // must be sized at least 2*16 + 2 (IPv6 addr worst case)
+                                     const ProtoAddress&  src, 
+                                     const ProtoAddress&  dst,
+                                     ProtoPktIP::Protocol proto,
+                                     UINT8                trafficClass);
+    protected:
         const char* GetKey() const
             {return flow_id;}
         unsigned int GetKeysize() const
             {return flow_id_size;}
         
-        char            flow_id[2*16 + 2];  // sized for IPv6 (worst case)
-        unsigned int    flow_id_size;
-        int             queue_limit;        // -1 is no limit (default), 0 is no queuing
-        unsigned int    queue_length;       // in bytes? 
-        SmfPacket*      priority_index;
+        char                  flow_id[2*16 + 2];  // sized for IPv6 (worst case)
+        unsigned int          flow_id_size;
+        int                   queue_limit;        // -1 is no limit (default), 0 is no queuing
+        unsigned int          queue_length;       // in bytes? 
         
-};  // end class SmfQueue
+};  // end class SmfQueueBase
 
-
-class SmfQueueList : public ProtoTreeTemplate<SmfQueue>
+template <class QUEUE_TYPE>
+class SmfQueueTableTemplate : public ProtoTreeTemplate<QUEUE_TYPE>
 {
     public:
-        SmfQueueList();
-        ~SmfQueueList();
+        SmfQueueTableTemplate() {}
+        ~SmfQueueTableTemplate() {ProtoTreeTemplate<QUEUE_TYPE>::Destroy();} // deletes all the queues
         
-        SmfQueue* FindQueue(const ProtoAddress&  dst = PROTO_ADDR_NONE,
-                            const ProtoAddress&  src = PROTO_ADDR_NONE,
-                            ProtoPktIP::Protocol proto = ProtoPktIP::RESERVED,
-                            UINT8                trafficClass = 255);
+        void InsertQueue(QUEUE_TYPE& queue)
+            {Insert(queue);}
         
-};  // end class SmfQueueList
+        QUEUE_TYPE* FindQueue(const ProtoAddress&  dst = PROTO_ADDR_NONE,
+                              const ProtoAddress&  src = PROTO_ADDR_NONE,
+                              ProtoPktIP::Protocol proto = ProtoPktIP::RESERVED,
+                              UINT8                trafficClass = 255) const
+        {
+            char key[2*16 + 2];
+            unsigned int keysize = SmfQueueBase::BuildKey(key, src, dst, proto, trafficClass);
+            return ProtoTreeTemplate<QUEUE_TYPE>::Find(key, keysize);
+        }
+        
+        void RemoveQueue(QUEUE_TYPE& queue)
+            {Remove(queue);}
+        
+};  // end class SmfQueueTableTemplate
+
+
+class SmfPacket : public SmfPacketTemplate<ProtoList::Item> 
+{
+    public:
+        class Pool : public ProtoListTemplate<SmfPacket>::ItemPool {};
+};  // end class SmfPacket
+
+class SmfQueue : public SmfQueueBase, public ProtoListTemplate<SmfPacket>
+{
+    public:
+        ~SmfQueue() {Destroy();} // deletes all enqueued packets
+        bool EnqueuePacket(SmfPacket& pkt, bool prioritize = false, SmfPacket::Pool* pool = NULL);
+        SmfPacket* DequeuePacket();
+        SmfPacket* PreviewPacket();
+        
+        void EmptyToPool(SmfPacket::Pool& pool);
+        
+    private:
+        SmfPacket*            priority_index;
+       
+};  // end class SmfQueue
+
+class SmfQueueTable : public SmfQueueTableTemplate<SmfQueue> {};
+
+
+// These class are used for cacheing indexed (by sequence number) packets
+// for potential retransmission
+
+class SmfIndexedPacket : public SmfPacketTemplate<ProtoTree::Item>
+{
+    public:
+        void SetIndex(UINT16 seq)
+            {pkt_index = seq;}
+        UINT16 GetIndex() const
+            {return pkt_index;}
+        
+        class Pool : public ProtoTreeTemplate<SmfIndexedPacket>::ItemPool {};
+        
+        ProtoTree::Endian GetEndian() const {return ProtoTree::GetNativeEndian();}
+        
+    private:
+        const char* GetKey() const
+            {return (char*)&pkt_index;}      
+        unsigned int GetKeysize() const
+            {return sizeof(UINT16) << 3;}
+            
+        UINT16  pkt_index;
+};  // end class SmfIndexedPacket
+
+class SmfCache : public SmfQueueBase, public ProtoTreeTemplate<SmfIndexedPacket>
+{
+    public:
+        SmfCache(const ProtoAddress&  dst = PROTO_ADDR_NONE, 
+                 const ProtoAddress&  src = PROTO_ADDR_NONE,
+                 ProtoPktIP::Protocol proto = ProtoPktIP::RESERVED,
+                 UINT8                trafficClass = 255)
+              : SmfQueueBase(dst, src, proto, trafficClass), oldest_pkt(NULL), user_data(NULL) {}
+        ~SmfCache() {}
+        
+        bool EnqueuePacket(SmfIndexedPacket& pkt);
+            
+        SmfIndexedPacket* FindPacket(UINT16 index)
+            {return Find((char*)&index, sizeof(UINT16) << 3);}
+        
+        SmfIndexedPacket* DequeuePacket();  // removes/returns oldest
+        
+        void RemovePacket(SmfIndexedPacket& pkt);
+    
+        void SetUserData(void* userData)
+            {user_data = userData;}
+        void* GetUserData() const
+            {return user_data;}    
+        
+        void EmptyToPool(SmfIndexedPacket::Pool& pool);
+    
+    private:
+        SmfIndexedPacket*   oldest_pkt;
+        void*               user_data;
+};  // end class SmfIndexedQueue
+
+
+class SmfCacheTable : public SmfQueueTableTemplate<SmfCache> {};
+
 
 
 #endif // _SMF_QUEUE
