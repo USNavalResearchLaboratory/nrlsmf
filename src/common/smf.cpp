@@ -1941,7 +1941,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 {
                     PLOG(PL_DEBUG, "Smf::ProcessPacket(): Duplicate ACK!! Dropping...\n");
                     return 0;
-                    }
+                }
                 if (duplicateMark)
                 {
                     // We do not ack or forward if we fail both DPD's
