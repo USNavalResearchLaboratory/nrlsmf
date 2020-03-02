@@ -1,6 +1,5 @@
 #ifndef _SMF
 #define _SMF
-
 #include "smfHash.h"
 #include "smfDpd.h"
 #include "smfQueue.h"    // for optional per-flow interface queues
@@ -268,13 +267,15 @@ class Smf
                     {unicast_assoc_count++;}
                 void DecrementUnicastAssociateCount()
                 {*/
-                        
+
+#ifdef ELASTIC_MCAST                        
                 MulticastFIB::UpstreamHistory* FindUpstreamHistory(const ProtoAddress& upstreamAddr)
                     {return upstream_history_table.FindUpstreamHistory(upstreamAddr);}
                 void AddUpstreamHistory(MulticastFIB::UpstreamHistory& upstreamHistory)
                     {upstream_history_table.Insert(upstreamHistory);}
                 void RemoveUpstreamHistory(MulticastFIB::UpstreamHistory& upstreamHistory)
                     {upstream_history_table.Remove(upstreamHistory);}
+#endif // ELASTIC_MCAST
                 
                 // This is for adding an opaque "decorator" extension to the interface
                 // for external use purposes.  If an extension is set for the interface,
@@ -386,11 +387,14 @@ class Smf
                 SmfDpd*                               dup_detector;                                                             
                 AssociateList                         assoc_source_list;   // associates targeting this Interface                 
                 AssociateList                         assoc_target_list;   // associates that this Interface targets              
-                unsigned int                          unicast_group_count;                                                      
+                unsigned int                          unicast_group_count;                     
+                                                
                 SmfQueueTable                         queue_table;         // TBD - per flow (or next hop?) queues                      
                 SmfQueue                              pkt_queue;           // interface output queue
+#ifdef ELASTIC_MCAST                
                 MulticastFIB::UpstreamHistoryTable    upstream_history_table;
-                
+#endif // ELASTIC_MCAST
+                               
                 unsigned int                          sent_count;  // count of outbound (sent) packets for iface
                 unsigned int                          retr_count;  // count of retransmissions ('reliable' option)
                 unsigned int                          recv_count;  // count of inbound (unicast and multicast) packets
@@ -682,7 +686,6 @@ class Smf
         static const unsigned int DEFAULT_REPAIR_CACHE_SIZE;
         bool CreatePacketCache(Interface& iface, unsigned int cacheSize);
         bool CachePacket(const Interface& iface, UINT16 sequence, char* frameBuffer, unsigned int frameLength);
-        
 #endif // ELASTIC_MCAST
         
     private:

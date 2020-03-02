@@ -1934,7 +1934,7 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack, unsigned int i
     // Activate (or refresh) ELASTIC membership
     if (GetDebugLevel() >= PL_DEBUG)
     {
-        PLOG(PL_ALWAYS, "nrlsmf: recv'd EM-ACK, activating/refreshing membership: ");
+        PLOG(PL_DEBUG, "nrlsmf: recv'd EM-ACK, activating/refreshing membership: ");
         membershipDescription.Print();
         PLOG(PL_ALWAYS, "\n");
     }

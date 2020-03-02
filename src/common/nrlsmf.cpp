@@ -128,7 +128,7 @@ class SmfApp : public ProtoApp
 
         void RemoveMatchers(const char* groupName);
 
-        bool OpenDevice(const char* vifName, const char* ifaceName, char* addrString);
+        bool OpenDevice(const char* vifName, const char* ifaceName, const char* addrString);
         unsigned int AddDevice(const char* vifName, const char* ifaceName, bool stealAddrs);
 #ifdef LINUX
         static bool BlockICMP(const char* ifaceName, bool enable);
@@ -794,11 +794,11 @@ SmfApp::SmfApp()
 #ifdef ELASTIC_MCAST
    mcast_controller(GetTimerMgr()),
 #endif // ELASTIC_MCAST
+#ifdef ADAPTIVE_ROUTING
+   smart_controller(GetTimerMgr()),
+#endif  // ADAPTIVE_ROUTING
    elastic_mcast(false),
    adaptive_routing(false),
-#ifdef ADAPTIVE_ROUTING
-    smart_controller(GetTimerMgr()),
-#endif  // ADAPTIVE_ROUTING
    filter_duplicates(true),
    iface_monitor(NULL), 
    control_pipe(ProtoPipe::MESSAGE),
@@ -1511,6 +1511,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     }
     else if (!strncmp("reliable", cmd, len))
     {
+#ifdef ELASTIC_MCAST
         ProtoTokenator tk(val, ',');
         const char* ifaceName;
         while (NULL != (ifaceName = tk.GetNextItem()))
@@ -1534,6 +1535,9 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                 return false;
             }
         }
+#else
+        PLOG(PL_ERROR, "SmfApp::OnCommand(reliable) error: 'reliable' option only supported elastic multicast build\n");
+#endif // if/else ELASTIC_MCAST
     }
     else if (!strncmp("adaptive", cmd, len))
     {
@@ -1804,28 +1808,32 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
 
     else if (!strncmp("device", cmd, len))
     {
-        // value is in form <vifName>,<ifaceName>[,addr1/maskLen,addr2[/maskLen],...
+        // value is in form <vifName>,<ifaceName>[shadow][,addr1/maskLen,addr2[/maskLen],...
         // copy it so we can parse it
-        char* text = new char[strlen(val)+1];
-        if (NULL == text)
-        {
-            PLOG(PL_ERROR, "SmfApp::OnCommand(device) new buffer error: %s\n", GetErrorString());
-            return false;
-        }
-        strcpy(text, val);
-        const char* vifName = text;
-        char* ifaceName = strchr(text, ',');
+        
+        ProtoTokenator tk(val, ',');
+        tk.GetNextItem();
+        char* vifName = tk.DetachPreviousItem();
+        tk.GetNextItem();
+        char* ifaceName = tk.DetachPreviousItem();
         if (NULL == ifaceName)
         {
             PLOG(PL_ERROR, "SmfApp::OnCommand(device) error: invalid argument: \"%s\"\n", val);
-            delete[] text;
+            delete[] vifName;
             return false;
         }
-        *ifaceName++ = '\0';
-        char* addrList = strchr(ifaceName, ',');
-        if (NULL != addrList) *addrList++ = '\0';
+        bool shadow = false;
+        const char* addrList = tk.GetNextPtr();
+        if ((NULL != addrList) && (0 != strncmp("shadow", addrList, 6)))
+        {
+            shadow = true;
+            tk.GetNextItem();  // consume 'shadow' key word
+            addrList = tk.GetNextPtr();
+        }
+        (void)shadow;  // TBD - implement this
         bool result = OpenDevice(vifName, ifaceName, addrList);
-        delete[] text;
+        delete[] vifName;
+        delete[] ifaceName;
         if (!result)
         {
             PLOG(PL_ERROR, "SmfApp::OnCommand(device) error: unable to add device \"%s\"!\n", val);
@@ -4018,7 +4026,7 @@ unsigned int SmfApp::AddDevice(const char* vifName, const char* ifaceName, bool 
 }  // end SmfApp::AddDevice()
 
 // A nrlsmf "device" is a virtual interface (ProtoVif "vif") bound to a pcap device (ProtoCap "cap")
-bool SmfApp::OpenDevice(const char* vifName, const char* ifaceName, char* addrString)
+bool SmfApp::OpenDevice(const char* vifName, const char* ifaceName, const char* addrString)
 {
     // Add ProtoVif "device", stealing ifaceName addresses if NULL addrString
     unsigned int vifIndex = AddDevice(vifName, ifaceName, (NULL == addrString));

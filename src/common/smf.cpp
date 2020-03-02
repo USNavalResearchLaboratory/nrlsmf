@@ -13,10 +13,12 @@
 const unsigned int Smf::DEFAULT_AGE_MAX = 10;  // 10 seconds
 const unsigned int Smf::PRUNE_INTERVAL = 5;    // 5 seconds
 
+#ifdef ELASTIC_MCAST
 const unsigned int REPAIR_AGE_MAX = 30*1000000;  // 30 seconds in microseconds
 const unsigned int REPAIR_IDLE_MAX = 30;         // 30 idle packets max?
 const int REPAIR_DELTA_MAX = 8;
 const unsigned int Smf::DEFAULT_REPAIR_CACHE_SIZE = 32;
+#endif // ELASTIC_MCAST
 
 // These are used to mark the IPSec "type" for DPD
 const char Smf::AH = 0;
@@ -2242,6 +2244,11 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 // TBD - put code here to compare this upstream to other upstreams we are tracking
                 // and be more selective in who we ACK.  At the moment, we ACK all upstreams providing
                 // non-duplicative packet forwarding.  This is more robust, but less efficient.
+                // The UMP header option provides an opportunity to measure the link quality of 
+                // multiple upstreamRelay nodes.
+                // The outcome would be to set "sendAck" to false if this upstreamRelay isn't
+                // deemed to provide sufficient value/utility (would we want to possibilty, proactively
+                // activate another relay if a given relay degraded significantly ... 
                 
             }
             // Get (or create if needed) the token bucket for this outbound iface
@@ -2747,6 +2754,12 @@ bool Smf::CachePacket(const Interface& iface, UINT16 sequence, char* frameBuffer
         PLOG(PL_ERROR, "Smf::CachePacket() error: packet exceeds maximum packet size\n");
         return false;
     }
+    /*else if (frameLength < 200)
+    {
+        // This 'hack' was to have NORM ACK/NACK message bypass hop-by-hop ARQ
+        return true;
+    }*/
+    
     SmfCache* cache = cache_table.FindQueue(iface.GetIpAddress());
     if (NULL == cache)
     {
