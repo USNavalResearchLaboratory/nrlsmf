@@ -48,7 +48,10 @@ bool ElasticMsg::InitFromBuffer(void*        bufferPtr,
 
 const ProtoAddress ElasticMsg::ELASTIC_ADDR = ProtoAddress("224.0.0.55");
 const ProtoAddress ElasticMsg::ELASTIC_MAC = ProtoAddress().GetEthernetMulticastAddress(ELASTIC_ADDR);
+const ProtoAddress ElasticMsg::ELASTIC_ASYM_ADDR = ProtoAddress("224.55.55.55");
+const ProtoAddress ElasticMsg::ELASTIC_ASYM_MAC = ProtoAddress().GetEthernetMulticastAddress(ELASTIC_ASYM_ADDR);
 const UINT16 ElasticMsg::ELASTIC_PORT = 5555;
+const UINT8 ElasticMsg::DEFAULT_ASYM_TTL = 8;
 
         
 ElasticAck::ElasticAck(void*          bufferPtr, 

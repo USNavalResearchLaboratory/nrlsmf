@@ -56,9 +56,10 @@ class SmartForwarder
 
         // The following required overrides are needed since they require access
         // to a network interface output mechanism (for sending EM-ACK)
-        virtual bool SendAck(unsigned int                         ifaceIndex,
-                             const ProtoAddress&                  relayAddr,
-                             const FlowDescription& flowDescription) = 0;
+        virtual bool SendAck(unsigned int           ifaceIndex,
+                             const ProtoAddress&    dstMac,
+                             const FlowDescription& flowDescription,
+                             const ProtoAddress&    upstreamAddr) = 0;
         // To send acknoweldgements.
         class OutputMechanism
         {

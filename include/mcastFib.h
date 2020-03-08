@@ -776,7 +776,8 @@ class MulticastFIB
                                      const ProtoAddress&    dstMac,  // also used for ACK upstream relay addr
                                      const ProtoAddress&    srcMac,
                                      const ProtoAddress&    srcIp,
-                                     const FlowDescription& flowDescription);
+                                     const FlowDescription& flowDescription,
+                                     const ProtoAddress&    upstreamAddr);
 
         // This linked list is used to "age" entries. When a packet for an entry
         // is processed, the entry is "promoted" to the front of the list.  Stale
@@ -968,9 +969,10 @@ class ElasticMulticastForwarder
 
         // The following required overrides are needed since they require access
         // to a network interface output mechanism (for sending EM-ACK)
-        virtual bool SendAck(unsigned int                         ifaceIndex,
-                             const ProtoAddress&                  relayAddr,
-                             const FlowDescription& flowDescription) = 0;
+        virtual bool SendAck(unsigned int           ifaceIndex,
+                             const ProtoAddress&    relayAddr,
+                             const FlowDescription& flowDescription,
+                             const ProtoAddress&    upstreamAddr) = 0;
         class OutputMechanism
         {
             public:

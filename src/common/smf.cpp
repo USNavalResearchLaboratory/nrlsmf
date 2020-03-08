@@ -61,8 +61,9 @@ Smf::Interface::Extension::~Extension()
 }
 
 Smf::Interface::Interface(unsigned int ifIndex)
- : if_index(ifIndex), resequence(false), is_tunnel(false), is_layered(false), 
-   is_reliable(false), ump_sequence(0), ip_encapsulate(false), dup_detector(NULL), 
+ : if_index(ifIndex), resequence(false), is_tunnel(false), 
+   is_layered(false), is_reliable(false), is_shadowing(false),
+   ump_sequence(0), ip_encapsulate(false), dup_detector(NULL), 
    unicast_group_count(0), sent_count(0), retr_count(0), recv_count(0), 
    mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0), extension(NULL)
 {
@@ -456,6 +457,7 @@ Smf::Interface* Smf::AddInterface(unsigned int ifIndex)
             return NULL;
         }
         iface_list.Insert(*iface);
+        // TBD -Initialize interface parameters to defaults
     }
     return iface;
 }  // end Smf::AddInterface()
@@ -1075,7 +1077,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             {
 #ifdef ELASTIC_MCAST
                 // TBD - use non-link local address for ElasticMcast control messages so that ACK/NACK
-                // message
+                // message to enable assymmetric/non-reciprocal link topology support
                 
                 // Is this an ElasticMulticast ACK? (if so, notify controller)
                 if (dstIp.HostIsEqual(ElasticAck::ELASTIC_ADDR) &&
@@ -1092,18 +1094,19 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                 case ElasticMsg::ACK:
                                 {
                                     ElasticAck elasticAck(elasticMsg);
-                                    // TBD - allow for IP upstream addresses and not just MAC
-                                    // (and for receipt for other interfaces)
                                     ProtoAddress upstreamAddr;
                                     UINT8 upstreamCount = elasticAck.GetUpstreamListLength();
                                     for (UINT8 i = 0; i < upstreamCount; i++)
                                     {
-
-                                        if (elasticAck.GetUpstreamAddr(i, upstreamAddr) &&
-                                            (upstreamAddr.HostIsEqual(srcIface.GetInterfaceAddress())))
+                                        if (elasticAck.GetUpstreamAddr(i, upstreamAddr))
                                         {
-                                            mcast_controller->HandleAck(elasticAck, srcIface.GetIndex(), srcMac);
-                                            return 0;
+                                            unsigned int upstreamIndex = GetInterfaceIndex(upstreamAddr);
+                                            if (0 != upstreamIndex)
+                                            {
+                                                mcast_controller->HandleAck(elasticAck, upstreamIndex, srcMac);
+                                                return 0;
+                                            }
+                                            // else not for me
                                         }
                                     }
                                     break;
@@ -1862,6 +1865,8 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     MulticastFIB::Entry* fibEntry = NULL;
     MulticastFIB::UpstreamRelay* upstreamRelay = NULL;
     MulticastFIB::UpstreamHistory* upstreamHistory = NULL;
+    ProtoAddress upstreamAddr;
+    UINT16 upstreamSeq = 0;
     unsigned int pktCount = 0;
     unsigned int updateInterval = 0;
     bool sendAck = false;
@@ -2208,11 +2213,30 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             if ((NULL == upstreamRelay))// && !outbound) // && fibEntry->GetAckingStatus())
             {
                 ASSERT(0 != fibEntry->GetFlowDescription().GetSrcLength());
+                
+                if (4 == ipPkt.GetVersion() && !outbound)
+                {
+                    // Check for UMP header option and use that as upstream relay address if present
+                    ProtoPktIPv4::Option::Iterator iterator(ipPkt);
+                    ProtoPktIPv4::Option option;
+                    while (iterator.GetNextOption(option))
+                    {
+                        if (ProtoPktIPv4::Option::UMP == option.GetType())
+                        {
+                            ProtoPktUMP& ump = static_cast<ProtoPktUMP&>(option);
+                            ump.GetSrcAddr(upstreamAddr);
+                            upstreamSeq = ump.GetSequence();  // save for later
+                            break;
+                        }
+                    }
+                }
+                const ProtoAddress& relayAddr = upstreamAddr.IsValid() ? upstreamAddr : srcMac;
+                
                 // Get (or create if needed) upstream relay info
-                upstreamRelay = fibEntry->FindUpstreamRelay(srcMac);
+                upstreamRelay = fibEntry->FindUpstreamRelay(relayAddr);
                 if (NULL == upstreamRelay)
                 {
-                    if (NULL == (upstreamRelay = new MulticastFIB::UpstreamRelay(srcMac, srcIface.GetIndex())))
+                    if (NULL == (upstreamRelay = new MulticastFIB::UpstreamRelay(relayAddr, srcIface.GetIndex())))
                     {
                         PLOG(PL_ERROR, "Smf::ProcessPacket() new MulticastFib::UpstreamRelay error: %s\n", GetErrorString());
                         return 0;
@@ -2497,37 +2521,30 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 #ifdef ELASTIC_MCAST
     UINT16 nackStart = 0;
     UINT16 nackCount = 0;
-    ProtoAddress upstreamAddr;
     if (srcIface.IsReliable() && (4 == ipPkt.GetVersion())  && !outbound)
     {
         // Each UpstreamHistory maintains a reference count of how many 
         // fibEntries (flows) are referencing it as an _active_ upstream
         // relay.  We only NACK active upstreams.
         
-        // Look for UMP option and check our UpstreamHistory
-        ProtoPktIPv4 ip4Pkt(ipPkt);
-        ProtoPktIPv4::Option::Iterator iterator(ipPkt);
-        ProtoPktIPv4::Option option;
-        while (iterator.GetNextOption(option))
+        if (upstreamAddr.IsValid())
         {
-            if (ProtoPktIPv4::Option::UMP == option.GetType())
+            // UMP option was present
+            upstreamHistory = srcIface.FindUpstreamHistory(upstreamAddr);
+            if ((NULL == upstreamHistory) && (NULL != upstreamRelay))
             {
-                ProtoPktUMP& ump = static_cast<ProtoPktUMP&>(option);
-                ump.GetSrcAddr(upstreamAddr);
-                UINT16 upstreamSeq = ump.GetSequence();
-                upstreamHistory = srcIface.FindUpstreamHistory(upstreamAddr);
-                if ((NULL == upstreamHistory) && (NULL != upstreamRelay))
+                if (NULL != (upstreamHistory = new MulticastFIB::UpstreamHistory(upstreamAddr)))
                 {
-                    if (NULL == (upstreamHistory = new MulticastFIB::UpstreamHistory(upstreamAddr)))
-                    {
-                        PLOG(PL_ERROR, "Smf::ProcessPacket() new UpstreamHistory error: %s\n", GetErrorString());
-                        break;
-                    }
                     srcIface.AddUpstreamHistory(*upstreamHistory);
                     upstreamHistory->SetSequence(upstreamSeq);
                 }
-                if (NULL == upstreamHistory)
-                    break;  // no history for this upstream, but not active, so ignore it for now
+                else
+                {
+                    PLOG(PL_ERROR, "Smf::ProcessPacket() new UpstreamHistory error: %s\n", GetErrorString());
+                }
+            }
+            if (NULL != upstreamHistory)
+            {
                 if (dstCount > 0)
                 {
                     ASSERT(NULL != upstreamRelay);
@@ -2558,14 +2575,11 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     delete upstreamHistory;
                     upstreamHistory = NULL;
                 }
-                if ((NULL != upstreamHistory) && (seqDelta >= 0))
-                {   upstreamHistory->SetSequence(upstreamSeq);
-                }
-                break;
+                if (seqDelta >= 0) upstreamHistory->SetSequence(upstreamSeq);
             }
-        }  // end while(iterator.GetNextOption())                        
+            // else no history for this upstream, but not active, so ignore it for now
+        }                      
     }
-    
     
     if (updateController)  // ??? only signal controller when "forward" is true ???
     {
@@ -2626,11 +2640,14 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     {
         // Note that due to alignment, the built frame will have 2-byte offset from "ackBuffer" head
         UINT32 ackBuffer[1400/4];
-        // "srcMac" is upstream relay address
-        unsigned int ackLength = MulticastFIB::BuildAck(ackBuffer, 1400, srcMac,
+        // "srcMac" is previous hop MAC addr
+        const ProtoAddress& relayAddr = upstreamAddr.IsValid() ? upstreamAddr : srcMac;
+        const ProtoAddress& ackDst = upstreamAddr.IsValid() ? ElasticNack::ELASTIC_MAC : srcMac;
+        unsigned int ackLength = MulticastFIB::BuildAck(ackBuffer, 1400, ackDst,  
                                                         srcIface.GetInterfaceAddress(),
                                                         srcIface.GetIpAddress(),
-                                                        fibEntry->GetFlowDescription());
+                                                        fibEntry->GetFlowDescription(),
+                                                        relayAddr);
         if (0 != ackLength)
         {
 
@@ -2686,18 +2703,20 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 
 #if defined(ELASTIC_MCAST) || defined(ADAPTIVE_ROUTING)
 bool Smf::SendAck(unsigned int           ifaceIndex,
-                  const ProtoAddress&    relayAddr,
-                  const FlowDescription& flowDescription)
+                  const ProtoAddress&    dstMac,  // destination MAC addr of EM_ACK to be sent
+                  const FlowDescription& flowDescription,
+                  const ProtoAddress&    upstreamAddr)
 {
     Interface* iface = GetInterface(ifaceIndex);
     ASSERT(NULL != iface);
     // Note that due to alignment, the built frame will have 2-byte offset from "ackBuffer" head
     UINT32 ackBuffer[1400/4];
     // "srcMac" is upstream relay address
-    unsigned int ackLength = MulticastFIB::BuildAck(ackBuffer, 1400, relayAddr,
+    unsigned int ackLength = MulticastFIB::BuildAck(ackBuffer, 1400, dstMac,
                                                     iface->GetInterfaceAddress(),
                                                     iface->GetIpAddress(),
-                                                    flowDescription);
+                                                    flowDescription,
+                                                    upstreamAddr);
     if (0 != ackLength)
     {
 
@@ -2705,7 +2724,7 @@ bool Smf::SendAck(unsigned int           ifaceIndex,
         {
             PLOG(PL_ALWAYS, "nrlsmf: sending preemptive EM_ACK for flow \"");
             flowDescription.Print();  // to debug output or log
-            PLOG(PL_ALWAYS, " to relay %s via interface index %d\n", relayAddr.GetHostString(), ifaceIndex);
+            PLOG(PL_ALWAYS, " to relay %s via interface index %d\n", upstreamAddr.GetHostString(), ifaceIndex);
         }
         // TBD - Implement ACK rate limiter by bundling multiple flow acks for common upstream relay
         // (i.e. do this with a timer and some sort of helper classes)

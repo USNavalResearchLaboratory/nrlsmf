@@ -124,17 +124,6 @@ bool SmfCache::EnqueuePacket(SmfIndexedPacket& pkt)
         if (NULL == oldest_pkt) oldest_pkt = &pkt;
         Insert(pkt);
         queue_length++;
-        
-        // For debugging
-        TRACE("SmfCache::EnqueuePacket(%hu) oldest:%hu ", pkt.GetIndex(), oldest_pkt->GetIndex());
-        Iterator it(*this);
-        SmfIndexedPacket* p = it.GetNextItem();
-        ASSERT(NULL != p);
-        TRACE("min:%hu ", p->GetIndex());
-        it.Reset(true);
-        p = it.GetPrevItem();
-        ASSERT(NULL != p);
-        TRACE("max%hu\n", p->GetIndex());
         return true;
     }
     else

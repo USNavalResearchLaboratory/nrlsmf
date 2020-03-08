@@ -69,7 +69,8 @@ bool SmartForwarder::SetAckingStatus(const FlowDescription& flowDescription,
                                              upstream->GetAddress().GetHostString());
                             SendAck(upstream->GetInterfaceIndex(),
                                     upstream->GetAddress(),
-                                    entry->GetFlowDescription());
+                                    entry->GetFlowDescription(),
+                                    upstream->GetAddress());
                             upstream->Reset(currentTick);
                         }
                     }
@@ -188,7 +189,8 @@ bool SmartForwarder::SetForwardingStatus(const FlowDescription&          flowDes
                                             upstream->GetAddress().GetHostString());
                             SendAck(upstream->GetInterfaceIndex(),
                                     upstream->GetAddress(),
-                                    flowDescription);
+                                    flowDescription,
+                                    upstream->GetAddress());
                             upstream->Reset(currentTick);
                         }
                     }

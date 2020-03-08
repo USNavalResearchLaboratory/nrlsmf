@@ -30,6 +30,9 @@ class ElasticMsg : public ProtoPkt
         static const ProtoAddress ELASTIC_ADDR;  // 224.0.0.55
         static const ProtoAddress ELASTIC_MAC;   // ethernet MAC for ELASTIC_ADDR
         static const UINT16 ELASTIC_PORT;        // 5555
+        static const ProtoAddress ELASTIC_ASYM_ADDR;  // 224.55.55.55
+        static const ProtoAddress ELASTIC_ASYM_MAC;   // ethernet MAC for ELASTIC_ASYM_ADDR
+        static const UINT8 DEFAULT_ASYM_TTL;          // 8
         
         enum Type
         {

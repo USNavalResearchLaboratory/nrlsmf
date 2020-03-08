@@ -1363,7 +1363,8 @@ unsigned int MulticastFIB::BuildAck(UINT32*                buffer,
                                     const ProtoAddress&    dstMac,
                                     const ProtoAddress&    srcMac,
                                     const ProtoAddress&    srcIp,
-                                    const FlowDescription& flowDescription)
+                                    const FlowDescription& flowDescription,
+                                    const ProtoAddress&    upstreamAddr)
 {
     // IPv4-only at moment
     if (ProtoAddress::IPv4 != srcIp.GetType())
@@ -1434,7 +1435,7 @@ unsigned int MulticastFIB::BuildAck(UINT32*                buffer,
         return 0;
     }
 
-    if (!ack.AppendUpstreamAddr(dstMac))  // TBD - could upstream relay addr be different?
+    if (!ack.AppendUpstreamAddr(upstreamAddr)) 
     {
         PLOG(PL_ERROR, "MulticastFIB::BuildAck() error: insufficient 'buffer' length!\n");
         return 0;
@@ -1582,9 +1583,11 @@ bool ElasticMulticastForwarder::SetAckingStatus(const FlowDescription& flowDescr
                         {
                             PLOG(PL_ALWAYS, "nrlsmf: sending preemptive EM-ACK to upstream relay %s\n",
                                              upstream->GetAddress().GetHostString());
-                            SendAck(upstream->GetInterfaceIndex(),
-                                    upstream->GetAddress(),
-                                    entry->GetFlowDescription());
+                            // If upstream address is MAC, unicast ACK to that MAC, else use multicast MAC
+                            const ProtoAddress& upstreamAddr = upstream->GetAddress();
+                            const ProtoAddress& dstMac = (ProtoAddress::ETH == upstreamAddr.GetType()) ?
+                                                         upstreamAddr : ElasticNack::ELASTIC_MAC;
+                            SendAck(upstream->GetInterfaceIndex(), dstMac, flowDescription, upstreamAddr);
                             upstream->Reset(currentTick);
                         }
                     }
@@ -1671,9 +1674,11 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&      
                         {
                             PLOG(PL_ALWAYS, "nrlsmf: sending preemptive EM-ACK to upstream relay %s\n",
                                             upstream->GetAddress().GetHostString());
-                            SendAck(upstream->GetInterfaceIndex(),
-                                    upstream->GetAddress(),
-                                    flowDescription);
+                            // If upstream address is MAC, unicast ACK to that MAC, else use multicast MAC
+                            const ProtoAddress& upstreamAddr = upstream->GetAddress();
+                            const ProtoAddress& dstMac = (ProtoAddress::ETH == upstreamAddr.GetType()) ?
+                                                         upstreamAddr : ElasticNack::ELASTIC_MAC;
+                            SendAck(upstream->GetInterfaceIndex(), dstMac, flowDescription, upstreamAddr);
                             upstream->Reset(currentTick);
                         }
                     }

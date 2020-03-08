@@ -15,6 +15,8 @@
 #endif // ADAPTIVE_ROUTING
 #endif // ELASTIC_MCAST
 
+#include <stdint.h>  // for intptr_t
+
 #define SET_DSCP   1
 #define RESET_DSCP 0
 
@@ -70,20 +72,19 @@ class Smf
         }
         
         // Manage/Query a list of the node's local MAC/IP addresses
-        bool AddOwnAddress(const ProtoAddress& addr)
-            {return local_addr_list.Insert(addr);}
+        // (Also cache interface index so we can look that up by address)
+        bool AddOwnAddress(const ProtoAddress& addr, intptr_t ifaceIndex)
+        {
+            bool result = local_addr_list.Insert(addr, (void*)ifaceIndex);
+            ASSERT(result);
+            return result;
+        }
+            
         bool IsOwnAddress(const ProtoAddress& addr) const
             {return local_addr_list.Contains(addr);}
+        unsigned int GetInterfaceIndex(const ProtoAddress& addr) const
+            {return  (unsigned int)((intptr_t)local_addr_list.GetUserData(addr));}
         
-        /*
-        int GetInterfaceIndex(const ProtoAddress& addr) const
-        {
-            unsigned int ifIndex = ((unsigned int)local_addr_list.GetUserData(addr));
-            return ((0 == ifIndex) ? 
-                        (local_addr_list.Contains(addr) ? 0 : -1) : 
-                        ifIndex);
-        }
-        */
         void RemoveOwnAddress(const ProtoAddress& addr)
             {local_addr_list.Remove(addr);}
         ProtoAddressList& AccessOwnAddressList() 
@@ -190,6 +191,12 @@ class Smf
                 bool IsLayered() const
                     {return is_layered;}
                 
+                // If "is_shadowing", the snmf "device" uses the underlying
+                // interface addressing (MAC and IP) for its transmissions
+                void SetShadowing(bool state)
+                    {is_shadowing = state;}
+                bool IsShadowing() const
+                    {return is_shadowing;}
                 // These enable/disable reliable forwarding for the interface
                 void SetReliable(bool state)
                     {is_reliable = state;}
@@ -380,7 +387,8 @@ class Smf
                 bool                                  resequence;                                                               
                 bool                                  is_tunnel;                                                                
                 bool                                  is_layered;                                                               
-                bool                                  is_reliable;                                                              
+                bool                                  is_reliable;   
+                bool                                  is_shadowing;  // nrlsmf vif 'device' interfaces only                                               
                 UINT16                                ump_sequence;                                                             
                 bool                                  ip_encapsulate;                                                           
                 ProtoAddress                          encapsulation_link;  // MAC addr of next hop for encapsulated packets     
@@ -482,6 +490,9 @@ class Smf
 
                 bool IsEmpty() const
                     {return iface_list.IsEmpty();}
+                
+                InterfaceList& AccessInterfaceList()
+                    {return iface_list;}
                 
                 friend class Iterator;
                 class Iterator : public InterfaceList::Iterator
@@ -678,8 +689,9 @@ class Smf
 #if defined(ELASTIC_MCAST) || defined(ADAPTIVE_ROUTING)
         // required ElasticMulticastForwarder overrides
         bool SendAck(unsigned int           ifaceIndex, 
-                     const ProtoAddress&    relayAddr,
-                     const FlowDescription& flowDescription);
+                     const ProtoAddress&    dstMac,
+                     const FlowDescription& flowDescription,
+                     const ProtoAddress&    updstreamAddr);
         
         
         // For reliable forwarding option
