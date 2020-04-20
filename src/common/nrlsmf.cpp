@@ -1626,6 +1626,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         adaptive_routing = true;
         smf.SetAdaptiveRouting(true);
     }
+#ifdef ELASTIC_MCAST
     else if (!strncmp("allow", cmd, len))
     {
         // syntax: "allow <addr1>[,<addr2>, ...] with "all" as a wildcard address
@@ -1674,6 +1675,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             return false;
         }     
     }
+#endif // ELASTIC_MAST
     else if (!strncmp("filterDups", cmd, len))
     {
         // syntax: "filterDups {on | off}"
