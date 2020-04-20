@@ -113,7 +113,7 @@ class Smf
             return ip6_seq_mgr.IncrementSequence(current_update_time, dstAddr, srcAddr);
         }
         
-       class InterfaceGroup;  // really an association group, if you will
+        class InterfaceGroup;  // really an association group, if you will
         
         // We derive from "ProtoQueue::Item here so we can keep multiple lists of 
         // "Interfaces" indexed by their "ifIndex", "ifName", etc
@@ -197,6 +197,13 @@ class Smf
                     {is_shadowing = state;}
                 bool IsShadowing() const
                     {return is_shadowing;}
+                
+                // Controls blocking of outbound IGMP messages
+                // (Only applies to nrlsmf "device" interfaces running elastic mcast)
+                void SetBlockIGMP(bool state)
+                    {block_igmp = state;}
+                bool BlockIGMP() const
+                    {return block_igmp;}
                 // These enable/disable reliable forwarding for the interface
                 void SetReliable(bool state)
                     {is_reliable = state;}
@@ -388,7 +395,8 @@ class Smf
                 bool                                  is_tunnel;                                                                
                 bool                                  is_layered;                                                               
                 bool                                  is_reliable;   
-                bool                                  is_shadowing;  // nrlsmf vif 'device' interfaces only                                               
+                bool                                  is_shadowing;  // nrlsmf vif 'device' interfaces only   
+                bool                                  block_igmp;    // nrlsmf vif 'device' elastic mcast interfaces only                                            
                 UINT16                                ump_sequence;                                                             
                 bool                                  ip_encapsulate;                                                           
                 ProtoAddress                          encapsulation_link;  // MAC addr of next hop for encapsulated packets     

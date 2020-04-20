@@ -52,7 +52,8 @@ class SmfConfig : public ProtoJson::Document
                           const char*           deviceName = NULL,
                           bool                  reliable = false,
                           bool                  layered = false,
-                          bool                  shadow = false);
+                          bool                  shadow = false,
+                          bool                  blockIGMP = false);
         
         bool AddInterfaceGroup(const char*          groupName,
                                Smf::RelayType       relayType,

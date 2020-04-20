@@ -61,7 +61,8 @@ bool SmfConfig::AddInterface(const char*        ifaceName,
                              const char*        deviceName,
                              bool               reliable,
                              bool               layered,
-                             bool               shadow)
+                             bool               shadow,
+                             bool               blockIGMP)
 {
     if (!Initialized() && !Init()) return false;
     // First, find or create "interface" object
@@ -133,6 +134,11 @@ bool SmfConfig::AddInterface(const char*        ifaceName,
         return false;
     }
     if (!iface->InsertBoolean("shadow", shadow))
+    {
+        PLOG(PL_ERROR, "SmfConfig::AddInterface() error adding 'shadow' attribute: %s\n", GetErrorString());
+        return false;
+    }
+    if (!iface->InsertBoolean("blockIGMP", blockIGMP))
     {
         PLOG(PL_ERROR, "SmfConfig::AddInterface() error adding 'shadow' attribute: %s\n", GetErrorString());
         return false;

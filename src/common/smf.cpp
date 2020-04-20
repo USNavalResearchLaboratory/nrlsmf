@@ -62,7 +62,7 @@ Smf::Interface::Extension::~Extension()
 
 Smf::Interface::Interface(unsigned int ifIndex)
  : if_index(ifIndex), resequence(false), is_tunnel(false), 
-   is_layered(false), is_reliable(false), is_shadowing(false),
+   is_layered(false), is_reliable(false), is_shadowing(false), block_igmp(false),
    ump_sequence(0), ip_encapsulate(false), dup_detector(NULL), 
    unicast_group_count(0), sent_count(0), retr_count(0), recv_count(0), 
    mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0), extension(NULL)
@@ -1311,7 +1311,6 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             // per Section 5.2.2 of draft-ietf-manet-smf-06
             // It sets the "flowId" (pktId context) and "pktId" appropriately
             // depending upon the type of packet (i.e., fragment, IPSec, etc)
-
             if (!idpd_enable)
             {
                 // Assume H-DPD and set flowId accordingly
@@ -1602,17 +1601,17 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     mrcv_count++;  // increment multicast received count
     srcIface.IncrementMcastCount();
 
-    // If we are "resequencing" packets recv'd on this srcIface (smf rpush|rmerge)
-    // we need to mark the DPD table so we don't end up potentially sending the
-    // resequenced version of the packet back out this srcIface on which it
-    // arrived (due to hearing a MANET neighbor forwarding this packet)
-    // Also is srcIface is "layered", we mark the packet in its DPD table since
-    // we don't re-forward "seen" packets on "layered" interfaces that have their
-    // own independent multicast distribution mechanism.
-    if (srcIface.GetResequence() || srcIface.IsLayered())
+    
+    // This is the _old_ location of code that has been moved to _after_
+    // the elastic multicast processing section.  The code that was
+    // here made a entry in "srcIface" DPD table under a couple of 
+    // different conditions.  This comment is left here in case moving
+    // that code caused a problem (It shouldn't - fingers crossed).  The
+    // code moved is here in this comment block:
+    /*if (srcIface.GetResequence() || (!outbound && srcIface.IsLayered()))
     {
         srcIface.IsDuplicatePkt(current_update_time, flowId, flowIdSize, pktId, pktIdSize);
-    }
+    }*/
 
 #ifdef ADAPTIVE_ROUTING
 
@@ -1912,7 +1911,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
         bool adaptive = ifaceGroup.GetAdaptiveRouting();
 #else
         bool adaptive = false;
-#endif
+#endif  // end if/else ADAPTIVE_ROUTING
         // Should we forward this packet on this associated "dstIface"?
         bool ifaceForward = false;
         bool updateDupTree = false;
@@ -2049,7 +2048,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             }
         }
 
-	    if (srcMac.IsValid() && IsOwnAddress(srcMac) && !outbound) // don't forward locally-generated packets captured
+	    if (!outbound && srcMac.IsValid() && IsOwnAddress(srcMac)) // don't forward locally-generated packets captured
 	    {
 #ifdef ADAPTIVE_ROUTING
                 int temp = 0;
@@ -2101,6 +2100,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             ifaceForward = false;
         }
 #endif // ADAPTIVE_ROUTING
+         
 #ifdef ELASTIC_MCAST
         if (IsOwnAddress(dstIp))
         {
@@ -2122,12 +2122,39 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 // TBD - first match the flow against some policy list to determine "indexFlags" dynamically?
                 FlowDescription flowDescription;
                 flowDescription.InitFromPkt(ipPkt);
+                if (GetDebugLevel() >= PL_DETAIL)
+                {
+                    PLOG(PL_DETAIL, "Smf::ProcessPacket() for flow ");
+                    flowDescription.Print();
+                    PLOG(PL_ALWAYS, " ...\n");
+                }
                 // TBD - we could call FindEntry() here instead to be slightly more efficient
                 //  (and then for new flows, call FindBestMatch() to find a matching managed entry if it exists)
                 MulticastFIB::Entry* match = mcast_fib.FindBestMatch(flowDescription);
                 if (NULL != match)
                 {
-                    if (0 != match->GetSrcLength())
+                    if (GetDebugLevel() >= PL_DETAIL)
+                    {
+                        PLOG(PL_DETAIL, "Smf::ProcessPacket() best match: ");
+                        match->GetFlowDescription().Print();
+                        PLOG(PL_ALWAYS, " (forwarding status: %d)\n", match->GetDefaultForwardingStatus());
+                    }                    
+                    if (MulticastFIB::DENY == match->GetDefaultForwardingStatus())
+                    {
+                        // Ignore the packet. I.e. if inbound, do nothing else pass through
+                        if (outbound)
+                        {
+                            // This instructs the controller to send the pass-through
+                            // outbound packet on the given interface.
+                            dstIfArray[0] = srcIface.GetIndex();
+                            return 1;
+                        }
+                        else
+                        {
+                            return 0;
+                        }
+                    }
+                    if (0 != match->GetSrcLength())  // TBD - implement a better rule (.e.g., exact match check) here
                     {
                         // It's a full match, so use for flow
                         fibEntry = match;
@@ -2147,10 +2174,9 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     }
                     if (NULL != match)
                     {
-                        
-                        PLOG(PL_DEBUG, "Smf::ProcessPacket() recv'd packet for newly matched flow: ");
-                        if (GetDebugLevel() >= PL_DEBUG)
+                        if (GetDebugLevel() >= PL_INFO)
                         {
+                            PLOG(PL_INFO, "Smf::ProcessPacket() newly matched flow: ");
                             fibEntry->GetFlowDescription().Print();
                             PLOG(PL_ALWAYS, " matching: ");
                             match->GetFlowDescription().Print();
@@ -2165,9 +2191,9 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     }
                     else
                     {
-                        PLOG(PL_DEBUG, "Smf::ProcessPacket() recv'd packet for newly detected flow ");
-                        if (GetDebugLevel() >= PL_DEBUG)
+                        if (GetDebugLevel() >= PL_INFO)
                         {
+                            PLOG(PL_INFO, "Smf::ProcessPacket() recv'd packet for newly detected flow ");
                             fibEntry->GetFlowDescription().Print();
                             PLOG(PL_ALWAYS, " (SMF forwarder: %d)\n", ifaceForward);
                         }
@@ -2179,9 +2205,9 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 }
                 else
                 {
-                    PLOG(PL_DETAIL, "Smf::ProcessPacket() recv'd packet for flow ");
                     if (GetDebugLevel() >= PL_DETAIL)
                     {
+                        PLOG(PL_DETAIL, "Smf::ProcessPacket() recv'd packet for flow ");
                         flowDescription.Print();
                         PLOG(PL_ALWAYS, " from relay %s for existing flow ", srcMac.GetHostString());
                         fibEntry->GetFlowDescription().Print();
@@ -2197,9 +2223,9 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     else
                     {
                         // Reactivate idle flow
-                        PLOG(PL_DEBUG, "Smf::ProcessPacket() reactivating flow ");
                         if (GetDebugLevel() >= PL_DEBUG)
                         {
+                            PLOG(PL_DEBUG, "Smf::ProcessPacket() reactivating flow ");
                             fibEntry->GetFlowDescription().Print();
                             PLOG(PL_ALWAYS, "\n");
                         }
@@ -2210,7 +2236,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             }  // end if (NULL == fibEntry)
             // We track upstreams regardless of ackingStatus so we can be more responsive
             // to send an EM-ACK upon topology changes, etc
-            if ((NULL == upstreamRelay))// && !outbound) // && fibEntry->GetAckingStatus())
+            if ((NULL == upstreamRelay) && !outbound) // && fibEntry->GetAckingStatus())
             {
                 ASSERT(0 != fibEntry->GetFlowDescription().GetSrcLength());
                 
@@ -2585,7 +2611,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     {
         // Report how many packets seen for this flow and interval from this upstream relay since last update
         // (TBD - if controller and forwarder have shared FIB, this could be economized)
-        mcast_controller->Update(fibEntry->GetFlowDescription(), srcIface.GetIndex(), srcMac, pktCount, updateInterval);
+        mcast_controller->Update(fibEntry->GetFlowDescription(), srcIface.GetIndex(), srcMac, pktCount, updateInterval, fibEntry->GetAckingStatus());
     }
     
     if (0 != nackCount)
@@ -2664,6 +2690,21 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     }  // end if (sendAck)
 
 #endif // ELASTIC_MCAST
+    
+    
+    // If we are "resequencing" packets recv'd on this srcIface (smf rpush|rmerge)
+    // we need to mark the DPD table so we don't end up potentially sending the
+    // resequenced version of the packet back out this srcIface on which it
+    // arrived (due to hearing a MANET neighbor forwarding this packet)
+    // Also is srcIface is "layered", we mark the packet in its DPD table since
+    // we don't re-forward "seen" packets on "layered" interfaces that have their
+    // own independent multicast distribution mechanism.
+    // Note this code was moved to here from above so that ElasticMulticast DENY
+    // policy could avoid this code keeping unnecessary state
+    if (srcIface.GetResequence() || (!outbound && srcIface.IsLayered()))
+    {
+        srcIface.IsDuplicatePkt(current_update_time, flowId, flowIdSize, pktId, pktIdSize);
+    }
 
     if ((dstCount > 0) && ((ttl <= 1) && !outbound && !is_tunnel))
     {
@@ -2680,7 +2721,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
         }
     }
 
-    if((dstCount > 0) && ecdsBlock)
+    if ((dstCount > 0) && ecdsBlock)
     {
         PLOG(PL_DEBUG, "Smf::ProcessPacket(): ECDS Block \n" );
 	    // This node is not a selected ECDS relay
@@ -2693,8 +2734,6 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): After Mark: New IP Length: Total: %d\n", ipPkt.GetLength());
     PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): After Mark: New IPv4 Length: Total: %d, Payload: %d\n", ipv4Pkt.GetLength(), ipv4Pkt.GetPayloadLength());
     PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): After Mark: New Eth Length: Total: %d, Payload: %d\n", ethPkt.GetLength(), ethPkt.GetPayloadLength());
-
-
 #endif // ADAPTIVE_ROUTING
     PLOG(PL_DETAIL, "Smf::ProcessPacket(): Preparing to forward! Returning = %d \n", dstCount);
     return dstCount;

@@ -36,7 +36,9 @@ class MulticastFIB
             BLOCK,  // do not forward until control plane says otherwise
             HYBRID, // forward one bucket, then block (until control plane override)
             LIMIT,  // forward according to token bucket parameters
-            FORWARD // forward on an unlimited basis
+            FORWARD,// forward on an unlimited basis
+            DENY    // do not establish any state for this flow (don't notify controller)
+                    
         };
 
         enum MembershipStatus
@@ -465,7 +467,7 @@ class MulticastFIB
                 ForwardingStatus        default_forwarding_status;
                 unsigned int            forwarding_count;   // how many interfaces forwarding to ...
 
-                ActivityStatus             activity_status;
+                ActivityStatus          activity_status;
                 BucketList              bucket_list;        // list of token buckets for outbound interfaces (allows independent interface policies)
                 UpstreamRelayList       upstream_list;
                 UpstreamRelay           downstream_relay;       // Next unicast hop (MAC address / Interface)
@@ -690,25 +692,16 @@ class MulticastFIB
 
         };  // end class MulticastFIB::MembershipTable
 
-        // TBD - is this "FlowPolicy" class redundant with our "Membership" class?
-        // (i.e., the controller can use the "Membership" class in its policy_table
-        class FlowPolicy : public ProtoTree::Item
+        class FlowPolicy : public FlowEntryTemplate<ProtoTree>
         {
             public:
-                FlowPolicy(const ProtoAddress&       dst,
-                           const ProtoAddress&       src = PROTO_ADDR_NONE, // invalid/none src addr means dst only
-                           ProtoPktIP::Protocol      theProtocol = ProtoPktIP::RESERVED,
-                           int                       trafficClass = -1);
+                // invalid/none src addr means dst only
+                FlowPolicy(const ProtoAddress&  dst = PROTO_ADDR_NONE,
+                           const ProtoAddress&  src = PROTO_ADDR_NONE,
+                           UINT8                trafficClass = 0x03,
+                           ProtoPktIP::Protocol protocol = ProtoPktIP::RESERVED);
+                FlowPolicy(const FlowDescription& flowDescription, int flags = FlowDescription::FLAG_ALL);
                 ~FlowPolicy();
-
-                bool GetDstAddr(ProtoAddress& addr) const
-                    {return flow_description.GetDstAddr(addr);}
-                bool GetSrcAddr(ProtoAddress& addr) const
-                    {return flow_description.GetSrcAddr(addr);}
-                ProtoPktIP::Protocol GetProtocol() const
-                    {return flow_description.GetProtocol();}
-                int GetTrafficClass() const
-                    {return flow_description.GetTrafficClass();}
 
                 void SetAckingStatus(bool status)
                     {acking_status = status;}
@@ -731,36 +724,23 @@ class MulticastFIB
                     {return forwarding_status;}
 
             private:
-                const char* GetKey() const
-                    {return flow_description.GetKey();}
-                unsigned int GetKeysize() const
-                    {return flow_description.GetKeysize();}
-
-                FlowDescription flow_description;
-
                 // Default status to be applied to matching detected flows
                 double              bucket_rate;   // packets per second
                 unsigned int        bucket_depth;
                 ForwardingStatus    forwarding_status;
                 bool                acking_status;
                 // TBD - should a flow have overriding mix/max update interval/count option?
-
         };  // end class MulticastFIB::FlowPolicy
 
-        class FlowPolicyTable : public ProtoTreeTemplate<FlowPolicy>
+        class PolicyTable : public FlowTableTemplate<FlowPolicy, ProtoTree>
         {
             public:
-                FlowPolicyTable();
-                ~FlowPolicyTable();
+                // "deepSearch=true" lets us find policies with best-matching source address
+                //  This lets us exclude (or include) specific sources as needed
+                FlowPolicy* FindBestMatch(const FlowDescription& flowDescription, bool deepSearch=true)
+                    {return FindBestMatch(flowDescription, deepSearch);}
 
-                // TBD - implement code to find "best fit" policy
-
-                FlowPolicy* FindPolicy(const FlowDescription& flowDescription)
-                    {return Find(flowDescription.GetKey(), flowDescription.GetKeysize());}
-
-                FlowPolicy* FindPolicy(ProtoPktIP& ipPkt, int indexFlags = (FlowDescription::FLAG_DST | FlowDescription::FLAG_SRC));
-
-        };  // end class MulticastFIB::FlowPolicyTable
+        };  // end class MulticastFIB::PolicyTable
 
         // Currently our "tick" for aging elastic multicast flows is a one microsecond
         // tick.  For a 32-bit int with wrapping values, we can discriminate a maximum
@@ -949,11 +929,17 @@ class ElasticMulticastForwarder
         void SetController(ElasticMulticastController* controller)
             {mcast_controller = controller;}
 
-        // set forwarding status to BLOCK, LIMIT, HYBRID, or FORWARD
-        bool SetForwardingStatus(const FlowDescription&  flowDescription,
-                                 unsigned int                          ifaceIndex,
-                                 MulticastFIB::ForwardingStatus        forwardingStatus,
-                                 bool                                  ackingStatus);
+        // set forwarding status to BLOCK, LIMIT, HYBRID, FORWARD, or DENY
+        // TBD - need to add option to add "managed" entry that doesn't
+        //       affect pre-existing entries?  Would make stacking policies easier,
+        //       and more forgiving of the order in which they were entered.
+        //       Need to think about what to do with pre-existing flows
+        //      anyway if managed policies are loaded "on-the-fly".
+        bool SetForwardingStatus(const FlowDescription&         flowDescription,
+                                 unsigned int                   ifaceIndex,
+                                 MulticastFIB::ForwardingStatus forwardingStatus,
+                                 bool                           ackingStatus,
+                                 bool                           managed);
 
         bool SetAckingStatus(const FlowDescription& flowDescription,
                              bool                   ackingStatus);
@@ -1012,11 +998,12 @@ class ElasticMulticastController
 
         // This method is invoked by the forwarding plane (or via interface from forwarding plane) when
         // there is a newly detected flow or upon flow activity updates
-        void Update(const FlowDescription&  flowDescription,
+        void Update(const FlowDescription&                flowDescription,
                     unsigned int                          ifaceIndex,
                     const ProtoAddress&                   relayAddr,
                     unsigned int                          pktCount,
-                    unsigned int                          pktInterval);
+                    unsigned int                          pktInterval,
+                    bool                                  ackingStatus);
 
         void HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAddress& srcIp, unsigned int ifaceIndex, bool inbound);
 
@@ -1029,6 +1016,8 @@ class ElasticMulticastController
                                 double                          timeoutSec);
         void DeactivateMembership(MulticastFIB::Membership&      membership,
                                   MulticastFIB::Membership::Flag flag);
+        
+        bool SetPolicy(const FlowDescription& description, bool allow);
 
         // NEXT STEP - IMPLEMENT MECHANISM TO SEND ACKS to UPSTREAM FORWARDERS
         // 1) When do we send an ACK?
@@ -1052,6 +1041,7 @@ class ElasticMulticastController
         ProtoTimer                      membership_timer;
 
         MulticastFIB::MembershipTable   membership_table;
+        MulticastFIB::PolicyTable       policy_table;
 
         ElasticMulticastForwarder*      mcast_forwarder;
 
