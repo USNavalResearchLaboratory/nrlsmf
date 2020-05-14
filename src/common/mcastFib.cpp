@@ -2068,7 +2068,6 @@ bool ElasticMulticastController::ActivateMembership(MulticastFIB::Membership&   
         }
         unsigned int newTick = membership_table.GetNextTimeout();
         if (newTick != oldTick)
-        if (&membership == membership_table.GetRingLeader())
         {
             int delta = newTick - currentTick;
             if (delta < 0) delta = 0;
