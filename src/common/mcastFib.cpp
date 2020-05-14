@@ -322,8 +322,6 @@ bool MulticastFIB::MembershipTable::ActivateMembership(Membership& membership, M
     // If membership already in ring, determine if update affects ring position
     if (membership.elastic_timeout_valid || membership.igmp_timeout_valid)
     {
-        
-        Membership* nextLeader = NULL;
         if (flag == membership.timeout_flag)
         {
             insert = true;  // remove/ re-insert this membership to new position
