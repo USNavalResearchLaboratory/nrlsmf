@@ -67,7 +67,6 @@ class ElasticMsg : public ProtoPkt
             ProtoPkt::SetLength(numBytes);
         }
         
-        
         // Use these to parse    
         bool InitFromBuffer(void*           bufferPtr = NULL, 
                             unsigned int    numBytes = 0, 

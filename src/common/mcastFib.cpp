@@ -322,10 +322,11 @@ bool MulticastFIB::MembershipTable::ActivateMembership(Membership& membership, M
     // If membership already in ring, determine if update affects ring position
     if (membership.elastic_timeout_valid || membership.igmp_timeout_valid)
     {
+        
+        Membership* nextLeader = NULL;
         if (flag == membership.timeout_flag)
         {
-            membership_ring.Remove(membership);
-            insert = true;
+            insert = true;  // remove/ re-insert this membership to new position
         }
         else
         {
@@ -334,27 +335,34 @@ bool MulticastFIB::MembershipTable::ActivateMembership(Membership& membership, M
                     membership.elastic_timeout_tick : membership.igmp_timeout_tick;
             int delta = tick - currentTick;
             ASSERT(abs(delta) <= TICK_AGE_MAX);
-            if (delta < 0)
+            if (delta < 0) 
+                insert = true;
+            // else no change in position
+        }
+        if (insert)
+        {
+            // Remove the membership for re-insertion
+            if (&membership == ring_leader)
+            {
+                Ring::Iterator iterator(membership_ring);
+                iterator.SetCursor(membership_ring, membership);
+                iterator.GetNextItem();  // skip cursor
+                ring_leader = iterator.GetNextItem();
+                membership_ring.Remove(membership);
+                if (NULL == ring_leader) 
+                    ring_leader = membership_ring.GetHead();
+            }
+            else
             {
                 membership_ring.Remove(membership);
-                insert = true;
             }
-        }
-        if (insert && (&membership == ring_leader))
-        {
-            Ring::Iterator iterator(membership_ring);
-            iterator.SetCursor(membership_ring, membership);
-            iterator.GetNextItem();  // skip cursor
-            ring_leader = iterator.GetNextItem();
-            membership_ring.Remove(membership);
-            if (NULL == ring_leader)
-                ring_leader = membership_ring.GetHead();
         }
     }
     else
     {
         insert = true;
     }
+    
     if (Membership::ELASTIC == flag)
     {
         membership.elastic_timeout_tick = tick;
@@ -406,7 +414,8 @@ void MulticastFIB::MembershipTable::DeactivateMembership(Membership& membership,
                 iterator.GetNextItem();  // skip cursor
                 ring_leader = iterator.GetNextItem();
                 membership_ring.Remove(membership);
-                if (NULL == ring_leader) ring_leader = membership_ring.GetHead();
+                if (NULL == ring_leader) 
+                    ring_leader = membership_ring.GetHead();
             }
             else
             {
@@ -461,7 +470,6 @@ MulticastFIB::TokenBucket::TokenBucket(unsigned int ifaceIndex)
 MulticastFIB::TokenBucket::~TokenBucket()
 {
 }
-
 
 void MulticastFIB::TokenBucket::SetRate(double pktsPerSecond)
 {
@@ -2183,7 +2191,7 @@ bool ElasticMulticastController::OnMembershipTimeout(ProtoTimer& theTimer)
 
 void ElasticMulticastController::Update(const FlowDescription&  flowDescription,
                                         unsigned int            ifaceIndex,  // inbound interface index (unused)
-                                        const ProtoAddress&     relayAddr,   // upstream relay MAC addr
+                                        const ProtoAddress&     relayAddr,   // upstream relay addr
                                         unsigned int            pktCount,
                                         unsigned int            pktInterval,
                                         bool                    oldAckingStatus)
@@ -2195,8 +2203,10 @@ void ElasticMulticastController::Update(const FlowDescription&  flowDescription,
         PLOG(PL_ALWAYS, " from upstream relay %s (pktCount: %u)\n", relayAddr.GetHostString(), pktCount);
     }
     
+    // If set to "true", only the timeout, instead of packet/event-driven, 
+    // response deactivates memnerships
     bool ignoreIdleCount = false;  // set to "true" to be more chatty, but more robust
-    if (ignoreIdleCount) return;
+    if (ignoreIdleCount) return;   
     
     // Iterate across all matching (per-interface) memberships, update the packet
     // counts and status for "ELASTIC" memberships as appropriate

@@ -548,7 +548,7 @@ class MulticastFIB
                 {
                     STATIC      = 0x01, // fixed, "static" membership
                     MANAGED     = 0x02, // managed by IGMP or MLD
-                    ELASTIC     = 0x04  // Elastic Multicast interm
+                    ELASTIC     = 0x04  // Elastic Multicast interim
                 };
 
                 int GetFlags() const
