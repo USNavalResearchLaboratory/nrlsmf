@@ -29,7 +29,7 @@ class ElasticMsg : public ProtoPkt
         
         static const ProtoAddress ELASTIC_ADDR;  // 224.0.0.55
         static const ProtoAddress ELASTIC_MAC;   // ethernet MAC for ELASTIC_ADDR
-        static const UINT16 ELASTIC_PORT;        // 5555
+        static const UINT16       ELASTIC_PORT;        // 5555
         static const ProtoAddress ELASTIC_ASYM_ADDR;  // 224.55.55.55
         static const ProtoAddress ELASTIC_ASYM_MAC;   // ethernet MAC for ELASTIC_ASYM_ADDR
         static const UINT8 DEFAULT_ASYM_TTL;          // 8
@@ -143,6 +143,9 @@ class ElasticAck : public ElasticMsg
         ElasticAck(ElasticMsg& elasticMsg);
         ~ElasticAck();
             
+        bool IsValid()  // can use as test after constructor
+            {return (GetLength() > OFFSET_DST_ADDR*4);}
+        
         // Use these to parse    
         bool InitFromBuffer(void*           bufferPtr = NULL, 
                             unsigned int    numBytes = 0, 

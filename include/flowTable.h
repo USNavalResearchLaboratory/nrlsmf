@@ -62,7 +62,7 @@ class FlowDescription
         bool IsValid() const
             {return (0 != flow_keysize);}
 
-        void Print() const;
+        void Print(FILE* filePtr=NULL) const;  // to ProtoDebug by default
 
         // These parse the "flow_key", so only use if needed
         bool GetDstAddr(ProtoAddress& addr) const;

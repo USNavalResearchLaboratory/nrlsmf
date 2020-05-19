@@ -72,6 +72,17 @@ FIB_OBJ = $(FIB_SRC:.cpp=.o)
 fibTest: CFLAGS += -DELASTIC_MCAST
 fibTest:	$(FIB_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o fibTest $(FIB_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
+    
+    
+# Builds "pcap2em" for Elastic Multicast pcap analysis
+PCAPEM_SRC = $(COMMON)/pcap2em.cpp $(COMMON)/elasticMsg.cpp $(COMMON)/flowTable.cpp
+
+PCAPEM_OBJ = $(PCAPEM_SRC:.cpp=.o)
+
+pcap2em: CFLAGS += -DELASTIC_MCAST
+pcap2em:	$(PCAPEM_OBJ) $(LIBPROTO)
+	$(CC) $(CFLAGS) -o pcap2em $(PCAPEM_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO) -lpcap
+
 
 
 PSEND_SRC = $(COMMON)/psend.cpp $(SYSTEM_SRC) \

@@ -113,6 +113,7 @@ bool ElasticAck::InitFromBuffer(void*           bufferPtr,
         PLOG(PL_ERROR, "ElasticMsg::InitFromBuffer() error: insufficient buffer size\n");
     }
     if (NULL != bufferPtr) DetachBuffer();
+    SetLength(0);
     return false;
 }  // end ElasticAck::InitFromBuffer()
 

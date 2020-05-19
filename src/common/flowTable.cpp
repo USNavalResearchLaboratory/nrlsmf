@@ -41,14 +41,16 @@ FlowDescription::~FlowDescription()
 {
 }
 
-void FlowDescription::Print() const
+void FlowDescription::Print(FILE* filePtr) const
 {
+    if (NULL == filePtr)
+        filePtr = GetDebugLog();
     // Format is "src->dst,protocol,class,ifaceIndex"
     //  where 'src' and 'dst' are addr{mask}/port
     //  as 'mask' or 'port' are applicable.)
     if (0 == flow_keysize)
     {
-        PLOG(PL_ALWAYS, "*");
+        fprintf(filePtr, "*");
         return;
     }
     // The "numFields" is used to determine the minimum number of fields to print
@@ -68,44 +70,44 @@ void FlowDescription::Print() const
     {
         ProtoAddress addr;
         GetSrcAddr(addr);
-        PLOG(PL_ALWAYS, "%s", addr.GetHostString());
+        fprintf(filePtr, "%s", addr.GetHostString());
         if (GetSrcMaskLength() != GetSrcLength() << 3) 
-            PLOG(PL_ALWAYS, "{%d}", GetSrcMaskLength());      
+            fprintf(filePtr, "{%d}", GetSrcMaskLength());      
         if (0 != addr.GetPort())
-            PLOG(PL_ALWAYS, "/%hu", addr.GetPort());
+            fprintf(filePtr, "/%hu", addr.GetPort());
     }
     else
     {
-        PLOG(PL_ALWAYS, "*");
+        fprintf(filePtr, "*");
     }
     if (0 == --numFields) return;
     if (0 != GetDstLength())
     {
         ProtoAddress addr;
         GetDstAddr(addr);
-        PLOG(PL_ALWAYS, "->%s", addr.GetHostString());
+        fprintf(filePtr, "->%s", addr.GetHostString());
         if (GetDstMaskLength() != GetDstLength() << 3) 
-            PLOG(PL_ALWAYS, "{%d}", GetDstMaskLength());      
+            fprintf(filePtr, "{%d}", GetDstMaskLength());      
         if (0 != addr.GetPort())
-            PLOG(PL_ALWAYS, "/%hu", addr.GetPort());
+            fprintf(filePtr, "/%hu", addr.GetPort());
     }
     else
     {
-        PLOG(PL_ALWAYS, "->*");
+        fprintf(filePtr, "->*");
     }
     if (0 == --numFields) return;
     if (0x03 != GetTrafficClass())
-        PLOG(PL_ALWAYS, ",%02x", GetTrafficClass());
+        fprintf(filePtr, ",%02x", GetTrafficClass());
     else
-        PLOG(PL_ALWAYS, ",*");
+        fprintf(filePtr, ",*");
     if (0 == --numFields) return;
     if (ProtoPktIP::RESERVED != GetProtocol())
-        PLOG(PL_ALWAYS, ",%d", GetProtocol());
+        fprintf(filePtr, ",%d", GetProtocol());
     else
-        PLOG(PL_ALWAYS, ",*");
+        fprintf(filePtr, ",*");
     if (0 == --numFields) return;
     if (0 != GetInterfaceIndex())
-        PLOG(PL_ALWAYS, ",%d", GetInterfaceIndex());
+        fprintf(filePtr, ",%d", GetInterfaceIndex());
 }  // end FlowDescription::Print()
 
 void FlowDescription::SetKey(const char*             dstAddr, 
