@@ -131,9 +131,9 @@ class SmfApp : public ProtoApp
 
         unsigned int OpenDevice(const char* vifName, const char* ifaceName, const char* addrString, bool shadow = false, bool blockIGMP = false);
         unsigned int AddDevice(const char* vifName, const char* ifaceName, bool stealAddrs);
-#ifdef LINUX
+#if defined (BLOCK_ICMP) && defined(LINUX)
         static bool BlockICMP(const char* ifaceName, bool enable);
-#endif  // LINUX
+#endif  // BLOCK_ICMP && LINUX
 
         bool AddCidElement(const char* deviceName, const char* ifaceName);
 
@@ -1141,7 +1141,7 @@ void SmfApp::OnShutdown()
                            PLOG(PL_ERROR, "SmfApp::InterfaceMechanism::Close() error returning address %s to interface index %u\n", addr.GetHostString(), capIndex);
 				    }
                 }
-#ifdef LINUX
+#if defined(BLOCK_ICMP) && defined(LINUX)
                 // TBD - which did this code
                 // Restore ICMP message delivery to physical interface
                 char capName[Smf::IF_NAME_MAX + 1];
@@ -4331,7 +4331,7 @@ unsigned int SmfApp::OpenDevice(const char* vifName, const char* ifaceName, cons
     iface->SetBlockIGMP(blockIGMP);
     ProtoNet::GetInterfaceAddressList(vifName, ProtoAddress::IPv4, iface->AccessAddressList());
     iface->UpdateIpAddress();
-#ifdef LINUX
+#if defined(BLOCK_ICMP) && defined(LINUX)
     if (!BlockICMP(ifaceName, true))
     {
         PLOG(PL_ERROR, "SmfApp::OpenDevice() warning: unable to block physical device ICMP reception!\n");
@@ -5579,6 +5579,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
         {
             // To save on byte copying, we left space at the beginning of our "alignedBuffer"
             // for the "smfPkt" message header in case it is needed.
+            unsigned int ethHdrLen = ProtoPktETH::GetHeaderLength(ethBuffer, ETHER_BYTES_MAX);
             if (!ForwardFrameToTap(srcIfIndex, dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ethHdrLen))
             {
                 PLOG(PL_ERROR, "SmfApp::HandleInboundPacket() error: unable to forward packet to \"tap\" process\n");
@@ -5739,7 +5740,7 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
     }
 }  // end SmfApp::MonitorEventHandler()
 
-#ifdef LINUX
+#if defined(BLOCK_ICMP) && defined(LINUX)
 
 // This is used in conjunction with "nrlsmf device" to avoid duplicate
 // delivery of ICMP messages to the kernel since even unconfigured interfaces
