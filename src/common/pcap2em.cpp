@@ -19,7 +19,6 @@ void Usage()
 int main(int argc, char* argv[])
 {
     FILE* outfile = stdout;
-    
     for (int i = 1; i < argc; i++)
     {
         ProtoFile::DirectoryIterator diterator;
@@ -44,9 +43,9 @@ int main(int argc, char* argv[])
                 fprintf(stderr, "pcap2mgen: pcap_fopen_offline() error: %s\n", pcapErrBuf);
                 return -1;
             }
-            UINT32 alignedBuffer[4096/4];   // 128 buffer for packet parsing
+            UINT32 alignedBuffer[16384/4];   // 128 buffer for packet parsing
             UINT16* ethBuffer = ((UINT16*)alignedBuffer) + 1; 
-            unsigned int maxBytes = 4096 - 2;  // due to offset, can only use 4094 bytes of buffer
+            unsigned int maxBytes = 16384 - 2;  // due to offset, can only use 4094 bytes of buffer
 
             pcap_pkthdr hdr;
             const u_char* pktData;
@@ -58,7 +57,8 @@ int main(int argc, char* argv[])
                 ProtoPktETH ethPkt(ethBuffer, maxBytes);
                 if (!ethPkt.InitFromBuffer(hdr.len))
                 {
-                    fprintf(stderr, "pcap2emtrace error: invalid Ether frame in pcap file\n");
+                    fprintf(stderr, "pcap2emtrace error: invalid Ether frame in pcap file \"%s\" %u/%u\n", 
+                            path, maxBytes, (unsigned)hdr.len);
                     continue;
                 }    
                 ProtoPktIP ipPkt;

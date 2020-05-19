@@ -4450,7 +4450,8 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                 // IPv4 unicast packets need to be sent via firewall forward, too,
 		        // unless they have a broadcast MAC address
 		        bool unicastFirewallForwardFlag = true;
-		        UINT8* bufPtr = (UINT8*)(buffer+msgHdrLen+ProtoPktETH::HDR_LEN - 2); // Points to the Ethernet type
+                unsigned int ethHdrLen = ProtoPktETH::GetHeaderLength(buffer, 8191);
+		        UINT8* bufPtr = (UINT8*)(buffer+msgHdrLen+ethHdrLen - 2); // Points to the Ethernet type
 		        if((*bufPtr == 0x08 && *(bufPtr+1) == 0x00) && smf.GetUnicastEnabled())
                 {
                     // IPv4 Unicast forwarding is enabled
@@ -4467,7 +4468,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 		            ProtoPktETH::Type ethType = (ProtoPktETH::Type)ethPkt.GetType();
 		            if (ethType == ProtoPktETH::IP)
                     {
-		                bufPtr = (UINT8*)(buffer+msgHdrLen+ProtoPktETH::HDR_LEN); // Points to the IP header
+		                bufPtr = (UINT8*)(buffer+msgHdrLen+ethHdrLen); // Points to the IP header
 		                ProtoPktIP ipPkt((UINT32*)bufPtr, IP_BYTES_MAX);
 		                if (!ipPkt.InitFromBuffer(ethPkt.GetPayloadLength()))
 		                {
@@ -4500,7 +4501,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 			                ipv4Pkt.SetID(newseq, true);
 			                //PLOG(PL_INFO, "SEQUENCE: %d IPID: %d\n", newseq, ipv4Pkt.GetID());
 			            }
-			            bufPtr = (UINT8*)(buffer+msgHdrLen+ProtoPktETH::HDR_LEN + 16); // Points to the IP destination address
+			            bufPtr = (UINT8*)(buffer+msgHdrLen+ethHdrLen + 16); // Points to the IP destination address
 			            if((*bufPtr & 0xf0) != 224)
                         {
 		                    // This is not a multicast destination address
@@ -4522,7 +4523,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 #ifdef _PROTO_DETOUR
                 if (firewall_forward || unicastFirewallForwardFlag)
                 {
-                    if (!ForwardPacket(dstCount, dstIfIndices, buffer+msgHdrLen+ProtoPktETH::HDR_LEN, len-msgHdrLen-ProtoPktETH::HDR_LEN))
+                    if (!ForwardPacket(dstCount, dstIfIndices, buffer+msgHdrLen+ethHdrLen, len-msgHdrLen-ethHdrLen))
                         PLOG(PL_ERROR, "SmfApp::OnControlMsg(smfPkt) error: unable to firewall forward packet\n");
                 }
                 else
@@ -4801,7 +4802,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                                 {
                                     // To save on byte copying, we left space at the beginning of our "alignedBuffer"
                                     // for the "smfPkt" message header in case it is needed.
-                                    if (!ForwardFrameToTap(iface->GetIndex(), dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ProtoPktETH::HDR_LEN))
+                                    if (!ForwardFrameToTap(iface->GetIndex(), dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ethHdrLen))
                                     {
                                         PLOG(PL_ERROR, "SmfApp::OnPktOutput() error: unable to forward packet to \"tap\" process\n");
                                     }
@@ -5578,7 +5579,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
         {
             // To save on byte copying, we left space at the beginning of our "alignedBuffer"
             // for the "smfPkt" message header in case it is needed.
-            if (!ForwardFrameToTap(srcIfIndex, dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ProtoPktETH::HDR_LEN))
+            if (!ForwardFrameToTap(srcIfIndex, dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ethHdrLen))
             {
                 PLOG(PL_ERROR, "SmfApp::HandleInboundPacket() error: unable to forward packet to \"tap\" process\n");
             }
@@ -5842,6 +5843,7 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
             {
                 ProtoPktIP ipPkt(ipBuffer, IP_BYTES_MAX);
                 ProtoPktETH ethPkt((UINT32*)ethBuffer,ETHER_BYTES_MAX);
+                unsigned int ethHdrLen = ethPkt.GetHeaderLength();
                 ProtoAddress srcAddr, dstAddr;
 		        bool destPktFlag = false;
 		        Smf::Interface* srcIface = smf.GetInterface(ifIndex);
@@ -5913,7 +5915,7 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
                                 // To save on byte copying, we left space at the beginning of our "alignedBuffer"
                                 // for the "smfPkt" message header in case it is needed.
 				                if(dstCount == -1) dstCount = 0;
-                                if (!ForwardFrameToTap(ifIndex, dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ProtoPktETH::HDR_LEN))
+                                if (!ForwardFrameToTap(ifIndex, dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ethHdrLen))
                                     PLOG(PL_ERROR, "SmfApp::OnPktIntercept() error: unable to send packet to \"tap\" process\n");
 			                }
                             else if (smf.GetUnicastEnabled() && !dstAddr.IsMulticast())
@@ -5931,7 +5933,7 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
                                 ethPkt.SetDstAddr(dstMacAddr);
                                 ethPkt.SetType(protocolType);
                                 //ethPkt.SetPayloadLength(numBytes);
-                                if (!ForwardFrame(dstCount, dstIfIndices, (char*)ethBuffer, ProtoPktETH::HDR_LEN + ipPkt.GetLength()))
+                                if (!ForwardFrame(dstCount, dstIfIndices, (char*)ethBuffer, ethHdrLen + ipPkt.GetLength()))
 				                    PLOG(PL_ERROR, "SmfApp::OnPktIntercept() error: unable to forward unicast packet via pcap device\n");
 			                }
                         }
@@ -6077,7 +6079,7 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
 				                    memcpy((char*)ethBuffer + 6, srcMacAddr.GetRawHostAddress(), 6);
                                 // To save on byte copying, we left space at the beginning of our "alignedBuffer"
                                 // for the "smfPkt" message header in case it is needed.
-                                if (!ForwardFrameToTap(ifIndex, dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ProtoPktETH::HDR_LEN))
+                                if (!ForwardFrameToTap(ifIndex, dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ethHdrLen))
                                     PLOG(PL_ERROR, "SmfApp::OnPktIntercept() error: unable to send packet to \"tap\" process\n");
                             }
                             else if (firewall_forward)
@@ -6087,7 +6089,7 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
                             }
                             else
                             {
-                                if (!ForwardFrame(dstCount, dstIfIndices, (char*)ethBuffer, ProtoPktETH::HDR_LEN + ipPkt.GetLength()))
+                                if (!ForwardFrame(dstCount, dstIfIndices, (char*)ethBuffer, ethHdrLen + ipPkt.GetLength()))
                                     PLOG(PL_ERROR, "SmfApp::OnPktIntercept() error: unable to forward packet via pcap device\n");
                             }
                         }  // end if (dstCount > 0)
