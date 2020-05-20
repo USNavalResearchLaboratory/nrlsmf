@@ -4802,6 +4802,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                                 {
                                     // To save on byte copying, we left space at the beginning of our "alignedBuffer"
                                     // for the "smfPkt" message header in case it is needed.
+                                    unsigned int ethHdrLen = ProtoPktETH::GetHeaderLength(ethBuffer, BUFFER_MAX - 2);
                                     if (!ForwardFrameToTap(iface->GetIndex(), dstCount, dstIfIndices, (char*)ethBuffer, ipPkt.GetLength() + ethHdrLen))
                                     {
                                         PLOG(PL_ERROR, "SmfApp::OnPktOutput() error: unable to forward packet to \"tap\" process\n");
