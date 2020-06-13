@@ -56,8 +56,11 @@ class ElasticMsg : public ProtoPkt
             FLAG_SOURCE     = 0x01,
             FLAG_PROTOCOL   = 0x02,
             FLAG_CLASS      = 0x04,
-            FLAG_RESERVED   = 0x08
+            FLAG_RESERVED   = 0x08   // this flag is reserved in ElasticAck messages
         };   
+            
+        static unsigned int GetAddressFieldWords(AddressType addrType);
+        static AddressType GetAddressType(ProtoAddress::Type addrType);
             
         void SetType(Type msgType)
             {SetUINT8(OFFSET_TYPE, (UINT8)msgType);}
@@ -104,7 +107,7 @@ class ElasticMsg : public ProtoPkt
 //      |                                                               |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //      |                                                               |
-//      +                         Source Address                        +
+//      +                        [Source Address]                       +
 //      |                                                               |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //      |                                                               |
@@ -205,41 +208,16 @@ class ElasticAck : public ElasticMsg
             OFFSET_DST_ADDR = (OFFSET_CLASS/4) + 1  // UINT32 offset
         };
             
-        unsigned int OffsetSrcAddr() const
-        {
-            // Returns UINT32 offset
-            switch (GetAddressType())
-            {
-                case ADDR_IPV4:
-                    return (OFFSET_DST_ADDR + 1);  // 1 32-bit word per addr
-                case ADDR_IPV6:
-                    return (OFFSET_DST_ADDR + 4);  // 4 32-bit words per addr
-                case ADDR_ETH:
-                    return (OFFSET_DST_ADDR + 2);  // 6 bytes addr + 2 bytes padding
-                default:
-                    return OFFSET_DST_ADDR;
-            }
-        }
+        unsigned int OffsetSrcAddr() const  // Returns UINT32 offset
+            {return (OFFSET_DST_ADDR + GetAddressFieldWords(GetAddressType()));}
         
-        unsigned int OffsetUpstreamList() const
+        unsigned int OffsetUpstreamList() const  // Returns UINT32 offset
         {
-            // Returns UINT32 offset
             unsigned offset = OffsetSrcAddr();
-            if (!FlagIsSet(FLAG_SOURCE)) return offset;
-            switch (GetAddressType())
-            {
-                case ADDR_IPV4:
-                    return offset + 1;  // 1 32-bit word per addr
-                case ADDR_IPV6:
-                    return offset + 4;  // 4 32-bit words per addr 
-                case ADDR_ETH:
-                    return offset + 2;  // 3 bytes addr + 1 byte padding
-                default:
-                    return offset;
-            }
+            return  (FlagIsSet(FLAG_SOURCE)) ? 
+                        (offset + GetAddressFieldWords(GetAddressType())) : 
+                        offset;
         }
-        
-        static unsigned int GetAddressFieldLength(AddressType addrType);
         
         void SetFlag(Flag flag)
         {
@@ -255,29 +233,182 @@ class ElasticAck : public ElasticMsg
 //       0             1               2               3               4
 //       0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//      | Msg Type = 2  |    Msg Len    |          DPD ID               |
+//      | Msg Type = 2  |     Msg Len   |          DPD ID               |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//      |S|P|C|G| atype | ulen  | utype |    protocol   | traffic class |
+//      |S|P|C|R| atype |  resv | vtype |    protocol   | traffic class |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //      |                                                               |
 //      +                       Destination Address                     +
 //      |                                                               |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //      |                                                               |
-//      +                         Source Address                        +
+//      +                        [Source Address]                       +
 //      |                                                               |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |      ttl      |  hop count    |            metric             |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //      |                                                               |
-//      +                      [Advertiser Address]                     +
+//      +                       Advertiser Address                      +
 //      |                              ...                              |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //
 // FLAGS:
 //
-// S        : source addr present (1 bit)
+// S        : source addr present (1 bit)  
 // P        : protocol type valid (1 bit)
 // C        : traffic class valid (1 bit)
-// R        : reserved flag (1 bit)
+// R        : metric flag present (1 bit)
+
+
+// TBD - Use portion of METRIC field for TTL ... TTL needs to be decremented
+// as ADV propagates ....
+
+// Note an EM-ADV messsage is very similar to an EM-ACK message since it
+// also contains a flow description as a dominant portion of its content.
+
+class ElasticAdv : public ElasticMsg
+{
+    public:
+        ElasticAdv(void*          bufferPtr = NULL,
+                   unsigned int   bufferBytes = 0,
+                   bool           initFromBuffer = true,
+                   bool           freeOnDestruct = false);
+        ElasticAdv(ElasticMsg& elasticMsg);
+        ~ElasticAdv();
+            
+        bool IsValid()  // can use as test after constructor
+            {return (GetLength() > OFFSET_DST_ADDR*4);}
+        
+        // Use these to parse    
+        bool InitFromBuffer(void*           bufferPtr = NULL, 
+                            unsigned int    numBytes = 0, 
+                            bool            freeOnDestruct = false);
+        
+        UINT16 GetId() const
+            {return GetWord16(OFFSET_ID);}
+        
+        bool FlagIsSet(Flag flag) const
+            {return (0 != (flag & (GetUINT8(OFFSET_FLAGS) >> 4)));}
+        
+        AddressType GetAddressType() const
+            {return ((AddressType)(GetUINT8(OFFSET_ATYPE) & 0x0f));}
+        
+        AddressType GetAdvType() const
+            {return ((AddressType)(GetUINT8(OFFSET_VTYPE) & 0x0f));}
+        
+        ProtoPktIP::Protocol GetProtocol() const
+            {return ((ProtoPktIP::Protocol)GetUINT8(OFFSET_PROTOCOL));}
+        UINT8 GetTrafficClass() const
+            {return GetUINT8(OFFSET_CLASS);}
+        bool GetDstAddr(ProtoAddress& dst) const;
+        bool GetSrcAddr(ProtoAddress& addr) const;
+        
+        UINT8 GetTTL() const
+            {return GetUINT8(OffsetTTL());}
+        UINT8 GetHopCount() const
+            {return GetUINT8(OffsetHopCount());}
+        double GetMetric() const
+        {
+            UINT32 value = GetWord16(OffsetMetric());
+            return DecodeMetric(value);
+        }
+        bool GetAdvAddr(ProtoAddress& addr) const;
+        
+        // Use these to build (MUST call in order)
+        bool InitIntoBuffer(void*           bufferPtr = NULL, 
+                            unsigned int    bufferBytes = 0, 
+                            bool            freeOnDestruct = false);
+        
+        void SetId(UINT16 id)
+            {SetWord16(OFFSET_ID, id);}
+        void SetProtocol(ProtoPktIP::Protocol protocol)
+        {
+            SetUINT8(OFFSET_PROTOCOL, (UINT8)protocol);
+            SetFlag(FLAG_PROTOCOL);
+        }
+        void SetTrafficClass(UINT8 trafficClass)
+        {
+            SetUINT8(OFFSET_CLASS, trafficClass);
+            SetFlag(FLAG_CLASS);
+        }
+        
+        // It's probably overkill to have these 'Set' methods all validate length
+        bool SetDstAddr(const ProtoAddress& addr);
+        bool SetDstAddr(AddressType addrType, const char* addrPtr, unsigned int addrLen);
+        bool SetSrcAddr(const ProtoAddress& addr);
+        bool SetSrcAddr(AddressType addrType, const char* addrPtr, unsigned int addrLen);
+        bool SetTTL(UINT8 ttl);
+        bool SetHopCount(UINT8 hopCount);
+        bool SetMetric(double value);
+        bool SetAdvAddr(const ProtoAddress& addr);
+        bool SetAdvAddr(AddressType addrType, const char* addrPtr, unsigned int addrLen);
+        
+        
+        // simple linear encoding of metric
+        static const double METRIC_MAX;  // 8192.0 for now
+        static UINT16 EncodeMetric(double value)
+        {
+            ASSERT(value >= 0.0);
+            value = value > METRIC_MAX ? METRIC_MAX : value;
+            double scale = (double)((UINT16)0xffff) / METRIC_MAX;
+            return (UINT16)(value * scale);
+            
+        }
+        static double DecodeMetric(UINT16 value)
+        {
+            double scale = METRIC_MAX / (double)((UINT32)0xffff);
+            return ((double)value * scale);
+        }
+        
+        static unsigned int ComputeLength(ProtoAddress::Type atype, ProtoAddress::Type vtype, bool source = true)
+        {
+            unsigned int length = 4*OFFSET_DST_ADDR;
+            length += (source ? 2 : 1)*4*GetAddressFieldWords(ElasticMsg::GetAddressType(atype)); // [source and] destination
+            length += 4;  // ttl, hop count, and metric fields
+            length += 4*GetAddressFieldWords(ElasticMsg::GetAddressType(vtype));
+            return length;
+        }
+        
+    private:
+        enum
+        {
+            OFFSET_ID       = (OFFSET_LENGTH + 1)/2, // 2 bytes, UINT16 offset
+            OFFSET_FLAGS    = (OFFSET_ID + 1)*2,     // 4 most significant bits, UINT8 offset
+            OFFSET_ATYPE    = OFFSET_FLAGS,          // 4 least significant bits, UINT8 offset
+            OFFSET_VTYPE    = OFFSET_ATYPE + 1,      // 4 least significant bits (top 4 unused for now), UINT8 offset
+            OFFSET_PROTOCOL = OFFSET_VTYPE + 1,      // 1 byte, UINT8 offset
+            OFFSET_CLASS    = OFFSET_PROTOCOL + 1,   // 1 byte, UINT8 offset
+            OFFSET_DST_ADDR = (OFFSET_CLASS/4) + 1   // N bytes, UINT32 offset
+        };
+            
+        unsigned int OffsetSrcAddr() const  // N bytes, UINT32 offset
+            {return (OFFSET_DST_ADDR + GetAddressFieldWords(GetAddressType()));}
+        
+        unsigned int OffsetTTL() const      // 1 byte, UINT8 offset
+        {
+            unsigned int offset = OffsetSrcAddr();
+            offset += (FlagIsSet(FLAG_SOURCE)) ? GetAddressFieldWords(GetAddressType()) : 0;
+            return (offset * 4);  // convert to UINT8 offset
+        }
+        
+        unsigned int OffsetHopCount() const // 1 byte, UINT8 offset
+             {return (OffsetTTL() + 1);}
+        
+        unsigned int OffsetMetric() const   // 2 bytes, UINT16 offset
+            {return ((OffsetHopCount() + 1) / 2);}
+        
+        unsigned int OffsetAdvAddr() const // Returns UINT32 offset
+            {return ((OffsetMetric() + 1) / 2);}
+        
+        void SetFlag(Flag flag)
+        {
+            UINT8 field = GetUINT8(OFFSET_FLAGS);
+            field |= (flag << 4);
+            SetUINT8(OFFSET_FLAGS, field);
+        }
+        
+        
+};  // end class ElasticAdv
 
 
 // ElasticNack Message - to support hop-by-hop reliability ARQ

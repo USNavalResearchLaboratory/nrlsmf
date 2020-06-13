@@ -15,6 +15,19 @@
 #endif // ADAPTIVE_ROUTING
 #endif // ELASTIC_MCAST
 
+/***********************************************************************
+
+NOTES:
+
+    1) At the moment, we only have a _single_ Elastic Multicast "mcast_fib" per Smf instance.
+       We should probably have an "mcast_fib" for each configured "elastic" interface _group_.
+       For the moment, this means nrlsmf can only support a single "elastic" interface group
+       properly.  If multiple "elastic" interface groups are configured, the behavior is
+       undefined. 
+
+
+************************************************************************/
+
 #include <stdint.h>  // for intptr_t
 
 #define SET_DSCP   1
@@ -280,7 +293,7 @@ class Smf
                 /*void IncrementUnicastAssociateCount()
                     {unicast_assoc_count++;}
                 void DecrementUnicastAssociateCount()
-                {*/
+                */
 
 #ifdef ELASTIC_MCAST                        
                 MulticastFIB::UpstreamHistory* FindUpstreamHistory(const ProtoAddress& upstreamAddr)
@@ -289,6 +302,11 @@ class Smf
                     {upstream_history_table.Insert(upstreamHistory);}
                 void RemoveUpstreamHistory(MulticastFIB::UpstreamHistory& upstreamHistory)
                     {upstream_history_table.Remove(upstreamHistory);}
+                UINT16 GetLocalAdvId() const
+                    {return local_adv_id;}
+                UINT16 IncrementLocalAdvId()
+                    {return local_adv_id++;}
+                void PruneUpstreamHistory(unsigned int currentTick);
 #endif // ELASTIC_MCAST
                 
                 // This is for adding an opaque "decorator" extension to the interface
@@ -314,7 +332,6 @@ class Smf
                 
                 UINT16 GetUmpSequence() const 
                     {return ump_sequence;}
-        
                 
                 bool IsQueuing() const
                     {return (0 != pkt_queue.GetQueueLimit());}
@@ -409,6 +426,7 @@ class Smf
                 SmfQueue                              pkt_queue;           // interface output queue
 #ifdef ELASTIC_MCAST                
                 MulticastFIB::UpstreamHistoryTable    upstream_history_table;
+                UINT16                                local_adv_id;
 #endif // ELASTIC_MCAST
                                
                 unsigned int                          sent_count;  // count of outbound (sent) packets for iface
@@ -694,18 +712,53 @@ class Smf
         InterfaceGroupList& AccessInterfaceGroupList()
             {return iface_group_list;}
         
-#if defined(ELASTIC_MCAST) || defined(ADAPTIVE_ROUTING)
-        // required ElasticMulticastForwarder overrides
-        bool SendAck(unsigned int           ifaceIndex, 
-                     const ProtoAddress&    dstMac,
-                     const FlowDescription& flowDescription,
-                     const ProtoAddress&    updstreamAddr);
+#ifdef ELASTIC_MCAST
+        void HandleAdv(unsigned int                    currentTick,
+                       ElasticAdv&                     elasticAdv, 
+                       Interface&                      srcIface, 
+                       const ProtoAddress&             srcMac, 
+                       const ProtoAddress&             msgSrc, // temporary until we UMP EM_ADV msgs
+                       MulticastFIB::UpstreamHistory*  upstreamHistory);
         
+        MulticastFIB::Entry* UpdateElasticRouting(unsigned int                   currentTick,
+                                                  const FlowDescription&         flowDescription,
+                                                  Interface&                     srcIface,
+                                                  const ProtoAddress&            srcMac,
+                                                  MulticastFIB::UpstreamHistory* upstreamHistory, 
+                                                  bool                           outbound,
+                                                  double                         metric); 
+        
+        MulticastFIB::UpstreamHistory* GetUpstreamHistory(Interface&    srcIface, 
+                                                          ProtoPktIP&   ipPkt, 
+                                                          UINT16&       upstreamSeq);  // output
+                
+        unsigned int UpdateUpstreamHistory(unsigned int                   currentTick,
+                                           Interface&                     srcIface, 
+                                           MulticastFIB::UpstreamHistory& upstreamHistory,
+                                           UINT16                         upstreamSeq);
+        // Only call if nackCount > 0
+        void SendNack(Interface&                     srcIface, 
+                      MulticastFIB::UpstreamHistory& upstreamHistory,
+                      UINT16                         upstreamSeq,
+                      UINT16                         nackCount);
+     
+        // required ElasticMulticastForwarder overrides
+        bool SendAck(unsigned int           ifaceIndex,   // interface it goes out on
+                     const ProtoAddress&    upstreamAddr, // upstream to address it to
+                     const FlowDescription& flowDescription);
+        
+        // shortcut version when Interface is already dereferenced
+        bool SendAck(Interface&             iface,         // interface it goes out on
+                     const ProtoAddress&    upstreamAddr,  // upstream to address it to
+                     const FlowDescription& flowDescription);
         
         // For reliable forwarding option
         static const unsigned int DEFAULT_REPAIR_CACHE_SIZE;
         bool CreatePacketCache(Interface& iface, unsigned int cacheSize);
         bool CachePacket(const Interface& iface, UINT16 sequence, char* frameBuffer, unsigned int frameLength);
+        void OnAdvTimeout(ProtoTimer& theTimer);
+        
+        MulticastFIB::UpstreamRelay* GetBestUpstreamRelay(MulticastFIB::Entry& fibEntry, unsigned int currentTick);
 #endif // ELASTIC_MCAST
         
     private:
@@ -754,6 +807,9 @@ class Smf
         ProtoTimer          prune_timer;     // to timeout stale flows
         unsigned int        update_age_max;  // max staleness allowed for flows
         unsigned int        current_update_time;
+#ifdef ELASTIC_MCAST
+        ProtoTimer          adv_timer;
+#endif // ELASTIC_MCAST
         
         char                selector_list[SELECTOR_LIST_LEN_MAX]; 
         unsigned int        selector_list_len;

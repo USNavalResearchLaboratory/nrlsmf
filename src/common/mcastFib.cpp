@@ -8,7 +8,12 @@
 #include <algorithm>
 #include <iostream>
 
+#include <smf.h> // for Smf::Interface
+
 #define USE_PREEMPTIVE_ACK 1
+
+const unsigned int MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT = (1 * 1000000);  // 2 seconds in microseconds (this is a short timeout since active relays should be sending traffic, too)
+const unsigned int MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT = (60 * 1000000);   // 120 seconds in microseconds
 
 const unsigned int MulticastFIB::DEFAULT_FLOW_ACTIVE_TIMEOUT = (60 * 1000000);  // 60 seconds in microseconds
 const unsigned int MulticastFIB::DEFAULT_FLOW_IDLE_TIMEOUT = (120 * 1000000);   // 120 seconds in microseconds
@@ -26,6 +31,8 @@ const unsigned int MulticastFIB::DEFAULT_IDLE_COUNT_THRESHOLD = 60;    // 60 pac
 //const ProtoAddress MulticastFIB::BROADCAST_ADDR = ProtoAddress("255.255.255.255");
 
 // This maintains our microsecond ticker
+const double TICK_INTERVAL = 1.0e-06;           // 1 microsecond per "tick"
+const double TICK_RATE = 1.0 / TICK_INTERVAL;
 
 // the "delta max" needs to be less than our TICK_AGE_MAX
 // and should be bigger than the longest membership timeout
@@ -42,7 +49,7 @@ unsigned int ElasticTicker::Update()
         PLOG(PL_WARN, "ElasticTicker::Update() warning: invalid update interval!\n");
         delta = DELTA_MAX;
     }
-    ticker_count += (unsigned int)(1.0e+06 * delta);
+    ticker_count += (unsigned int)(TICK_RATE * delta);
     ticker_time_prev = currentTime;
     return ticker_count;
 }  // end ElasticTicker::Update()
@@ -54,7 +61,8 @@ MulticastFIB::Membership::Membership(unsigned int           ifaceIndex,
                                      ProtoPktIP::Protocol   protocol)
   : FlowEntryTemplate(dst, src, trafficClass, protocol, ifaceIndex),
     membership_flags(0), idle_count_threshold(DEFAULT_IDLE_COUNT_THRESHOLD),
-    idle_count(0), igmp_timeout_valid(false), elastic_timeout_valid(false)
+    idle_count(0), igmp_timeout_valid(false), elastic_timeout_valid(false),
+    default_forwarding_status(LIMIT)
 {
 }
 
@@ -473,7 +481,7 @@ void MulticastFIB::TokenBucket::SetRate(double pktsPerSecond)
 {
     if (pktsPerSecond > 0.0)
     {
-        token_interval = (unsigned int)((1.0e+06 / pktsPerSecond) + 0.5);
+        token_interval = (unsigned int)((TICK_RATE / pktsPerSecond) + 0.5);
         if (0 == token_interval) token_interval = 1;
     }
     else
@@ -542,6 +550,16 @@ bool MulticastFIB::TokenBucket::ProcessPacket(unsigned int currentTick)
     }
 }  // end MulticastFIB::TokenBucket::ProcessPacket()
 
+
+MulticastFIB::ActivityStatus::ActivityStatus() 
+  : age_tick(0), age_max(true), active(false) 
+{
+}
+
+MulticastFIB::ActivityStatus::~ActivityStatus() 
+{
+}
+                
 unsigned int MulticastFIB::ActivityStatus::Age(unsigned int currentTick)
 {
     if (age_max)
@@ -554,6 +572,7 @@ unsigned int MulticastFIB::ActivityStatus::Age(unsigned int currentTick)
         if ((age < 0) || (age > TICK_AGE_MAX))
         {
             age_max = true;
+            active = false;
             return TICK_AGE_MAX;
         }
         return age;
@@ -561,9 +580,9 @@ unsigned int MulticastFIB::ActivityStatus::Age(unsigned int currentTick)
 }  // end MulticastFIB::ActivityStatus::Age()
 
 
-
 MulticastFIB::UpstreamHistory::UpstreamHistory(const ProtoAddress& addr)
- : src_addr(addr), seq_prev(0), idle_count(0)
+ : src_addr(addr), seq_prev(0), idle_count(0), good_count(0), loss_estimate(0.0)
+   //,active_flow_count(0)
 {
 }
 
@@ -571,22 +590,72 @@ MulticastFIB::UpstreamHistory::~UpstreamHistory()
 {
 }
 
+double MulticastFIB::UpstreamHistory::UpdateLossEstimate(unsigned int gapCount)
+{
+    if (0 != gapCount)
+    {
+        double loss = (double)gapCount / (double)(good_count + gapCount);
+        loss_estimate = 0.75*loss_estimate + 0.25*loss;
+    }
+    else
+    {
+        // This could be modified to be more optimistic with
+        // "runLength" windows to halve loss_estimate every window
+        // of consecutive good packets???
+        good_count++;
+        if (loss_estimate > 0.0)
+        {
+            unsigned int runLength = 1.0 / loss_estimate;
+            if (good_count >= runLength)
+                loss_estimate = 1.0 / (double)good_count;
+        }           
+    }
+    return loss_estimate;
+}  // end MulticastFIB::UpstreamHistory::UpdateLossEstimate()
+
 
 MulticastFIB::UpstreamRelay::UpstreamRelay(const ProtoAddress& addr, unsigned int ifaceIndex)
- : relay_addr(addr), iface_index(ifaceIndex), update_count(0),
-   update_start(0), update_max(true)
+ : relay_addr(addr), iface_index(ifaceIndex), relay_status(NULLARY), update_count(0),
+   update_start(0), update_max(true), adv_id(0), adv_metric(-1.0), adv_ttl(0), adv_hop_count(0), link_quality(-1.0)
 {
 }
 
 MulticastFIB::UpstreamRelay::UpstreamRelay()
 : relay_addr(ProtoAddress("ff:ff:ff:ff:ff:ff")), iface_index(0), 
-  update_count(0),  update_start(0), update_max(true)
+  update_count(0),  update_start(0), update_max(true) //, packet_rate(0.0)
 {
 }
 
 MulticastFIB::UpstreamRelay::~UpstreamRelay()
 {
 }
+
+/*
+void MulticastFIB::UpstreamRelay::UpdatePacketRate(unsigned int currentTick)
+{
+    if (!update_max)
+    {
+        int updateInterval = currentTick - update_start;
+        if ((updateInterval < 0) || (updateInterval > TICK_AGE_MAX))
+        {
+            update_max = true;
+            packet_rate = 0.0;
+        }
+        else if (updateInterval > 0)
+        {
+            double rate = (double) update_count / (double)(TICK_INTERVAL * updateInterval);
+            if (0.0 == packet_rate)
+                packet_rate = rate;
+            else
+                packet_rate = 0.75*packet_rate + 0.25*rate;
+        }
+    }
+    else
+    {
+        packet_rate = 0.0;
+    }
+}  // end MulticastFIB::UpstreamRelay::UpdatePacketRate()
+*/
 
 void MulticastFIB::UpstreamRelay::Refresh(unsigned int currentTick)//, unsigned int count)
 {
@@ -597,11 +666,9 @@ void MulticastFIB::UpstreamRelay::Refresh(unsigned int currentTick)//, unsigned 
     }
     else if (!update_max)
     {
-        int updateInterval = currentTick - update_start;
-        if ((updateInterval < 0) || (updateInterval > TICK_AGE_MAX))
-            update_max = true;
+        //UpdatePacketRate(currentTick);  // takes care of setting "update_max" as needed
     }
-    update_count += 1;//count;
+    update_count += 1;
     activity_status.Refresh(currentTick);
 }  // end MulticastFIB::UpstreamRelay::Refresh()
 
@@ -1065,7 +1132,6 @@ MulticastFIB::Entry::Entry(const ProtoAddress&  dst,
   : FlowEntryTemplate(dst, src, trafficClass, protocol),
     flow_managed(false), flow_active(false), flow_idle(false),
     default_forwarding_status(LIMIT), forwarding_count(0), 
-    //downstream_relay(), 
     unicast_probability(0.0),
     acking_status(false), acking_count_threshold(DEFAULT_ACKING_COUNT),
     acking_interval_max(DEFAULT_ACKING_INTERVAL_MAX), 
@@ -1209,6 +1275,111 @@ MulticastFIB::ForwardingStatus MulticastFIB::Entry::GetForwardingStatus(unsigned
     return bucket->GetForwardingStatus();
 }  // end MulticastFIB::Entry::GetForwardingStatus()
 
+MulticastFIB::UpstreamRelay* MulticastFIB::Entry::AddUpstreamRelay(const ProtoAddress& addr, unsigned int ifaceIndex)
+{
+    MulticastFIB::UpstreamRelay* upstreamRelay = new UpstreamRelay(addr, ifaceIndex);
+    if (NULL == upstreamRelay)
+    {
+        PLOG(PL_ERROR, "MulticastFIB::Entry::AddUpstreamRelay() new MulticastFib::UpstreamRelay error: %s\n", GetErrorString());
+        return NULL;
+    }
+    upstream_list.Insert(*upstreamRelay);
+    return upstreamRelay;
+}  // end MulticastFIB::Entry::AddUpstreamRelay()
+
+MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned int currentTick)
+{
+    MulticastFIB::UpstreamRelay* bestPathRelay = NULL;  // upstream relay with best overall path quality (lowest ETX metric)
+    MulticastFIB::UpstreamRelay* bestLinkRelay = NULL;  // upstream relay with best one-hop link quality
+    double bestLinkQuality = -1.0; 
+    double bestPathMetric = -1.0;
+    unsigned int bestLinkAge = 0;  // how long since last activitiy for this upstream 
+    unsigned int bestPathAge = 0;
+    MulticastFIB::UpstreamRelayList::Iterator uperator(upstream_list);
+    MulticastFIB::UpstreamRelay* nextRelay;
+    while (NULL != (nextRelay = uperator.GetNextItem()))
+    {
+        unsigned int deadTime = nextRelay->Age(currentTick);
+        if (deadTime > MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT)
+        {
+            // Prune this "dead" upstream relay
+            upstream_list.Remove(*nextRelay);
+            delete nextRelay;
+            continue;
+        }
+        double linkQuality = nextRelay->GetLinkQuality();
+        unsigned int upstreamAge = nextRelay->Age(currentTick);
+        if (NULL != bestLinkRelay)
+        {
+            if (bestLinkAge >= MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT)
+            {
+                if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) || (linkQuality > bestLinkQuality))
+                {
+                    bestLinkRelay = nextRelay;
+                    bestLinkQuality = linkQuality;
+                    bestLinkAge = upstreamAge;
+                }
+            }
+            else if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) && (linkQuality > bestLinkQuality))
+            {
+                bestLinkRelay = nextRelay;
+                bestLinkQuality = linkQuality;
+                bestLinkAge = upstreamAge;
+            }
+        }
+        else
+        {
+            // Only upstream relay assessed so far
+            bestLinkRelay = nextRelay;
+            bestLinkQuality = linkQuality;
+            bestLinkAge = upstreamAge;
+        }
+        double pathMetric = -1.0;
+        if (nextRelay->AdvMetricIsValid())
+        {
+            pathMetric = nextRelay->GetAdvMetric();
+            if (linkQuality >= 0.0)
+                pathMetric += 1.0 / linkQuality;
+            else
+                pathMetric += 1.0;  // assume a perfect link in absence of measurement?
+            if (NULL != bestPathRelay)
+            {
+                if (bestPathAge >= MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT)
+                {
+                    if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) || (pathMetric < bestPathMetric))
+                    {
+                        bestPathRelay = nextRelay;
+                        bestPathMetric = pathMetric;
+                        bestPathAge = upstreamAge;
+                    }
+                }
+                else if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) && (pathMetric < bestPathMetric))
+                {
+                    bestPathRelay = nextRelay;
+                    bestPathMetric = pathMetric;
+                    bestPathAge = upstreamAge;
+                }
+            }
+            else
+            {
+                // Only upstream relay assessed so far
+                bestPathRelay = nextRelay;
+                bestPathMetric = pathMetric;
+                bestPathAge = upstreamAge;
+            }
+        }
+        
+    }
+    if (NULL != bestPathRelay)
+        return bestPathRelay;
+    else
+        return bestLinkRelay;
+    
+}  // end MulticastFIB::Entry::GetBestUpstreamRelay()
+
+
+
+
 MulticastFIB::TokenBucket* MulticastFIB::Entry::GetBucket(unsigned int ifaceIndex)
 {
     TokenBucket* bucket = bucket_list.FindBucket(ifaceIndex);
@@ -1327,12 +1498,13 @@ bool MulticastFIB::ParseFlowList(ProtoPktIP& pkt, Entry*& fibEntry, unsigned int
             {
                 if (GetDebugLevel() >= PL_DEBUG)
                 {
-                    PLOG(PL_DEBUG, "   newly matched flow: \n");
+                    PLOG(PL_ALWAYS, "   newly matched flow: \n");
                     fibEntry->GetFlowDescription().Print();
                     PLOG(PL_ALWAYS, " matching: ");
                     match->GetFlowDescription().Print();
                     PLOG(PL_ALWAYS, "\n");
                 }
+                // It will get its default forwarding status from the 'match'
                 if (!fibEntry->CopyStatus(*match))
                 {
                     PLOG(PL_ERROR, "MulticastFIB::ParseFlowList() error: unable to copy entry status!\n");
@@ -1348,6 +1520,7 @@ bool MulticastFIB::ParseFlowList(ProtoPktIP& pkt, Entry*& fibEntry, unsigned int
                     fibEntry->GetFlowDescription().Print();
                     PLOG(PL_ALWAYS, "\n");
                 }
+                //fibEntry->SetDefaultForwardingStatus(default_forwarding_status);
             }
             InsertEntry(*fibEntry);
             // Put the new, dynamically detected flow in our "active_list"
@@ -1388,97 +1561,6 @@ bool MulticastFIB::ParseFlowList(ProtoPktIP& pkt, Entry*& fibEntry, unsigned int
     return true;
 }  // end MulticastFIB::ParseFlowList()
 
-unsigned int MulticastFIB::BuildAck(UINT32*                buffer,
-                                    unsigned int           length,
-                                    const ProtoAddress&    dstMac,
-                                    const ProtoAddress&    srcMac,
-                                    const ProtoAddress&    srcIp,
-                                    const FlowDescription& flowDescription,
-                                    const ProtoAddress&    upstreamAddr)
-{
-    // IPv4-only at moment
-    if (ProtoAddress::IPv4 != srcIp.GetType())
-    {
-        PLOG(PL_ERROR, "MulticastFIB::BuildAck() error: non-IPv4 src address! (IPv6 support is TBD)\n");
-        return 0;
-    }
-    unsigned int ipHeaderLen = 20;
-    if (length < (14 + ipHeaderLen+ 8))
-    {
-        PLOG(PL_ERROR, "MulticastFIB::BuildAck() error: insufficient 'buffer' length!\n");
-        return 0;
-    }
-    // Build an ACK to send to the identified upstream relay
-    // The ACK will be sent to the "relayAddr" (MAC addr) via the "ifaceIndex" interface
-    // (as a UDP/IP packet with multicast dest addr and source IP addr of given "ifaceIndex")
-    unsigned int frameLength = length - 2;  // offset by 2 bytes to maintain alignment for ProtoPktIP
-    UINT16* ethBuffer = ((UINT16*)buffer) + 1;  // offset for IP packet alignmen
-    UINT32* ipBuffer = buffer + 4; // 14 bytes plus 2
-    ProtoPktETH ethPkt((UINT32*)ethBuffer, frameLength);
-    ethPkt.SetSrcAddr(srcMac);
-    ethPkt.SetDstAddr(dstMac);
-    ethPkt.SetType(ProtoPktETH::IP);  // TBD - based upon IP address type
-    ProtoPktIPv4 ipPkt(ipBuffer, frameLength - 14);
-    ipPkt.SetTTL(1);
-    ipPkt.SetProtocol(ProtoPktIP::UDP);
-    ipPkt.SetSrcAddr(srcIp);
-    ipPkt.SetDstAddr(ElasticAck::ELASTIC_ADDR);
-
-    ProtoPktUDP udpPkt(ipPkt.AccessPayload(), frameLength - 14 - ipHeaderLen, false);
-    udpPkt.SetSrcPort(ElasticAck::ELASTIC_PORT);
-    udpPkt.SetDstPort(ElasticAck::ELASTIC_PORT);
-
-    ElasticAck ack(udpPkt.AccessPayload(), frameLength - 14 - ipHeaderLen - 8);
-    if (!ack.InitIntoBuffer())
-    {
-        PLOG(PL_ERROR, "MulticastFIB::BuildAck() error: insufficient 'buffer' length!\n");
-        return 0;
-    }
-    ack.SetProtocol(flowDescription.GetProtocol());
-    ack.SetTrafficClass(flowDescription.GetTrafficClass());
-    ElasticAck::AddressType addrType;
-    switch (flowDescription.GetDstLength())
-    {
-        case 4:
-            addrType = ElasticAck::ADDR_IPV4;
-            break;
-        //case 16:
-        //    addrType = ElasticAck::ADDR_IPV6;
-        //    break;
-        default:
-            PLOG(PL_ERROR, "MulticastFIB::BuildAck() error: invalid flow dst address\n");
-            return 0;
-    }
-    if (!ack.SetDstAddr(addrType, flowDescription.GetDstPtr(), flowDescription.GetDstLength()))
-    {
-        PLOG(PL_ERROR, "MulticastFIB::BuildAck() error: insufficient 'buffer' length!\n");
-        return 0;
-    }
-    if (flowDescription.GetSrcLength() != flowDescription.GetDstLength())
-    {
-        PLOG(PL_ERROR, "MulticastFIB::BuildAck() error: non-matching flow dst/src address types\n");
-        return 0;
-    }
-    if (!ack.SetSrcAddr(addrType, flowDescription.GetSrcPtr(), flowDescription.GetSrcLength()))
-    {
-        PLOG(PL_ERROR, "MulticastFIB::BuildAck() error: insufficient 'buffer' length!\n");
-        return 0;
-    }
-
-    if (!ack.AppendUpstreamAddr(upstreamAddr)) 
-    {
-        PLOG(PL_ERROR, "MulticastFIB::BuildAck() error: insufficient 'buffer' length!\n");
-        return 0;
-    }
-    
-    udpPkt.SetPayloadLength(ack.GetLength());
-    ipPkt.SetPayloadLength(udpPkt.GetLength());
-    udpPkt.FinalizeChecksum(ipPkt);
-    ethPkt.SetPayloadLength(ipPkt.GetLength());
-    return ethPkt.GetLength();
-}  // end MulticastFIB::BuildAck()
-
-
 void MulticastFIB::ActivateFlow(Entry& entry, unsigned int currentTick)
 {
     entry.ResetTokenBuckets();
@@ -1514,9 +1596,9 @@ void MulticastFIB::PruneFlowList(unsigned int currentTick, ElasticMulticastContr
         Entry* prevEntry = entry->GetPrev();
         if (entry->Age(currentTick) >= DEFAULT_FLOW_ACTIVE_TIMEOUT)
         {
-            //if (GetDebugLevel() >= PL_DEBUG)
+            if (GetDebugLevel() >= PL_DEBUG)
             {
-                PLOG(PL_ALWAYS, "nrlsmf: deactivating flow entry ");
+                PLOG(PL_DEBUG, "nrlsmf: deactivating flow entry ");
                 entry->GetFlowDescription().Print();
                 PLOG(PL_ALWAYS, "\n");
             }
@@ -1535,9 +1617,9 @@ void MulticastFIB::PruneFlowList(unsigned int currentTick, ElasticMulticastContr
         Entry* prevEntry = entry->GetPrev();
         if (entry->Age(currentTick) >= DEFAULT_FLOW_IDLE_TIMEOUT)
         {
-            //if (GetDebugLevel() >= PL_DEBUG)
+            if (GetDebugLevel() >= PL_DEBUG)
             {
-                PLOG(PL_ALWAYS, "nrlsmf: removing/deleting flow entry ");
+                PLOG(PL_DEBUG, "nrlsmf: removing/deleting flow entry ");
                 entry->GetFlowDescription().Print();
                 PLOG(PL_ALWAYS, "\n");
             }
@@ -1566,7 +1648,9 @@ void MulticastFIB::PruneFlowList(unsigned int currentTick, ElasticMulticastContr
 //
 
 ElasticMulticastForwarder::ElasticMulticastForwarder()
- : mcast_controller(NULL), output_mechanism(NULL)
+ : default_forwarding_status(MulticastFIB::LIMIT),
+   mcast_controller(NULL), output_mechanism(NULL)
+   
 {
 }
 
@@ -1595,9 +1679,9 @@ bool ElasticMulticastForwarder::SetAckingStatus(const FlowDescription& flowDescr
         unsigned int currentTick = UpdateTicker();
         do
         {
-            //if (GetDebugLevel() >= PL_DEBUG)
+            if (GetDebugLevel() >= PL_DEBUG)
             {
-                PLOG(PL_ALWAYS, "nrlsmf: setting AckingStatus to %d for existing flow ", ackingStatus);
+                PLOG(PL_DEBUG, "nrlsmf: setting AckingStatus to %d for existing flow ", ackingStatus);
                 entry->GetFlowDescription().Print();
                 PLOG(PL_ALWAYS, "\n");
             }
@@ -1609,18 +1693,17 @@ bool ElasticMulticastForwarder::SetAckingStatus(const FlowDescription& flowDescr
                     // If ackingStatus, flow already exists, has active upstream relays, and current
                     // flow ackingStatus is "false", then send an EM-ACK right away
                     MulticastFIB::UpstreamRelayList::Iterator upserator(entry->AccessUpstreamRelayList());
-                    MulticastFIB::UpstreamRelay* upstream;
-                    while (NULL != (upstream = upserator.GetNextItem()))
+                    MulticastFIB::UpstreamRelay* upstream = entry->GetBestUpstreamRelay(currentTick);
+                    // TBD - only NACK "best upstream" in reliable mode
+                    //while (NULL != (upstream = upserator.GetNextItem()))
+                    if (NULL != upstream)
                     {
                         if (upstream->Age(currentTick) < entry->GetAckingIntervalMax())
                         {
-                            PLOG(PL_ALWAYS, "nrlsmf: sending preemptive EM-ACK to upstream relay %s\n",
+                            PLOG(PL_DEBUG, "nrlsmf: sending preemptive EM-ACK to upstream relay %s\n",
                                              upstream->GetAddress().GetHostString());
                             // If upstream address is MAC, unicast ACK to that MAC, else use multicast MAC
-                            const ProtoAddress& upstreamAddr = upstream->GetAddress();
-                            const ProtoAddress& dstMac = (ProtoAddress::ETH == upstreamAddr.GetType()) ?
-                                                         upstreamAddr : ElasticNack::ELASTIC_MAC;
-                            SendAck(upstream->GetInterfaceIndex(), dstMac, flowDescription, upstreamAddr);
+                            SendAck(upstream->GetInterfaceIndex(), upstream->GetAddress(), flowDescription);
                             upstream->Reset(currentTick);
                         }
                     }
@@ -1634,33 +1717,8 @@ bool ElasticMulticastForwarder::SetAckingStatus(const FlowDescription& flowDescr
                 continue;
             }
             entry->SetAckingStatus(ackingStatus);
-            /*if (entry->IsExactMatch(flowDescription))
-            {
-                entry->SetManaged(ackingStatus);
-                exactMatch = true;
-            }*/
         } while (NULL != (entry = iterator.GetNextEntry()));
     }
-    /*if (!exactMatch && ackingStatus)
-    {
-        // Need to make an exact-match entry,  (Also, make it
-        // "managed" (i.e., exempt from flow activity timeout
-        // deletion since it is being emplaced by the controller)
-        if (NULL == (entry = new MulticastFIB::Entry(flowDescription)))
-        {
-            PLOG(PL_ERROR, "ElasticMulticastForwarder::SetAckingStatus() new Entry error: %s\n", GetErrorString());
-            return false;
-        }
-        //if (GetDebugLevel() >= PL_DEBUG)
-        {
-            PLOG(PL_ALWAYS, "nrlsmf: setting AckingStatus to %d for new flow ", ackingStatus);
-            flowDescription.Print();
-            PLOG(PL_ALWAYS, " threshold:%u \n", entry->GetAckingCountThreshold());
-        }
-        entry->SetAckingStatus(ackingStatus);
-        entry->SetManaged(true);
-        flowTable.InsertEntry(*entry);
-    }*/
     return true;
 }  // end ElasticMulticastForwarder::SetAckingStatus()
 
@@ -1670,10 +1728,9 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&      
                                                     bool                            ackingStatus,
                                                     bool                            managed)
 {
-    // IMPORTANT NOTE:  "Managed" entries are only made when "ackingStatus == true:
-    // (TBD - add an extra parameter to mark entries as "managed".  I.e., will only
-    //        be removed when controller dictates regardless of acking status.  This
-    //        enables static forwarding entries).
+    // IMPORTANT NOTE:  "Managed" entries will only be removed when controller 
+    //                   dictates regardless of acking status.  This enables 
+    //                   static forwarding entries).
 
     // Sets forwarding status for all matching entries.
     MulticastFIB::EntryTable& flowTable = mcast_fib.AccessFlowTable();
@@ -1685,11 +1742,11 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&      
         unsigned int currentTick = UpdateTicker();
         do
         {
-            //if (GetDebugLevel() >= PL_DEBUG)
+            if (GetDebugLevel() >= PL_DEBUG)
             {
                 const char* forwardingStatusString = MulticastFIB::GetForwardingStatusString(forwardingStatus);
-                PLOG(PL_ALWAYS, "nrlsmf: setting ForwardingStatus %s and AckingStatus to %d for existing flow ",
-                                    forwardingStatusString, ackingStatus);
+                PLOG(PL_DEBUG, "nrlsmf: setting ForwardingStatus %s and AckingStatus to %d for existing flow ",
+                                forwardingStatusString, ackingStatus);
                 entry->GetFlowDescription().Print();
                 PLOG(PL_ALWAYS, "\n");
             }
@@ -1700,19 +1757,17 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&      
                 {
                     // If ackingStatus, flow already exists, has active upstream relays, and current
                     // flow ackingStatus is "false", then send and EM-ACK right away
-                    MulticastFIB::UpstreamRelayList::Iterator upserator(entry->AccessUpstreamRelayList());
-                    MulticastFIB::UpstreamRelay* upstream;
-                    while (NULL != (upstream = upserator.GetNextItem()))
-                    {
+                    //MulticastFIB::UpstreamRelayList::Iterator upserator(entry->AccessUpstreamRelayList());
+                    MulticastFIB::UpstreamRelay* upstream = entry->GetBestUpstreamRelay(currentTick);
+                    // TBD - only NACK "best upstream" in reliable mode
+                    //while (NULL != (upstream = upserator.GetNextItem()))
+                    if (NULL != upstream)
+                    {    
                         if (upstream->Age(currentTick) < entry->GetAckingIntervalMax())
                         {
-                            PLOG(PL_ALWAYS, "nrlsmf: sending preemptive EM-ACK to upstream relay %s\n",
+                            PLOG(PL_DEBUG, "nrlsmf: sending preemptive EM-ACK to upstream relay %s\n",
                                             upstream->GetAddress().GetHostString());
-                            // If upstream address is MAC, unicast ACK to that MAC, else use multicast MAC
-                            const ProtoAddress& upstreamAddr = upstream->GetAddress();
-                            const ProtoAddress& dstMac = (ProtoAddress::ETH == upstreamAddr.GetType()) ?
-                                                         upstreamAddr : ElasticNack::ELASTIC_MAC;
-                            SendAck(upstream->GetInterfaceIndex(), dstMac, flowDescription, upstreamAddr);
+                            SendAck(upstream->GetInterfaceIndex(), upstream->GetAddress(), flowDescription);
                             upstream->Reset(currentTick);
                         }
                     }
@@ -1733,7 +1788,7 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&      
             }
         } while (NULL != (entry = iterator.GetNextEntry()));
     }
-    // Create a new "managed" entryif there was not an exact match entry already
+    // Create a new "managed" entry if there was not an exact match entry already
     if (managed && !exactMatch)
     {
         // Need to make an exact-match entry,  (Also, make it
@@ -1744,10 +1799,10 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&      
             PLOG(PL_ERROR, "MulticastFIB::SetForwardingStatus() new Entry error: %s\n", GetErrorString());
             return false;
         }
-        //if (GetDebugLevel() >= PL_DEBUG)
+        if (GetDebugLevel() >= PL_DEBUG)
         {
             const char* forwardingStatusString = MulticastFIB::GetForwardingStatusString(forwardingStatus);
-            PLOG(PL_ALWAYS, "nrlsmf: setting ForwardingStatus %s and AckingStatus to %d for new flow ",
+            PLOG(PL_DEBUG, "nrlsmf: setting ForwardingStatus %s and AckingStatus to %d for new flow ",
                                 forwardingStatusString, ackingStatus);
             flowDescription.Print();
             PLOG(PL_ALWAYS, "\n");
@@ -1764,7 +1819,7 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&      
 //
 
 ElasticMulticastController::ElasticMulticastController(ProtoTimerMgr& timerMgr)
-  : timer_mgr(timerMgr)
+  : default_forwarding_status(MulticastFIB::LIMIT), timer_mgr(timerMgr)
 {
     membership_timer.SetInterval(0);
     membership_timer.SetRepeat(-1);
@@ -1795,7 +1850,7 @@ bool ElasticMulticastController::SetPolicy(const FlowDescription& flowDescriptio
             PLOG(PL_ERROR, "ElasticMulticastController::SetPolicy() new wildcard FlowPolicy error: %s\n", GetErrorString());
             return false;
         } 
-        MulticastFIB::ForwardingStatus status = allow ? MulticastFIB::DENY : MulticastFIB::LIMIT;
+        MulticastFIB::ForwardingStatus status = allow ? MulticastFIB::DENY : default_forwarding_status;
         wildcard->SetForwardingStatus(status);
         policy_table.InsertEntry(*wildcard);
         // Inform forwarder of policy
@@ -1813,7 +1868,7 @@ bool ElasticMulticastController::SetPolicy(const FlowDescription& flowDescriptio
         policy_table.InsertEntry(*policy);
     }
     // TBD - keep a count of these entries so we can remove blocking 'wildcard'
-    MulticastFIB::ForwardingStatus status = allow ? MulticastFIB::LIMIT : MulticastFIB::DENY;
+    MulticastFIB::ForwardingStatus status = allow ? default_forwarding_status : MulticastFIB::DENY;
     policy->SetForwardingStatus(status);
     
     // Inform forwarder of policy, making a "static", managed entry in the forwarder for default handling 
@@ -1829,7 +1884,7 @@ bool ElasticMulticastController::AddManagedMembership(unsigned int ifaceIndex, c
     if (GetDebugLevel() >= PL_DEBUG)
         PLOG(PL_DEBUG, "ElasticMulticastController::AddManagedMembership(%s) ...\n", groupAddr.GetHostString());
     
-    // See if we have a policy in place to BLOCK this membership
+    // See if we have a policy in place to DENY this membership or set other default forwarding status 
     // xxx - check policy_table here to see if membership is allowed or not
     MulticastFIB::Membership* membership = membership_table.AddMembership(ifaceIndex, groupAddr);
     if (NULL == membership)
@@ -1837,9 +1892,10 @@ bool ElasticMulticastController::AddManagedMembership(unsigned int ifaceIndex, c
         PLOG(PL_DEBUG, "ElasticMulticastController::AddManagedMembership() error: unable to add new membership\n");
         return false;
     }
-    PLOG(PL_DEBUG, "ElasticMulticastController::AddManagedMembership() membership added or refreshed: ");
+    membership->SetDefaultForwardingStatus(default_forwarding_status);
     if (GetDebugLevel() >= PL_DEBUG)
     {
+        PLOG(PL_DEBUG, "ElasticMulticastController::AddManagedMembership() membership added or refreshed: ");
         membership->GetFlowDescription().Print();
         PLOG(PL_ALWAYS, "\n");
     }
@@ -1928,9 +1984,9 @@ void ElasticMulticastController::HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAd
                 }
                 else
                 {
-                    //if (GetDebugLevel() >= PL_DEBUG)
+                    if (GetDebugLevel() >= PL_DEBUG)
                     {
-                        PLOG(PL_ALWAYS, "nrlsmf: IGMPv3 SSM REPORT ...\n");
+                        PLOG(PL_DEBUG, "nrlsmf: IGMPv3 SSM REPORT ...\n");
                         for (unsigned int i = 0; i < nsrc; i++)
                         {
                             ProtoAddress srcAddr;
@@ -1947,7 +2003,7 @@ void ElasticMulticastController::HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAd
             ProtoAddress groupAddr;
             igmpMsg.GetGroupAddress(groupAddr);
             if (groupAddr.IsLinkLocal()) break;  // ignoore link local join / leave messages
-            PLOG(PL_ALWAYS, "nrlsmf: IGMPv1 JOIN group %s\n", groupAddr.GetHostString());
+            PLOG(PL_DEBUG, "nrlsmf: IGMPv1 JOIN group %s\n", groupAddr.GetHostString());
             if (!AddManagedMembership(ifaceIndex, groupAddr))
             {
                 PLOG(PL_ERROR, "ElasticMulticastController::HandleIGMP() error: unable to add new IGMPv1 membership\n");
@@ -1973,7 +2029,7 @@ void ElasticMulticastController::HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAd
             ProtoAddress groupAddr;
             igmpMsg.GetGroupAddress(groupAddr);
             if (groupAddr.IsLinkLocal()) break;  // ignoore link local join / leave messages
-            PLOG(PL_ALWAYS, "nrlsmf: IGMPv2 LEAVE group %s\n", groupAddr.GetHostString());
+            PLOG(PL_DEBUG, "nrlsmf: IGMPv2 LEAVE group %s\n", groupAddr.GetHostString());
             RemoveManagedMembership(ifaceIndex, groupAddr);
             break;
         }
@@ -1986,7 +2042,9 @@ void ElasticMulticastController::HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAd
 }  // end ElasticMulticastController::HandleIGMP()
 
 // The external input mechanism passes these in
-void ElasticMulticastController::HandleAck(const ElasticAck& ack, unsigned int ifaceIndex, const ProtoAddress& srcMac)
+void ElasticMulticastController::HandleAck(const ElasticAck& ack, 
+                                           unsigned int ifaceIndex, 
+                                           const ProtoAddress& srcAddr)
 {
     // TBD - confirm that it's for me
     ProtoAddress dstIp, srcIp;
@@ -1996,21 +2054,21 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack, unsigned int i
     ProtoPktIP::Protocol protocol = ack.GetProtocol();
     FlowDescription membershipDescription(dstIp, srcIp, trafficClass, protocol, ifaceIndex);
 
-    //if (GetDebugLevel() >= PL_DEBUG)
+    if (GetDebugLevel() >= PL_DETAIL)
     {
-        PLOG(PL_ALWAYS, "nrlsmf: recv'd EM_ACK for flow ");
+        PLOG(PL_DETAIL, "nrlsmf: recv'd EM_ACK for flow ");
         membershipDescription.Print();
-        PLOG(PL_ALWAYS, " from %s\n", srcMac.GetHostString());
+        PLOG(PL_ALWAYS, " from %s\n", srcAddr.GetHostString());
     }
 
     // Find membership ...
     MulticastFIB::Membership* membership = membership_table.FindMembership(membershipDescription);
     if (NULL == membership)
     {
-        // TBD - what if we already have a broader scope membership?
-        //if (GetDebugLevel() >= PL_DEBUG)
+        // TBD - what if we already have a broader scope membership? 
+        if (GetDebugLevel() >= PL_DEBUG)
         {
-            PLOG(PL_ALWAYS, "nrlsmf: recv'd EM-ACK, adding membership: ");
+            PLOG(PL_DEBUG, "nrlsmf: recv'd EM-ACK, adding membership: ");
             membershipDescription.Print();
             PLOG(PL_ALWAYS, "\n");
         }
@@ -2019,6 +2077,7 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack, unsigned int i
             PLOG(PL_ERROR, "ElasticMulticastController::HandleAck() error: unable to add elastic membership\n");
             return;
         }
+        membership->SetDefaultForwardingStatus(default_forwarding_status);
         membership->SetIdleCountThreshold(MulticastFIB::DEFAULT_IDLE_COUNT_THRESHOLD);
     }
     // Update forwarder only when ELASTIC membership not already set
@@ -2053,12 +2112,11 @@ bool ElasticMulticastController::ActivateMembership(MulticastFIB::Membership&   
                                                     MulticastFIB::Membership::Flag  flag,
                                                     double                          timeoutSec)
 {
-    
     if (membership_timer.IsActive())
     {
         unsigned int oldTick = membership_table.GetNextTimeout();
         unsigned int currentTick = UpdateTicker();
-        unsigned int timeoutTick = (unsigned int)(timeoutSec*1.0e+06) + currentTick;
+        unsigned int timeoutTick = (unsigned int)(timeoutSec*TICK_RATE) + currentTick;
         if (!membership_table.ActivateMembership(membership, flag, timeoutTick))
         {
             PLOG(PL_ERROR, "ElasticMulticastController::ActivateMembership() error: unable to activate membership\n");
@@ -2069,14 +2127,14 @@ bool ElasticMulticastController::ActivateMembership(MulticastFIB::Membership&   
         {
             int delta = newTick - currentTick;
             if (delta < 0) delta = 0;
-            membership_timer.SetInterval(((double)delta) * 1.0e-06);
+            membership_timer.SetInterval(((double)delta) * TICK_INTERVAL);
             membership_timer.Reschedule();
         }
     }
     else
     {
         ResetTicker();
-        unsigned int timeoutTick = (unsigned int)(timeoutSec*1.0e+06);
+        unsigned int timeoutTick = (unsigned int)(timeoutSec*TICK_RATE);
         if (!membership_table.ActivateMembership(membership, flag, timeoutTick))
         {
             PLOG(PL_ERROR, "ElasticMulticastController::ActivateMembership() error: unable to activate membership\n");
@@ -2102,7 +2160,7 @@ void ElasticMulticastController::DeactivateMembership(MulticastFIB::Membership& 
                 unsigned int currentTick = UpdateTicker();
                 int delta = newTick - currentTick;
                 if (delta < 0) delta = 0.0;
-                membership_timer.SetInterval(((double)delta) * 1.0e-06);
+                membership_timer.SetInterval(((double)delta) * TICK_INTERVAL);
                 membership_timer.Reschedule();
             }
         }
@@ -2125,9 +2183,9 @@ bool ElasticMulticastController::OnMembershipTimeout(ProtoTimer& theTimer)
         {
             // Membership timeout
             MulticastFIB::Membership::Flag timeoutFlag = leader->GetTimeoutFlag();
-            //if (GetDebugLevel() >= PL_DEBUG)
+            if (GetDebugLevel() >= PL_DEBUG)
             {
-                PLOG(PL_ALWAYS, "nrlsmf: %s membership timeout for flow ",
+                PLOG(PL_DEBUG, "nrlsmf: %s membership timeout for flow ",
                         (MulticastFIB::Membership::ELASTIC == timeoutFlag) ? "ELASTIC" : "IGMP");
                 leader->GetFlowDescription().Print();
                 PLOG(PL_ALWAYS, "\n");
@@ -2155,7 +2213,7 @@ bool ElasticMulticastController::OnMembershipTimeout(ProtoTimer& theTimer)
                 {
                     mcast_forwarder->SetForwardingStatus(leader->GetFlowDescription(),
                                                          leader->GetInterfaceIndex(),
-                                                         MulticastFIB::LIMIT,
+                                                         leader->GetDefaultForwardingStatus(),  // LIMIT unless advertising 
                                                          ackingStatus, false);
                 }
                 else if (!ackingStatus)
@@ -2170,13 +2228,13 @@ bool ElasticMulticastController::OnMembershipTimeout(ProtoTimer& theTimer)
                 // Stop forwarding, but keep acking
                 mcast_forwarder->SetForwardingStatus(leader->GetFlowDescription(),
                                                      leader->GetInterfaceIndex(),
-                                                     MulticastFIB::LIMIT,
+                                                     leader->GetDefaultForwardingStatus(),    // LIMIT unless advertising 
                                                      true, false);
             }
         }
         else
         {
-            theTimer.SetInterval(((double)delta) * 1.0e-06);
+            theTimer.SetInterval(((double)delta) * TICK_INTERVAL);
             return true;
         }
     }
@@ -2193,9 +2251,9 @@ void ElasticMulticastController::Update(const FlowDescription&  flowDescription,
                                         unsigned int            pktInterval,
                                         bool                    oldAckingStatus)
 {
-    //if (GetDebugLevel() >= PL_DEBUG)
+    if (GetDebugLevel() >= PL_DEBUG)
     {
-        PLOG(PL_ALWAYS, "nrlsmf: controller update for flow: ");
+        PLOG(PL_DEBUG, "nrlsmf: controller update for flow: ");
         flowDescription.Print();
         PLOG(PL_ALWAYS, " from upstream relay %s (pktCount: %u)\n", relayAddr.GetHostString(), pktCount);
     }
@@ -2219,20 +2277,23 @@ void ElasticMulticastController::Update(const FlowDescription&  flowDescription,
             if (totalPktCount >= membership->GetIdleCountThreshold())
             {
                 // We haven't gotten an ACK recently enough for this membership/interface
-                //if (GetDebugLevel() >= PL_DEBUG)
+                if (GetDebugLevel() >= PL_DEBUG)
                 {
-                    PLOG(PL_ALWAYS, "nrlsmf: ELASTIC membership idle for flow ");
+                    PLOG(PL_DEBUG, "nrlsmf: ELASTIC membership idle for flow ");
                     flowDescription.Print();
                     PLOG(PL_ALWAYS, " totalCount:%u threshold:%u\n", totalPktCount,
                             membership->GetIdleCount());
                 }
                 DeactivateMembership(*membership, MulticastFIB::Membership::ELASTIC);
-                mcast_forwarder->SetForwardingStatus(flowDescription, membership->GetInterfaceIndex(), MulticastFIB::LIMIT, oldAckingStatus, false);
+                mcast_forwarder->SetForwardingStatus(flowDescription, 
+                                                     membership->GetInterfaceIndex(), 
+                                                     membership->GetDefaultForwardingStatus(), 
+                                                     oldAckingStatus, false);
                 if (0 == membership->GetFlags())
                 {
-                    //if (GetDebugLevel() >= PL_DEBUG)
+                    if (GetDebugLevel() >= PL_DEBUG)
                     {
-                        PLOG(PL_ALWAYS, "nrlsmf: removing membership ");
+                        PLOG(PL_DEBUG, "nrlsmf: removing membership ");
                         flowDescription.Print();
                         PLOG(PL_ALWAYS, "\n");
                     }

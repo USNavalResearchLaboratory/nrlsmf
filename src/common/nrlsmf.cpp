@@ -793,6 +793,7 @@ const char* const SmfApp::CMD_LIST[] =
     "+relay",       // {on | off}  : act as relay node (default = "on")
     "+elastic",     // <ifaceGroup> : enable Elastic Multicast for specific interface group
     "+reliable",    // <ifaceList> : experimental reliable hop-by-hop forwarding option (adds UMP option to IPv4 packets)
+    "-advertise",   //  Sets elastic multicast operation to advertise flows instead of token-bucket limited forwarding
     "+allow",       // {<filterSpec> | all}: set filter for flows that nrlsmf elastic mcast is allowed to forward.
     "+deny",        // {<filterSpec> | all}: set filter for flows that nrlsmf elastic mcast should ignore
     "+adaptive",    // <ifaceGroup>: enable Smart Routing for specific interface group
@@ -1550,6 +1551,18 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         }
 #endif // ELASTIC_MCAST
         elastic_mcast = true;
+    }
+    else if (!strncmp("advertise", cmd, len))
+    {
+#ifdef ELASTIC_MCAST
+        // This cues elastic multicast to advertise flows instead of limited forwarding
+        // (TBD - allow filters to delineate default forwarding for different traffic.
+        //        For example, mission critical data could always be flooded by default)
+        smf.SetDefaultForwardingStatus(MulticastFIB::BLOCK);
+        mcast_controller.SetDefaultForwardingStatus(MulticastFIB::BLOCK);
+#else
+        PLOG(PL_ERROR, "SmfApp::OnCommand(reliable) error: 'advertise' option only supported elastic multicast build\n");
+#endif
     }
     else if (!strncmp("reliable", cmd, len))
     {
@@ -2708,7 +2721,7 @@ void SmfApp::ParseDSCPList(const char* strDSCPList, int cmd)
 void SmfApp::DisplayGroups()
 {
     if (GetDebugLevel() < PL_DEBUG) return;
-    PLOG(PL_ALWAYS, "CURRENT GROUPS:\n");
+    PLOG(PL_DEBUG, "CURRENT GROUPS:\n");
     Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
     Smf::InterfaceGroup* group;
     while (NULL != (group = grouperator.GetNextItem()))

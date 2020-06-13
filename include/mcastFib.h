@@ -48,9 +48,11 @@ class MulticastFIB
             MEMBER_SSM      // single-source multicast member
         };
 
-        // These are related to the pruning of stale FIB flow entries
+        // These are related to the pruning of stale FIB flow entries and upstream relays
         static const unsigned int DEFAULT_FLOW_ACTIVE_TIMEOUT;  // in microseconds
         static const unsigned int DEFAULT_FLOW_IDLE_TIMEOUT;    // in microseconds
+        static const unsigned int DEFAULT_RELAY_ACTIVE_TIMEOUT;  // in microseconds
+        static const unsigned int DEFAULT_RELAY_IDLE_TIMEOUT;    // in microseconds
         static const double DEFAULT_LEARNING_RATE ;
         static const unsigned int MAX_SENT_PACKETS;
 
@@ -131,16 +133,23 @@ class MulticastFIB
         class ActivityStatus
         {
             public:
-                ActivityStatus() : age_tick(0), age_max(true) {}
-                ~ActivityStatus() {}
+                ActivityStatus();
+                ~ActivityStatus();
                 
                 unsigned int Age(unsigned int currentTick);
                 
-                void Refresh(unsigned int currentTick)
+                void Refresh(unsigned int currentTick, 
+                             bool         activate = true)
                 {
                     age_tick = currentTick;
                     age_max = false;
+                    active = activate;
                 }
+                void Deactivate()
+                    {active = false;}
+                
+                bool IsActive() const
+                    {return (IsValid() && active);}
                 
                 unsigned int GetAgeTick() const
                     {return age_tick;}
@@ -148,11 +157,15 @@ class MulticastFIB
                 bool IsValid() const
                     {return !age_max;}
                 void Invalidate()
-                    {age_max = true;}
+                {
+                    age_max = true;
+                    active = false;
+                }
             
             private:
                 unsigned int age_tick;   // units of microseconds (last time entry was tickled)
                 bool         age_max;    // if "true", the "age_tick" value is invalid
+                bool         active;
         };  // end class MulticastFIB::Age
 
         class Entry;
@@ -166,11 +179,23 @@ class MulticastFIB
                 UpstreamRelay();
                 UpstreamRelay(const ProtoAddress& addr, unsigned int ifaceIndex);
                 ~UpstreamRelay();
+                
+                enum Status
+                {
+                    NULLARY,    // not currently selected as upstream relay
+                    PRIMARY,    // the "best" curent upstream relay 
+                    SECONDARY   // a current "backup" upstream relay
+                };
 
                 const ProtoAddress& GetAddress() const
                     {return relay_addr;}
                 unsigned int GetInterfaceIndex() const
                     {return iface_index;}
+                
+                void SetStatus(Status status)
+                    {relay_status = status;}
+                Status GetStatus() const
+                    {return relay_status;}
 
                 // Set start of update count/interval (if non-zero count)
                 void Reset(unsigned int currentTick)
@@ -185,7 +210,7 @@ class MulticastFIB
                 {
                     update_count = count;
                     update_max = true;
-                    activity_status.Invalidate();
+                    //activity_status.Invalidate();
                 }
 
                 // This is called upon receiving a packet from the upstream
@@ -194,12 +219,49 @@ class MulticastFIB
                 // This is called to "age" activity status
                 unsigned int Age(unsigned int currentTick);
 
-                //unsigned int GetAge(unsigned int currentTick) const;
                 unsigned int GetUpdateCount() const
                     {return update_count;}
                 unsigned int GetUpdateInterval() const;
 
                 bool AckPending(const Entry& entry, bool actual = true) const;
+                
+                //void UpdatePacketRate(unsigned int currentTick);
+                
+                //double GetPacketRate() const
+                //    {return packet_rate;}
+                
+                void SetAdvAddr(const ProtoAddress& addr)
+                    {adv_addr = addr;}
+                void ClearAdvAddr()
+                    {adv_addr.Invalidate();}
+                void SetAdvId(UINT16 id)
+                    {adv_id = id;}
+                void SetAdvMetric(double value)
+                    {adv_metric = value;}
+                void SetAdvTTL(UINT8 ttl)
+                    {adv_ttl = ttl;}
+                void SetAdvHopCount(UINT8 hopCount)
+                    {adv_hop_count = hopCount;}
+                void SetLinkQuality(double value)
+                    {link_quality = value;}
+                
+                const ProtoAddress& GetAdvAddr() const
+                    {return adv_addr;}
+                UINT16 GetAdvId() const
+                    {return adv_id;}
+                double GetAdvMetric() const
+                    {return adv_metric;}
+                bool AdvMetricIsValid() const
+                    {return adv_metric >= 0.0;}
+                UINT8 GetAdvTTL() const
+                    {return adv_ttl;}
+                UINT8 GetAdvHopCount() const
+                    {return adv_hop_count;}
+                
+                bool LinkQualityIsValid() const
+                    {return link_quality >= 0.0;}
+                double GetLinkQuality() const
+                    {return link_quality;}
 
                 const char* GetKey() const
                     {return relay_addr.GetRawHostAddress();}
@@ -209,11 +271,20 @@ class MulticastFIB
             private:
                 ProtoAddress    relay_addr;    // address of this previous hop (MAC or IP for encapsulated forwarding)
                 unsigned int    iface_index;   // inbound interface index
+                Status          relay_status;  
 
                 unsigned int    update_count;
                 unsigned int    update_start; // tick when update_count started
                 bool            update_max;
+                //double          packet_rate;  // estimate of packet_rate received from this upstream
                 ActivityStatus  activity_status; // last time of packet from this upstream
+                
+                ProtoAddress    adv_addr;       // valid when in recipt of EM-ADV from this upstream
+                UINT16          adv_id;         // most recent non-duplicative EM-ADV DPD ID for given adv_addr
+                double          adv_metric;     // current metric _received_ from adv_addr
+                UINT8           adv_ttl;
+                UINT8           adv_hop_count;
+                double          link_quality;   // current measured link quality
 
         };  // end class MulticastFIB::UpstreamRelay
 
@@ -233,22 +304,52 @@ class MulticastFIB
                 UpstreamHistory(const ProtoAddress& addr);
                 ~UpstreamHistory();
                 
+                const ProtoAddress& GetAddress() const
+                    {return src_addr;}
+                
                 void SetSequence(UINT16 seq)
                     {seq_prev = seq;}
                 UINT16 GetSequence() const
                     {return seq_prev;}
                 
-                void Refresh(unsigned int currentTick)
-                    {activity_status.Refresh(currentTick);}
+                void Refresh(unsigned int currentTick, bool activate)
+                    {activity_status.Refresh(currentTick, activate);}
                 unsigned int Age(unsigned int currentTick)
                     {return activity_status.Age(currentTick);}
-                
+                bool IsActive() const
+                    {return activity_status.IsActive();}
+                void Deactivate()
+                    {activity_status.Deactivate();}
                 void ResetIdleCount()
                     {idle_count = 0;}
-                void IncrementIdleCount(unsigned int count = 1)
-                    {idle_count += count;}
+                unsigned int IncrementIdleCount(unsigned int count = 1)
+                {
+                    idle_count += count;
+                    return idle_count;
+                }
                 unsigned int GetIdleCount() const
                     {return idle_count;}
+                
+                /*
+                unsigned int IncrementActiveFlowCount()
+                {
+                    active_flow_count += 1;
+                    return active_flow_count;
+                }
+                unsigned int DeccrementActiveFlowCount()
+                {
+                    active_flow_count = (active_flow_count > 0) ? (active_flow_count - 1) : active_flow_count;
+                    return active_flow_count;
+                }
+                unsigned int GetActiveFlowCount() const
+                    {return active_flow_count;}
+                void ResetActiveFlowCount() 
+                    {active_flow_count = 0;}
+                */
+                
+                double UpdateLossEstimate(unsigned int gapCount);
+                double GetLinkQuality() const
+                    {return (1.0 - loss_estimate);}
                 
             private:
                 // ProtoTree::Item required overrides
@@ -261,6 +362,9 @@ class MulticastFIB
                 UINT16              seq_prev;
                 ActivityStatus      activity_status;
                 unsigned int        idle_count;
+                unsigned int        good_count;
+                double              loss_estimate;  // loss fraction estimate
+                //unsigned int        active_flow_count;   // reference count of number of flows for which this upstream is an active relay
         };  // end class MulticastFIB::UpstreamHistory
         
         class UpstreamHistoryTable : public ProtoTreeTemplate<UpstreamHistory>
@@ -436,13 +540,20 @@ class MulticastFIB
                 unsigned int Age(unsigned int currentTick);
                 unsigned int GetAge(unsigned int currentTick) const;
 
-                void AddUpstreamRelay(UpstreamRelay& relay)
-                    {upstream_list.Insert(relay);}
+                MulticastFIB::UpstreamRelay* AddUpstreamRelay(const ProtoAddress& addr, unsigned int ifaceIndex);
                 UpstreamRelay* FindUpstreamRelay(const ProtoAddress& addr) const
                     {return upstream_list.FindUpstreamRelay(addr);}
+                MulticastFIB::UpstreamRelay* GetBestUpstreamRelay(unsigned int currentTick);
                 UpstreamRelayList& AccessUpstreamRelayList()
                     {return upstream_list;}
-
+                
+                // Use to cache observed TTL for advertising 
+                // locally discovered flows
+                void SetTTL(UINT8 ttl)
+                    {flow_ttl = ttl;}
+                UINT8 GetTTL() const
+                    {return flow_ttl;}
+                
                 UpstreamRelay* getDownstreamRelay()
                     {return &downstream_relay;}
                 void setDownstreamRelay(const UpstreamRelay& relay)
@@ -476,7 +587,8 @@ class MulticastFIB
                 unsigned int            acking_count_threshold; // in packets
                 unsigned int            acking_interval_max;    // in microseconds
                 unsigned int            acking_interval_min;    // in microseconds
-
+                UINT8                   flow_ttl;
+                
                 Entry*                  active_prev;
                 Entry*                  active_next;
 
@@ -582,6 +694,11 @@ class MulticastFIB
                 // Only valid if igmp_timeout_valid || elastic_timeout_valid
                 unsigned int GetTimeout() const
                     {return ((ELASTIC == timeout_flag) ? elastic_timeout_tick : igmp_timeout_tick);}
+                
+                void SetDefaultForwardingStatus(ForwardingStatus status)
+                    {default_forwarding_status = status;}
+                ForwardingStatus GetDefaultForwardingStatus() const
+                    {return default_forwarding_status;}
 
             private:
                 const unsigned int* GetTimeoutPtr() const
@@ -597,6 +714,7 @@ class MulticastFIB
                 bool                igmp_timeout_valid;
                 unsigned int        elastic_timeout_tick;
                 unsigned int        elastic_timeout_valid;
+                ForwardingStatus    default_forwarding_status;
 
         };  // end class MulticastFIB::Membership
 
@@ -751,14 +869,6 @@ class MulticastFIB
         static int ComputeAge(unsigned int currentTick, unsigned int referenceTick)
             {return (currentTick - referenceTick);}
 
-        static unsigned int BuildAck(UINT32*                buffer,
-                                     unsigned int           length,
-                                     const ProtoAddress&    dstMac,  // also used for ACK upstream relay addr
-                                     const ProtoAddress&    srcMac,
-                                     const ProtoAddress&    srcIp,
-                                     const FlowDescription& flowDescription,
-                                     const ProtoAddress&    upstreamAddr);
-
         // This linked list is used to "age" entries. When a packet for an entry
         // is processed, the entry is "promoted" to the front of the list.  Stale
         // flows end up at the end of the list.  They are aged with a time counter
@@ -860,8 +970,8 @@ class MulticastFIB
 
 
     private:
-        EntryTable          flow_table;    // Table of detected flows (updated by forwarding plane)
-        ActiveList          active_list;  // stalest flows at end, freshest first
+        EntryTable          flow_table;         // Table of detected flows (updated by forwarding plane)
+        ActiveList          active_list;        // stalest flows at end, freshest first
         ActiveList          idle_list;
         //SmartRoutingTable   routing_table;  // Probabalistic Routing table for smart Adaptive Routing
 };  // end class MulticastFIB
@@ -925,6 +1035,12 @@ class ElasticMulticastForwarder
     public:
         ElasticMulticastForwarder();
         virtual ~ElasticMulticastForwarder();
+        
+        void SetDefaultForwardingStatus(MulticastFIB::ForwardingStatus status)
+            {default_forwarding_status = status;}
+        
+        MulticastFIB::ForwardingStatus GetDefaultForwardingStatus() const
+            {return default_forwarding_status;}
 
         void SetController(ElasticMulticastController* controller)
             {mcast_controller = controller;}
@@ -956,9 +1072,8 @@ class ElasticMulticastForwarder
         // The following required overrides are needed since they require access
         // to a network interface output mechanism (for sending EM-ACK)
         virtual bool SendAck(unsigned int           ifaceIndex,
-                             const ProtoAddress&    relayAddr,
-                             const FlowDescription& flowDescription,
-                             const ProtoAddress&    upstreamAddr) = 0;
+                             const ProtoAddress&    upstreamAddr,
+                             const FlowDescription& flowDescription) = 0;
         class OutputMechanism
         {
             public:
@@ -976,11 +1091,12 @@ class ElasticMulticastForwarder
         unsigned int UpdateTicker()
             {return time_ticker.Update();}
 
+        MulticastFIB::ForwardingStatus  default_forwarding_status;
 
-        MulticastFIB                mcast_fib;
-        ElasticTicker               time_ticker;
-        ElasticMulticastController* mcast_controller;
-        OutputMechanism*            output_mechanism;
+        MulticastFIB                    mcast_fib;        
+        ElasticTicker                   time_ticker;      
+        ElasticMulticastController*     mcast_controller; 
+        OutputMechanism*                output_mechanism; 
 
 };  // end class ElasticMulticastForwarder
 
@@ -995,6 +1111,12 @@ class ElasticMulticastController
 
         void SetForwarder(ElasticMulticastForwarder* forwarder)
             {mcast_forwarder = forwarder;}
+        
+        void SetDefaultForwardingStatus(MulticastFIB::ForwardingStatus status)
+            {default_forwarding_status = status;}
+        
+        MulticastFIB::ForwardingStatus GetDefaultForwardingStatus() const
+            {return default_forwarding_status;}
 
         // This method is invoked by the forwarding plane (or via interface from forwarding plane) when
         // there is a newly detected flow or upon flow activity updates
@@ -1010,7 +1132,7 @@ class ElasticMulticastController
         bool AddManagedMembership(unsigned int ifaceIndex, const ProtoAddress& groupAddr);
         void RemoveManagedMembership(unsigned int ifaceIndex, const ProtoAddress& groupAddr);
 
-        void HandleAck(const ElasticAck& ack, unsigned int ifaceIndex, const ProtoAddress& srcMac);
+        void HandleAck(const ElasticAck& ack, unsigned int ifaceIndex, const ProtoAddress& srcIp);
         bool ActivateMembership(MulticastFIB::Membership&       membership,
                                 MulticastFIB::Membership::Flag  flag,
                                 double                          timeoutSec);
@@ -1018,7 +1140,8 @@ class ElasticMulticastController
                                   MulticastFIB::Membership::Flag flag);
         
         bool SetPolicy(const FlowDescription& description, bool allow);
-
+        
+        
         // NEXT STEP - IMPLEMENT MECHANISM TO SEND ACKS to UPSTREAM FORWARDERS
         // 1) When do we send an ACK?
         //    a) upon newly active flow
@@ -1035,6 +1158,8 @@ class ElasticMulticastController
             {return time_ticker.Update();}
 
         bool OnMembershipTimeout(ProtoTimer& theTimer);
+        
+        MulticastFIB::ForwardingStatus  default_forwarding_status;
 
         ProtoTimerMgr&                  timer_mgr;
         ElasticTicker                   time_ticker;
