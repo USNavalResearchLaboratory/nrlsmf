@@ -62,7 +62,7 @@ class FlowDescription
         bool IsValid() const
             {return (0 != flow_keysize);}
 
-        void Print(FILE* filePtr=NULL) const;  // to ProtoDebug by default
+        void Print(FILE* filePtr = NULL) const;  // to ProtoDebug by default
 
         // These parse the "flow_key", so only use if needed
         bool GetDstAddr(ProtoAddress& addr) const;
@@ -93,6 +93,14 @@ class FlowDescription
             memcpy(&ifaceIndex, flow_key + Offset_Index(), sizeof(unsigned int));
             return ifaceIndex;
         }
+        
+        // infers address type from non-zero address length field
+        ProtoAddress::Type GetAddressType() const
+        {
+            unsigned int dstLen = GetDstLength();
+            return ProtoAddress::GetType((0 != dstLen) ? dstLen : GetSrcLength());
+        }
+        
         const char* GetKey() const
             {return flow_key;}
         unsigned int GetKeysize() const
@@ -203,6 +211,9 @@ class FlowTable
                 unsigned int GetInterfaceIndex() const
                     {return flow_description.GetInterfaceIndex();}
                 
+                ProtoAddress::Type GetAddressType() const
+                    {return flow_description.GetAddressType();}
+                
                 // Note these two should only be called _before_ insertion
                 // into any data structure that uses the "flow_key"
                 // (only necessary for partial prefix mask lengths)
@@ -219,8 +230,8 @@ class FlowTable
                 UINT16 GetPrefixSize() const
                     {return flow_description.GetPrefixSize();}
                 
-                void PrintDescription() const
-                    {flow_description.Print();}
+                void PrintDescription(FILE* filePtr = NULL) const
+                    {flow_description.Print(filePtr);}
                 
             private:
                 FlowDescription flow_description;

@@ -1,5 +1,5 @@
 
-// This program parses PCAP files and builds a trace of per-flow Elastic Multicast EM-ACK
+// This program parses PCAP files and builds a trace of per-flow Elastic Multicast 
 // activity that can be used for analytics of Elastic Multicast performance.
 
 #include "protoFile.h"
@@ -98,8 +98,14 @@ int main(int argc, char* argv[])
                 }
                 if (!srcAddr.IsValid()) continue;  // wasn't an IP packet
                 ProtoPktUDP udpPkt;
-                if (!udpPkt.InitFromPacket(ipPkt)) continue;  // not a UDP packet
+                if (!udpPkt.InitFromPacket(ipPkt)) 
+                {
+                    continue;  // not a UDP packet
+                }
             
+                
+                // TBD - change this code to allow for EM message bundling of any type
+                
                 if (ElasticMsg::ELASTIC_PORT != udpPkt.GetDstPort())
                     continue;  // not an Elastic Multicast message
                 else if (!dstAddr.HostIsEqual(ElasticMsg::ELASTIC_ADDR))
@@ -110,37 +116,105 @@ int main(int argc, char* argv[])
                     fprintf(stderr, "pcap2emtrace warning: invalid EM/UDP message\n");
                     continue;
                 }
-                if (ElasticMsg::ACK != emsg.GetType())
-                    continue;  // only trace ACKs for now
                 
-                ElasticAck ack(emsg);
-                if (!ack.IsValid())
+                switch (emsg.GetType())
                 {
-                    fprintf(stderr, "pcap2emtrace warning: invalid EM-ACK message\n");
-                    continue;
+                    case ElasticMsg::ACK:
+                        fprintf(outfile, "%lu.%06lu EM-ACK  ", (unsigned long)hdr.ts.tv_sec, (unsigned long)hdr.ts.tv_usec);
+                        break;
+                    case ElasticMsg::ADV:
+                        fprintf(outfile, "%lu.%06lu EM-ADV  ", (unsigned long)hdr.ts.tv_sec, (unsigned long)hdr.ts.tv_usec);
+                        break;
+                    case ElasticMsg::NACK:
+                        fprintf(outfile, "%lu.%06lu EM-NACK ", (unsigned long)hdr.ts.tv_sec, (unsigned long)hdr.ts.tv_usec);
+                        break;
+                    default:
+                        fprintf(stderr, "pcap2emtrace warning: invalid EM message type\n");
+                        continue;
                 }
-                fprintf(outfile, "%lu.%06lu EM-ACK ", (unsigned long)hdr.ts.tv_sec, (unsigned long)hdr.ts.tv_usec);
                 ProtoAddress ethAddr;
                 ethPkt.GetSrcAddr(ethAddr);
                 fprintf(outfile, "esrc>%s ", ethAddr.GetHostString());
                 ethPkt.GetDstAddr(ethAddr);
                 fprintf(outfile, "edst>%s ", ethAddr.GetHostString());
                 fprintf(outfile, "src>%s ", srcAddr.GetHostString());
-                ProtoAddress upstreamAddr;
-                ack.GetUpstreamAddr(0, upstreamAddr);
-                if (!upstreamAddr.HostIsEqual(ethAddr))
-                    fprintf(outfile, "upstream>%s ", upstreamAddr.GetHostString());
-                // Pull out the flow description
-                ProtoAddress dstIp, srcIp;
-                ack.GetDstAddr(dstIp);
-                ack.GetSrcAddr(srcIp);
-                UINT8 trafficClass = ack.GetTrafficClass();
-                ProtoPktIP::Protocol protocol = ack.GetProtocol();
-                FlowDescription flowDescription(dstIp, srcIp, trafficClass, protocol);
-                flowDescription.Print(outfile);
-                
-                fprintf(outfile, " len>%u ", ack.GetLength());
-                fprintf(outfile, "\n");
+                switch (emsg.GetType())
+                {
+                    case ElasticMsg::ACK:
+                    {
+                        ElasticAck ack(emsg);
+                        if (!ack.IsValid())
+                        {
+                            fprintf(outfile, "(invalid msg)\n");
+                            fprintf(stderr, "pcap2emtrace warning: invalid EM-ACK message\n");
+                            continue;
+                        }
+                        ProtoAddress upstreamAddr;
+                        ack.GetUpstreamAddr(0, upstreamAddr);
+                        if (!upstreamAddr.HostIsEqual(ethAddr))
+                            fprintf(outfile, "upstream>%s ", upstreamAddr.GetHostString());
+                        // Pull out the flow description
+                        ProtoAddress dstIp, srcIp;
+                        ack.GetDstAddr(dstIp);
+                        ack.GetSrcAddr(srcIp);
+                        UINT8 trafficClass = ack.GetTrafficClass();
+                        ProtoPktIP::Protocol protocol = ack.GetProtocol();
+                        FlowDescription flowDescription(dstIp, srcIp, trafficClass, protocol);
+                        fprintf(outfile, "flow>");
+                        flowDescription.Print(outfile);
+                        fprintf(outfile, "\n");
+                        break;
+                    }
+                    case ElasticMsg::ADV:
+                    {
+                        char* bufptr = (char*)udpPkt.AccessPayload();
+                        unsigned int buflen = udpPkt.GetPayloadLength();
+                        unsigned int index = 0;
+                        ElasticAdv adv;
+                        
+                        bool first = true;
+                        while (index < buflen)
+                        {
+                            if (!first) fprintf(outfile, "; ");  // semi-colon EM_ADV item delimiter
+                    
+                            if (!adv.InitFromBuffer(bufptr + index, buflen - index))
+                            {
+                                fprintf(outfile, " malformed");
+                                break;
+                            }   
+                            fprintf(outfile, "flow>");
+                            ProtoAddress dstIp, srcIp;
+                            adv.GetDstAddr(dstIp);
+                            adv.GetSrcAddr(srcIp);
+                            UINT8 trafficClass = adv.GetTrafficClass();
+                            ProtoPktIP::Protocol protocol = adv.GetProtocol();
+                            FlowDescription flowDescription(dstIp, srcIp, trafficClass, protocol);
+                            flowDescription.Print(outfile);
+                            fprintf(outfile, " ttl>%u hops>%u metric>%lf", adv.GetTTL(), adv.GetHopCount(), adv.GetMetric());
+                            ProtoAddress advAddr;
+                            adv.GetAdvAddr(advAddr);
+                            fprintf(outfile, " adv>%s id>%hu", advAddr.GetHostString(), adv.GetId());
+                            index += adv.GetLength();
+                        }
+                        fprintf(outfile, "\n");
+                        break;    
+                    }
+                    case ElasticMsg::NACK:
+                    {
+                        ElasticNack nack(emsg);
+                        ProtoAddress upstreamAddr;
+                        nack.GetUpstreamAddress(upstreamAddr);
+                        UINT16 start = nack.GetSeqStart();
+                        UINT16 stop = nack.GetSeqStop();
+                        UINT16 count = stop - start + 1;
+                        fprintf(outfile, "dst>%s start>%hu stop>%hu count:%u\n", upstreamAddr.GetHostString(), start, stop, count);
+                        fprintf(outfile, "\n");
+                        break;
+                    }
+                    default:
+                        // won't get here because of previous check
+                        break;
+                }
                 
             }  // end while pcap_next()
         }  // end while diterator.GetNextPath() 
