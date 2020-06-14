@@ -560,8 +560,6 @@ unsigned int MulticastFIB::ActivityStatus::Age(unsigned int currentTick)
     }
 }  // end MulticastFIB::ActivityStatus::Age()
 
-
-
 MulticastFIB::UpstreamHistory::UpstreamHistory(const ProtoAddress& addr)
  : src_addr(addr), seq_prev(0), idle_count(0)
 {
