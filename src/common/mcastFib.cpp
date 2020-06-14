@@ -12,8 +12,10 @@
 
 #define USE_PREEMPTIVE_ACK 1
 
-const unsigned int MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT = (1 * 1000000);  // 2 seconds in microseconds (this is a short timeout since active relays should be sending traffic, too)
-const unsigned int MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT = (60 * 1000000);   // 120 seconds in microseconds
+const unsigned int MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT = (1 * 1000000);  // 1 seconds in microseconds (this is a short timeout since active relays should be sending traffic, too)
+                                                                                // (this short timeout lets us rapidly adapt to a secondary relay when the primary goes quiet)
+                                                                                
+const unsigned int MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT = (30 * 1000000);   // 30 seconds in microseconds
 
 const unsigned int MulticastFIB::DEFAULT_FLOW_ACTIVE_TIMEOUT = (60 * 1000000);  // 60 seconds in microseconds
 const unsigned int MulticastFIB::DEFAULT_FLOW_IDLE_TIMEOUT = (120 * 1000000);   // 120 seconds in microseconds
@@ -513,7 +515,8 @@ void MulticastFIB::TokenBucket::Refresh(unsigned int currentTick)
         // when the bucket would have been logically credited.
         // (If bucket overflow, we let the "currentTick" time ride
         unsigned int tickRemainder = age - (tokens * token_interval);
-        if (HYBRID != forwarding_status) bucket_count += tokens;
+        //if (HYBRID != forwarding_status) 
+            bucket_count += tokens;
         if (bucket_count > bucket_depth)
             bucket_count = bucket_depth;
         else
@@ -542,6 +545,8 @@ bool MulticastFIB::TokenBucket::ProcessPacket(unsigned int currentTick)
             }
             else
             {
+                if (HYBRID == forwarding_status)
+                    forwarding_status = BLOCK;  // will be reset on flow timeout
                 return false;
             }
         default:
@@ -1133,17 +1138,17 @@ MulticastFIB::Entry::Entry(const ProtoAddress&  dst,
     flow_managed(false), flow_active(false), flow_idle(false),
     default_forwarding_status(LIMIT), forwarding_count(0), 
     unicast_probability(0.0),
-    acking_status(false), acking_count_threshold(DEFAULT_ACKING_COUNT),
+    acking_status(false), 
+    acking_count_threshold(DEFAULT_ACKING_COUNT),
     acking_interval_max(DEFAULT_ACKING_INTERVAL_MAX), 
     acking_interval_min(DEFAULT_ACKING_INTERVAL_MIN)
-    
-
 {
 }
 
 MulticastFIB::Entry::Entry(const FlowDescription& flowDescription, int flags)
 
- : FlowEntryTemplate(flowDescription, flags), flow_active(false),
+ : FlowEntryTemplate(flowDescription, flags), 
+   flow_managed(false), flow_active(false), flow_idle(false),
    default_forwarding_status(LIMIT), forwarding_count(0),
    //downstream_relay(), 
    unicast_probability(0.0),
@@ -1305,6 +1310,8 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
             // Prune this "dead" upstream relay
             upstream_list.Remove(*nextRelay);
             delete nextRelay;
+            if (upstream_list.IsEmpty())
+                SetTTL(0);  // so this flow isn't reactivated until another packet seen
             continue;
         }
         double linkQuality = nextRelay->GetLinkQuality();
@@ -1631,6 +1638,10 @@ void MulticastFIB::PruneFlowList(unsigned int currentTick, ElasticMulticastContr
                 flow_table.RemoveEntry(*entry);
                 delete entry;
             }
+            else
+            {
+                entry->GetFlowDescription().Print();
+            }
         }
         else
         {
@@ -1639,8 +1650,6 @@ void MulticastFIB::PruneFlowList(unsigned int currentTick, ElasticMulticastContr
         entry = prevEntry;
     }
 }  // end MulticastFIB::PruneFlowList()
-
-
 
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -1874,8 +1883,6 @@ bool ElasticMulticastController::SetPolicy(const FlowDescription& flowDescriptio
     // Inform forwarder of policy, making a "static", managed entry in the forwarder for default handling 
     // of flows that match the policy.
     mcast_forwarder->SetForwardingStatus(flowDescription, 0, status, false, true);
-    
-    
     return true;
 }  // end ElasticMulticastController::SetPolicy()
 

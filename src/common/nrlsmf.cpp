@@ -761,7 +761,7 @@ void SmfApp::Usage()
                     "              [forward {on|off}][relay {on|off}][delayoff <value>]\n"
                     "              [device <vifName>,<ifaceName>[,<addr>[/<maskLen>][,<addr2>[/<maskLen>] ...]]]\n"
                     "              [rate [<iface>,]<bits/sec>][queue [<iface>,]<limit>][filterDups {on | off}]\n"
-                    "              [layered <ifaceList>]\n"
+                    "              [layered <ifaceList>][reliable <ifaceList>][advertise]\n"
                     "              [unicast {<group> | <unicastPrefix> | off}][encapsulate <ifaceList>]\n"
 	                "              [dscpCapture <dscpValue>,<dscpValueList>]\n"
                     "              [dscpRelease <dscpValue>,<dscpValueList>]\n"
@@ -793,6 +793,7 @@ const char* const SmfApp::CMD_LIST[] =
     "+relay",       // {on | off}  : act as relay node (default = "on")
     "+elastic",     // <ifaceGroup> : enable Elastic Multicast for specific interface group
     "+reliable",    // <ifaceList> : experimental reliable hop-by-hop forwarding option (adds UMP option to IPv4 packets)
+    "+utos",        // <trafficClass> : set IP traffic class to be ignored by reliable forwarding
     "-advertise",   //  Sets elastic multicast operation to advertise flows instead of token-bucket limited forwarding
     "+allow",       // {<filterSpec> | all}: set filter for flows that nrlsmf elastic mcast is allowed to forward.
     "+deny",        // {<filterSpec> | all}: set filter for flows that nrlsmf elastic mcast should ignore
@@ -1558,8 +1559,8 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         // This cues elastic multicast to advertise flows instead of limited forwarding
         // (TBD - allow filters to delineate default forwarding for different traffic.
         //        For example, mission critical data could always be flooded by default)
-        smf.SetDefaultForwardingStatus(MulticastFIB::BLOCK);
-        mcast_controller.SetDefaultForwardingStatus(MulticastFIB::BLOCK);
+        smf.SetDefaultForwardingStatus(MulticastFIB::HYBRID);
+        mcast_controller.SetDefaultForwardingStatus(MulticastFIB::HYBRID);
 #else
         PLOG(PL_ERROR, "SmfApp::OnCommand(reliable) error: 'advertise' option only supported elastic multicast build\n");
 #endif
@@ -1594,6 +1595,27 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         PLOG(PL_ERROR, "SmfApp::OnCommand(reliable) error: 'reliable' option only supported elastic multicast build\n");
 #endif // if/else ELASTIC_MCAST
     }
+#ifdef ELASTIC_MCAST
+    else if (!strncmp("utos", cmd, len))
+    {
+        // sets "unreliable TOS"
+        int tos = -1;
+        int result = sscanf(val, "%i", &tos);
+        if (1 != result)
+        {
+            unsigned int utos = 256;
+            result = sscanf(val, "%x", &utos);
+            tos = (int)utos;
+        }
+        if ((1 != result) || (tos < 0) || (tos > 255))
+        {
+            fprintf(stderr, "mfApp::OnCommand(utos) error: invalid 'utos' value!\n");
+            Usage();
+            return -1;
+        }
+        smf.SetUnreliableTOS((UINT8)tos);
+    }
+#endif // ELASTIC_MCAST
     else if (!strncmp("adaptive", cmd, len))
     {
         // adaptive <groupName>
@@ -4860,6 +4882,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
             ProtoPktIP ipPkt;
             bool isValidIP = (ProtoPktETH::IP == ethPkt.GetType()) && 
                              ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), ethPkt.AccessPayload(), ethPkt.GetPayloadMax());
+            UINT8 trafficClass = 0;
             if (isValidIP)
             {
                 bool isUnicast = false;
@@ -4870,6 +4893,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                     ip4Pkt.GetSrcAddr(src);
                     ip4Pkt.GetDstAddr(dst);
                     isUnicast = dst.IsUnicast();
+                    trafficClass = ip4Pkt.GetTOS();
                     if (elasticMulticast && (ProtoPktIP::IGMP == ip4Pkt.GetProtocol()))
                     {
                         // This is an outbound IGMP message, so intercept it
@@ -4897,6 +4921,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                     ProtoAddress dst;
                     ip6Pkt.GetDstAddr(dst);
                     isUnicast = dst.IsUnicast();
+                    trafficClass = ip6Pkt.GetTrafficClass();
                 }   
                 if (elasticUnicast && isUnicast)
                 {
@@ -4924,13 +4949,16 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                     ASSERT(NULL != dstIface);
                     if (dstIface->IsReliable() && (4 == ipPkt.GetVersion()))
                     {
+                        UINT8 utos = smf.GetUnreliableTOS();
+                        bool reliable = (0 == utos) || (utos != trafficClass);
                         // add (or update) UMP option
                         ProtoPktIPv4 ip4Pkt(ipPkt);
                         UINT16 sequence = dstIface->GetUmpSequence();
-                        dstIface->SetUMPOption(ip4Pkt);
+                        dstIface->SetUMPOption(ip4Pkt, reliable);
                         ethPkt.SetPayloadLength(ip4Pkt.GetLength());
                         // Cache the packet for possible retransmission if NACKed
-                        smf.CachePacket(*dstIface, sequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+                        if (reliable)
+                            smf.CachePacket(*dstIface, sequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
                     }
                     if (!SendFrame(*dstIface, (char*)ethPkt.GetBuffer(), ethPkt.GetLength()))
                     {
@@ -5422,7 +5450,9 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
     {
         return false;
     }
-    
+#ifdef ELASTIC_MCAST
+    UINT8 trafficClass = 0;
+#endif // ELASTIC_MCAST
     bool isDuplicate = false; // used to check for duplicate receptions for "device" interfaces
     ProtoPktIP::Protocol protocol = ProtoPktIP::RESERVED;  // will be set if IP packet
     ProtoPktETH::Type ethType = (ProtoPktETH::Type)ethPkt.GetType();
@@ -5446,12 +5476,18 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
             ProtoPktIPv4 ip4Pkt(ipPkt);
             ip4Pkt.GetDstAddr(dstAddr);
             protocol = ip4Pkt.GetProtocol();
+#ifdef ELASTIC_MCAST
+            trafficClass = ip4Pkt.GetTOS();
+#endif // ELASTIC_MCAST
         }
         else if (6 == version)
         {
             ProtoPktIPv6 ip6Pkt(ipPkt);
             ip6Pkt.GetDstAddr(dstAddr);
             protocol = ip6Pkt.GetNextHeader();
+#ifdef ELASTIC_MCAST
+            trafficClass = ip6Pkt.GetTrafficClass();
+#endif // ELASTIC_MCAST
         }
         else
         {
@@ -5561,15 +5597,18 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
         // (e.g., instead of dstIfIndices array, pass an array of Smf::Interface pointers)
         Smf::Interface* dstIface = smf.GetInterface(dstIfIndices[i]);
         ASSERT(NULL != dstIface);
-        if (dstIface->IsReliable() && (4 == ipPkt.GetVersion()))
+        if (dstIface->IsReliable() &&  (4 == ipPkt.GetVersion()))
         {
+            UINT8 utos = smf.GetUnreliableTOS();
+            bool reliable = (0 == utos) || (utos != trafficClass);
             // add (or update) UMP option
             ProtoPktIPv4 ip4Pkt(ipPkt);
             UINT16 sequence = dstIface->GetUmpSequence();
-            dstIface->SetUMPOption(ip4Pkt);
+            dstIface->SetUMPOption(ip4Pkt, reliable);
             ethPkt.SetPayloadLength(ip4Pkt.GetLength());
             // Cache the packet for potential retransmission if NACKed
-            smf.CachePacket(*dstIface, sequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+            if (reliable)
+                smf.CachePacket(*dstIface, sequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
         }
         if (!SendFrame(*dstIface, (char*)ethPkt.GetBuffer(), ethPkt.GetLength()))
         {

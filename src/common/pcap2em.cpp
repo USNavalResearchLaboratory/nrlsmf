@@ -1,5 +1,5 @@
 
-// This program parses PCAP files and builds a trace of per-flow Elastic Multicast EM-ACK
+// This program parses PCAP files and builds a trace of per-flow Elastic Multicast 
 // activity that can be used for analytics of Elastic Multicast performance.
 
 #include "protoFile.h"

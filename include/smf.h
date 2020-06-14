@@ -84,6 +84,13 @@ class Smf
             idpd_enable = state ? true : idpd_enable;
         }
         
+#ifdef ELASTIC_MCAST
+        void SetUnreliableTOS(UINT8 tos)
+            {unreliable_tos = tos;}
+        UINT8 GetUnreliableTOS() const
+            {return unreliable_tos;}
+#endif // ELASTIC_MCAST
+        
         // Manage/Query a list of the node's local MAC/IP addresses
         // (Also cache interface index so we can look that up by address)
         bool AddOwnAddress(const ProtoAddress& addr, intptr_t ifaceIndex)
@@ -222,7 +229,7 @@ class Smf
                     {is_reliable = state;}
                 bool IsReliable() const
                     {return is_reliable;}
-                bool SetUMPOption(ProtoPktIPv4& ipPkt);
+                bool SetUMPOption(ProtoPktIPv4& ipPkt, bool increment);
                 
                 void SetEncapsulation(bool state)
                     {ip_encapsulate = state;}
@@ -809,6 +816,7 @@ class Smf
         unsigned int        current_update_time;
 #ifdef ELASTIC_MCAST
         ProtoTimer          adv_timer;
+        UINT8               unreliable_tos;
 #endif // ELASTIC_MCAST
         
         char                selector_list[SELECTOR_LIST_LEN_MAX]; 

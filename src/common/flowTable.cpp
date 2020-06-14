@@ -168,7 +168,7 @@ void FlowDescription::SetKey(const char*             dstAddr,
     {
         extendPrefix = false;
     }
-    flow_key[offset++]= trafficClass;
+    flow_key[offset++] = trafficClass;
     if (extendPrefix)
     {
         if (0x03 != trafficClass)

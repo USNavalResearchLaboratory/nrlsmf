@@ -220,7 +220,7 @@ bool Smf::Interface::EnqueueFrame(const char* frameBuf, unsigned int frameLen, S
     return true;
 }  // end Smf::Interface::EnqueueFrame()
 
-bool Smf::Interface::SetUMPOption(ProtoPktIPv4& ipPkt)
+bool Smf::Interface::SetUMPOption(ProtoPktIPv4& ipPkt, bool increment)
 {
     // Does it already have any options?
     unsigned int offset = 0;  // will accrue total length of existing options
@@ -233,7 +233,8 @@ bool Smf::Interface::SetUMPOption(ProtoPktIPv4& ipPkt)
             if (ProtoPktIPv4::Option::UMP == option.GetType())
             {
                 ProtoPktUMP& ump = static_cast<ProtoPktUMP&>(option);
-                ump.SetSequence(ump_sequence++);
+                ump.SetSequence(ump_sequence);
+                if (increment) ump_sequence += 1;
                 ASSERT(ProtoAddress::IPv4 == ip_addr.GetType());
                 ump.SetSrcAddr(ip_addr);
                 ipPkt.CalculateChecksum();  // TBD - the delta could be done, maybe
@@ -370,6 +371,7 @@ Smf::Smf(ProtoTimerMgr& timerMgr)
     adv_timer.SetInterval(0.0);
     adv_timer.SetRepeat(-1);
     adv_timer.SetListener(this, &Smf::OnAdvTimeout);
+    unreliable_tos = 0;
 #endif // ELASTIC_MCAST
     
     memset(dscp, 0, 256);
@@ -2656,7 +2658,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
     if (updateController)
     {
         // New or reactivated flow ...
-        if (MulticastFIB::BLOCK == fibEntry->GetDefaultForwardingStatus())
+        MulticastFIB::ForwardingStatus fstatus = fibEntry->GetDefaultForwardingStatus();
+        if ((MulticastFIB::HYBRID == fstatus) || (MulticastFIB::BLOCK == fstatus))
         {
             // We're advertising, so make sure adv_timer is activated
             if (!adv_timer.IsActive())
@@ -3012,16 +3015,14 @@ unsigned int Smf::UpdateUpstreamHistory(unsigned int                   currentTi
         udpPkt.SetPayloadLength(nack.GetLength());
         ip4Pkt.SetPayloadLength(udpPkt.GetLength());
         udpPkt.FinalizeChecksum(ip4Pkt);
-        /* Don't cache/retransmit NACKs so don't mark      
-        UINT16 umpSequence = srcIface.GetUmpSequence();
-        if (srcIface.SetUMPOption(ip4Pkt))
+        if (srcIface.SetUMPOption(ip4Pkt, false))
         {
             ethPkt.SetPayloadLength(ip4Pkt.GetLength());
             // Cache the packet for possible retransmission if NACKed
-            CachePacket(srcIface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+            //UINT16 umpSequence = srcIface.GetUmpSequence();
+            //CachePacket(srcIface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
         }
         else
-        */
         {
             ethPkt.SetPayloadLength(ip4Pkt.GetLength());
         }
@@ -3205,7 +3206,7 @@ bool Smf::SendAck(Interface&             iface,        // interface it goes out 
     {
         // Apply Upstream Multicast Packet header option on iterfaces configured for "reliable forwarding"
         UINT16 umpSequence = iface.GetUmpSequence();
-        if (iface.SetUMPOption(ip4Pkt))
+        if (iface.SetUMPOption(ip4Pkt, true))
         {
             ethPkt.SetPayloadLength(ip4Pkt.GetLength());
             // Cache the packet for possible retransmission if NACKed
@@ -3371,12 +3372,12 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                 ethPkt.SetSrcAddr(iface->GetInterfaceAddress());
                 if (iface->IsReliable())
                 {
-                    UINT16 umpSequence = iface->GetUmpSequence();
-                    if (iface->SetUMPOption(ip4Pkt))
+                    if (iface->SetUMPOption(ip4Pkt, false))
                     {
                         ethPkt.SetPayloadLength(ip4Pkt.GetLength());
                         // Cache the packet for possible retransmission if NACKed
-                        CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+                        //UINT16 umpSequence = iface->GetUmpSequence();
+                        //CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
                     }
                     else
                     {
@@ -3439,7 +3440,7 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                 advId = upstreamRelay->GetAdvId();
                 upstreamRelay->ClearAdvAddr(); // so we don't duplicatively advertise this flow
             }
-            else
+            else if (fibEntry->IsActive() && (fibEntry->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT))
             {  
                 // We must be the source (advMetric will be zero) of the flow
                 advTTL = fibEntry->GetTTL();
@@ -3448,7 +3449,11 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                 advMetric = 0.0;
                 advAddr = iface->GetIpAddress();
                 advId = iface->GetLocalAdvId();
-                
+            }
+            else
+            {
+                // Not an active flow (probably pruned its upstream relays to end up here)
+                continue;
             }
             if (advTTL >= 1) 
             {
@@ -3508,12 +3513,12 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
             ethPkt.SetSrcAddr(iface->GetInterfaceAddress());
             if (iface->IsReliable())
             {
-                UINT16 umpSequence = iface->GetUmpSequence();
-                if (iface->SetUMPOption(ip4Pkt))
+                if (iface->SetUMPOption(ip4Pkt, false))
                 {
                     ethPkt.SetPayloadLength(ip4Pkt.GetLength());
                     // Cache the packet for possible retransmission if NACKed
-                    CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+                    //UINT16 umpSequence = iface->GetUmpSequence();
+                    //CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
                 }
                 else
                 {
@@ -3657,10 +3662,44 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
                 flowCount, recv_count, mrcv_count,
                 dups_count, asym_count, fwd_count);
     }
-
     current_update_time += (unsigned int)prune_timer.GetInterval();
 #ifdef ELASTIC_MCAST
     mcast_fib.PruneFlowList(currentTick);
+    if (outputReport)
+    {
+        // Report some flow status information
+        PLOG(PL_ALWAYS, "  Elastic Multicast flows:\n");
+        MulticastFIB::Entry* fibEntry;
+        MulticastFIB::EntryTable::Iterator fiberator(mcast_fib.AccessFlowTable());
+        while (NULL != (fibEntry = fiberator.GetNextEntry()))
+        {
+            PLOG(PL_ALWAYS, "    ");
+            fibEntry->GetFlowDescription().Print();
+            double age = (double)fibEntry->Age(currentTick) * 1.0e-06;
+            if (fibEntry->IsIdle()) age += (double)MulticastFIB::DEFAULT_FLOW_ACTIVE_TIMEOUT * 1.0e-06;
+            PLOG(PL_ALWAYS, " age:%.1f", age);
+            const char* status = fibEntry->IsActive() ? "actv" : (fibEntry->IsIdle() ? "idle" : "????");
+            PLOG(PL_ALWAYS, " status:%s", status);
+            bool ackingStatus = fibEntry->GetAckingStatus();
+            PLOG(PL_ALWAYS, " acking:%d", ackingStatus);
+            if (ackingStatus)
+            {
+                MulticastFIB::UpstreamRelay* upstream = fibEntry->GetBestUpstreamRelay(currentTick);
+                if (NULL != upstream)
+                {
+                    // ETX metric
+                    double etx = upstream->GetLinkQuality();
+                    if (etx < 0.0) 
+                        etx = 1.0;
+                    else
+                        etx = 1.0/etx;
+                    etx += upstream->GetAdvMetric();
+                    PLOG(PL_ALWAYS, " upstream:%s metric:%lf", upstream->GetAddress().GetHostString(), etx);
+                }
+            }
+            PLOG(PL_ALWAYS, "\n");
+        }
+    }
 #endif // ELASTIC_MCAST
     return true;
 }  // end Smf::OnPruneTimeout()
