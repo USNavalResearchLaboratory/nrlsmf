@@ -252,26 +252,10 @@ class Smf
                         
                         Interface& GetInterface() const
                             {return target_iface;}
-                        
-                        void SetRelayType(RelayType relayType)
-                            {relay_type = relayType;}
-                        RelayType GetRelayType() const
-                            {return relay_type;}
-                        void SetElasticMulticast(bool state)
-                            {elastic_mcast = state;}
-                        void SetAdaptiveRouting (bool state)
-                            {adaptive_routing = state;}
-                        bool GetElasticMulticast() const
-                            {return elastic_mcast;}
-                        bool GetAdaptiveRouting() const
-                            {return adaptive_routing;}
                     private:
                         InterfaceGroup& iface_group;
                         Interface&      target_iface;
-                        RelayType       relay_type;
-                        bool            elastic_mcast;
-                        bool            adaptive_routing;
-                };  // end class Smf::Interface::Associate
+                };  // end class Smf::Interface::Associate  
                 
                 class AssociateList : public ProtoSimpleQueueTemplate<Associate>
                 {

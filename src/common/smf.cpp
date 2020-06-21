@@ -267,8 +267,6 @@ bool Smf::Interface::SetUMPOption(ProtoPktIPv4& ipPkt, bool increment)
     return true;
 }  // end Smf::Interface::SetUMPOption()
 
-
-
 #ifdef ELASTIC_MCAST
 void Smf::Interface::PruneUpstreamHistory(unsigned int currentTick)
 {
@@ -1227,7 +1225,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     }
                     else
                     {
-                        PLOG(PL_WARN, "Smf::ProcessPacket() warning: invalid elastic UDP packet\n");
+                        PLOG(PL_WARN, "Smf::ProcessPacket() warning: invalid elastic UDP packet from src %s\n", srcIp.GetHostString());
                     }
                 }
                 // TBD - Mark the relay status of UpstreamHistory instances and only send NACKs
@@ -3332,6 +3330,8 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
     unsigned msgLenMax = udpPkt.GetBufferLength() - udpPkt.GetHeaderLength();
     char* msgBuffer = (char*)udpPkt.AccessPayload();  // note this is actually 32-bit aligned because of above offsets
     
+    xxx - the problem is we set the UMP option on the ADV and it messes up the next message built for the next iface
+    
     Interface* iface;
     InterfaceList::Iterator iferator(iface_list);
     while (NULL != (iface = iferator.GetNextInterface()))
@@ -3346,7 +3346,13 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                 break;       
         }
         if (NULL == assoc) 
-            continue; // not in an elastic iface group
+            continue; // not in an elastic mcast iface group
+	    
+	    char ifaceName[IF_NAME_MAX+1];
+	    ifaceName[IF_NAME_MAX] = '\0';
+	    ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, IF_NAME_MAX);
+	    TRACE("OnAdvTimeout() iface %s (addr:%s)\n", ifaceName, iface->GetIpAddress().GetHostString());
+	
         
         // TBD 'continue' if iface isn't pending
         MulticastFIB::Entry* fibEntry;
@@ -3438,13 +3444,11 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                 ASSERT(upstreamRelay->GetAdvAddr().IsValid());
                 advAddr = upstreamRelay->GetAdvAddr();
                 advId = upstreamRelay->GetAdvId();
-                upstreamRelay->ClearAdvAddr(); // so we don't duplicatively advertise this flow
             }
             else if (fibEntry->IsActive() && (fibEntry->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT))
             {  
                 // We must be the source (advMetric will be zero) of the flow
                 advTTL = fibEntry->GetTTL();
-                fibEntry->SetTTL(0);  // reset so we won't advertise again if no more packets
                 advHopCount = 0;
                 advMetric = 0.0;
                 advAddr = iface->GetIpAddress();
@@ -3467,6 +3471,9 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                 continue;  // don't advertise flows that have reached ttl limit 
             }
             const FlowDescription& flowDescription = fibEntry->GetFlowDescription();
+	        TRACE("   flow ");
+	        flowDescription.Print();
+	        TRACE("\n");
             adv.SetId(advId);
             adv.SetProtocol(flowDescription.GetProtocol());
             adv.SetTrafficClass(flowDescription.GetTrafficClass());
@@ -3534,6 +3541,22 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
         }
     }  // end while GetNextInterface()
     
+    // Mark adv_metric on current advertised entries so they aren't duplicatively advertised
+    // (or ttl for local flows) -- need a better way to this state reset for multiple ifaces
+    MulticastFIB::Entry* fibEntry;
+    MulticastFIB::EntryTable::Iterator fiberator(mcast_fib.AccessFlowTable());
+    while (NULL != (fibEntry = fiberator.GetNextEntry()))
+    {
+    	MulticastFIB::UpstreamRelay* upstreamRelay = GetBestUpstreamRelay(*fibEntry, currentTick);
+        if (NULL != upstreamRelay)
+        {
+            upstreamRelay->ClearAdvAddr(); // so we don't duplicatively advertise this flow
+        }
+        else if (fibEntry->IsActive() && (fibEntry->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT))
+        {
+            fibEntry->SetTTL(0);  // reset so we won't advertise again if no more packets
+        }
+    }
     adv_timer.SetInterval(1.0);  // TBD - jitter
 }  // end Smf::OnAdvTimeout()
 

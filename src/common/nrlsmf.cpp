@@ -26,7 +26,7 @@
 #include "protoRouteMgr.h"
 #include "protoString.h"
 
-#if !defined(WIN32) && !defined(ANDROID)
+#if !defined(WIN32) && !defined(ANDROID) && !defined(ELASTIC_MCAST)
 // Note: WIN32 and ANDROID ProtoDetour support is TBD
 #include "protoDetour.h"
 #endif // !WIN32 && !ANDROID
@@ -3007,7 +3007,6 @@ Smf::InterfaceGroup* SmfApp::GetInterfaceGroup(const char*         groupName,
         ifaceGroup->SetRelayType(relayType);
         ifaceGroup->SetResequence(rseq);
         ifaceGroup->SetTunnel(tunnel);
-
         if ((Smf::PUSH == mode) && (NULL != matcher) && (matcher->IsSourceMatcher()))
         {
             // This is a new push source, so we need to add destination interfaces from corresponding template group
@@ -3053,7 +3052,20 @@ Smf::InterfaceGroup* SmfApp::GetInterfaceGroup(const char*         groupName,
             return NULL;
         }
         if (relayType != ifaceGroup->GetRelayType())  // let it slide, but issue warning (interface associations will be updated)
+        {
             PLOG(PL_WARN, "SmfApp::GetInterfaceGroup() warning: changing relay type for group \"%s\"?!\n", groupName);
+            ifaceGroup->SetRelayType(relayType);
+        }
+        if (rseq != ifaceGroup->GetResequence())  // let it slide, but issue warning (interface associations will be updated)
+        {
+            PLOG(PL_WARN, "SmfApp::GetInterfaceGroup() warning: changing resequence option for group \"%s\"?!\n", groupName);
+            ifaceGroup->SetResequence(rseq);
+        }
+        if (tunnel != ifaceGroup->IsTunnel())  // let it slide, but issue warning (interface associations will be updated)
+        {
+            PLOG(PL_WARN, "SmfApp::GetInterfaceGroup() warning: changing tunnel mode for group \"%s\"?!\n", groupName);
+            ifaceGroup->SetTunnel(tunnel);
+        }
     }
     return ifaceGroup;
 }  // end SmfApp::GetInterfaceGroup()
@@ -3592,17 +3604,9 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
                 Smf::Interface::Associate* assoc = srcIface->FindAssociate(iface->GetIndex());
                 if (NULL != assoc)
                 {
-                    if (&ifaceGroup == &assoc->GetInterfaceGroup())
-                        //if (Smf::CF != assoc->GetRelayType())
+                    if (&ifaceGroup != &assoc->GetInterfaceGroup())
                     {
-                        // This association has already been set with different relay rule
-                        PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() warning: push iface indices %d->%d config overrides previous command\n",
-                            srcIface->GetIndex(), iface->GetIndex());
-                        ifaceGroup.SetRelayType(Smf::CF);
-                    }
-                    else
-                    {
-                        PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() error: push iface index %d already has another association with index %d?!\n",
+                        PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() error: push iface index %d already has a different association with index %d?!\n",
                                        srcIface->GetIndex(), iface->GetIndex());
                         return false;
                     }
@@ -3643,13 +3647,11 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
                     Smf::Interface::Associate* assoc = iface->FindAssociate(dstIface->GetIndex());
                     if (NULL != assoc)
                     {
-                        if (&ifaceGroup == &assoc->GetInterfaceGroup())
-                        //if (Smf::CF != assoc->GetRelayType())
+                        if (&ifaceGroup != &assoc->GetInterfaceGroup())
                         {
-                            // This association has already been set with different relay rule
-                            PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() warning: merge iface indices %d->%d config overrides previous command\n",
-                                           iface->GetIndex(), dstIface->GetIndex());
-                            ifaceGroup.SetRelayType(Smf::CF);
+                            PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() error: merge iface index %d already has a different association with index %d?!\n",
+                                       srcIface->GetIndex(), iface->GetIndex());
+                            return false;
                         }
                     }
                     else
@@ -3667,20 +3669,11 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
             case Smf::RELAY:
             {
                 // Make sure this iface hasn't been previously set as a rpush or rmerge srcIface
-                if (iface->GetResequence())
+                if (iface->GetResequence() || iface->IsTunnel())
                 {
                     PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() error: MANET iface config conflicts with previous rpush or rmerge config!\n");
                     return false;  // TBD - issue warning and make this "continue" instead ???
                 }
-                ASSERT(!rseq);
-                ASSERT(!tunnel);
-                iface->SetResequence(false);
-                iface->SetTunnel(false);
-                // Now set up "relayType" association to all interfaces in group, including self
-                Smf::RelayType relayType = ifaceGroup.GetRelayType();
-                bool elasticMcast = ifaceGroup.GetElasticMulticast();
-                bool adaptiveRouting = ifaceGroup.GetAdaptiveRouting();
-                bool elasticUcast = ifaceGroup.GetElasticUnicast();
                 Smf::InterfaceGroup::Iterator dstIfacerator(ifaceGroup);
                 Smf::Interface* dstIface;
                 while (NULL != (dstIface = dstIfacerator.GetNextInterface()))
@@ -3688,16 +3681,11 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
                     Smf::Interface::Associate* assoc = iface->FindAssociate(dstIface->GetIndex());
                     if (NULL != assoc)
                     {
-                        if (&ifaceGroup == &assoc->GetInterfaceGroup())
-                        //if (assoc->GetRelayType() != relayType)
+                        if (&ifaceGroup != &assoc->GetInterfaceGroup())
                         {
-                            // This association has already been set with different relay rule
-                            PLOG(PL_WARN, "SmfApp::UpdateGroupAssociations() warning: manet relay iface indices %d->%d config overrides previous command\n",
-                                    iface->GetIndex(), dstIface->GetIndex());
-                            ifaceGroup.SetRelayType(relayType);
-                            ifaceGroup.SetElasticMulticast(elasticMcast);
-                            ifaceGroup.SetElasticUnicast(elasticUcast);
-							ifaceGroup.SetAdaptiveRouting(adaptiveRouting);
+                            PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() error: MANET iface index %d already has a different association with index %d?!\n",
+                                       srcIface->GetIndex(), iface->GetIndex());
+                            return false;
                         }
                     }
                     else
@@ -4483,8 +4471,8 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                 unsigned int dstCount = indexCount - 1;
                 unsigned int msgHdrLen = 7 + 1 + indexCount;
                 // IPv4 unicast packets need to be sent via firewall forward, too,
-		        // unless they have a broadcast MAC address
-		        bool unicastFirewallForwardFlag = true;
+		// unless they have a broadcast MAC address
+		bool unicastFirewallForwardFlag = true;
                 unsigned int ethHdrLen = ProtoPktETH::GetHeaderLength(buffer, 8191);
 		        UINT8* bufPtr = (UINT8*)(buffer+msgHdrLen+ethHdrLen - 2); // Points to the Ethernet type
 		        if((*bufPtr == 0x08 && *(bufPtr+1) == 0x00) && smf.GetUnicastEnabled())
