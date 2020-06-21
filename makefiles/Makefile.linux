@@ -30,8 +30,7 @@ TK_LIB = -ltk #/usr/local/lib/libtk8.0.a
 #
 SYSTEM_INCLUDES = 
 SYSTEM_LDFLAGS =
-SYSTEM_LIBS = -ldl 
-#-lnetfilter_queue
+SYSTEM_LIBS = -ldl -lnetfilter_queue
 
 # 6) System specific capabilities
 # Must choose appropriate for the following:
@@ -75,8 +74,7 @@ SYSTEM_HAVES = -DLINUX -DHAVE_IPV6 -DHAVE_GETLOGIN -D_FILE_OFFSET_BITS=64 -DHAVE
 #
 
 #SYSTEM_SRC = ../protolib/src/common/pcapCap.cpp
-SYSTEM_SRC = ../protolib/src/linux/linuxCap.cpp ../protolib/src/unix/unixVif.cpp 
-#../protolib/src/linux/linuxDetour.cpp
+SYSTEM_SRC = ../protolib/src/linux/linuxCap.cpp ../protolib/src/unix/unixVif.cpp ../protolib/src/linux/linuxDetour.cpp
 
 SYSTEM = linux
 

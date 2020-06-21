@@ -2,7 +2,7 @@
 #include "elasticMsg.h"
 
 
-const double ElasticAdv::METRIC_MAX = 8192.0;
+const double ElasticAdv::METRIC_MAX = 256.0;
 
 ElasticMsg::ElasticMsg(void*        bufferPtr,
                        unsigned int bufferBytes,
@@ -417,6 +417,47 @@ ElasticAdv::ElasticAdv(ElasticMsg& elasticMsg)
 ElasticAdv::~ElasticAdv()
 {
 }
+
+UINT16 ElasticAdv::EncodeMetric(double value)
+{
+    ASSERT((0.0 == value) || (value >= 1.0));
+
+    if (value <= 0.0)
+    {
+        return 0;
+    }
+    else if (value <= 1.0)
+    {
+        return 1;
+    }
+    else if (value >= METRIC_MAX)
+    {
+        return 0xffff;
+    }
+    else
+    {
+        value -= 1.0;
+        double scale = (double)((UINT16)0xffff) / METRIC_MAX;
+        UINT16 field = (UINT16)(value * scale);
+        if (field < 2)
+            return 2;
+        else 
+            return field;
+    }
+} // end ElasticAdv::EncodeMetric()
+
+double ElasticAdv::DecodeMetric(UINT16 value)
+{
+    if (value <= 1)
+    {
+        return (double)value;
+    }
+    else
+    {
+        double scale = METRIC_MAX / (double)((UINT16)0xffff);
+        return ((double)value*scale + 1.0);
+    }
+}  // end ElasticAdv::DecodeMetric()
 
 bool ElasticAdv::InitFromBuffer(void*           bufferPtr, 
                                 unsigned int    numBytes, 

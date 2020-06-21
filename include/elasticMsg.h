@@ -56,7 +56,7 @@ class ElasticMsg : public ProtoPkt
             FLAG_SOURCE     = 0x01,
             FLAG_PROTOCOL   = 0x02,
             FLAG_CLASS      = 0x04,
-            FLAG_RESERVED   = 0x08   // this flag is reserved in ElasticAck messages
+            FLAG_RESERVED   = 0x08   
         };   
             
         static unsigned int GetAddressFieldWords(AddressType addrType);
@@ -309,7 +309,7 @@ class ElasticAdv : public ElasticMsg
             {return GetUINT8(OffsetHopCount());}
         double GetMetric() const
         {
-            UINT32 value = GetWord16(OffsetMetric());
+            UINT16 value = GetWord16(OffsetMetric());
             return DecodeMetric(value);
         }
         bool GetAdvAddr(ProtoAddress& addr) const;
@@ -344,21 +344,10 @@ class ElasticAdv : public ElasticMsg
         bool SetAdvAddr(AddressType addrType, const char* addrPtr, unsigned int addrLen);
         
         
-        // simple linear encoding of metric
+        // simple linear encoding of ETX metric (with provision for 0.0 value, otherwise 1.0 minimum)
         static const double METRIC_MAX;  // 8192.0 for now
-        static UINT16 EncodeMetric(double value)
-        {
-            ASSERT(value >= 0.0);
-            value = value > METRIC_MAX ? METRIC_MAX : value;
-            double scale = (double)((UINT16)0xffff) / METRIC_MAX;
-            return (UINT16)(value * scale);
-            
-        }
-        static double DecodeMetric(UINT16 value)
-        {
-            double scale = METRIC_MAX / (double)((UINT32)0xffff);
-            return ((double)value * scale);
-        }
+        static UINT16 EncodeMetric(double value);
+        static double DecodeMetric(UINT16 value);
         
         static unsigned int ComputeLength(ProtoAddress::Type atype, ProtoAddress::Type vtype, bool source = true)
         {

@@ -2632,12 +2632,12 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             fibEntry->GetFlowDescription().Print();
             PLOG(PL_ALWAYS, " ackingStatus:%d\n", fibEntry->GetAckingStatus());
         }
-        // This keeps our time ticks current
-        fibEntry->Refresh(currentTick);
         if (fibEntry->IsActive())
         {
             // Refresh active flow
-            mcast_fib.TouchEntry(*fibEntry, currentTick);
+            mcast_fib.RefreshFlow(*fibEntry, currentTick);
+            if (fibEntry->UpdatePending())
+                updateController = true;
         }
         else
         {
@@ -2667,6 +2667,10 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                 PLOG(PL_DEBUG, "Smf::UpdateElasticRouting() activated adv_timer ...\n");
             }
         }
+        
+        pktCount = fibEntry->GetUpdateCount() - 1;
+        updateInterval = fibEntry->GetUpdateInterval();
+        fibEntry->Reset(currentTick);
     }
     
     // We track upstreams regardless of ackingStatus so we can be more responsive
@@ -2685,7 +2689,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                 return NULL;
             }
             PLOG(PL_DEBUG, "Smf::UpdateElasticRouting() NEW UpstreamRelay %s\n", relayAddr.GetHostString());
-            updateController = true;  // new upstream, so update controller
+            //updateController = true;  // new upstream, so update controller
             if (fibEntry->GetAckingStatus()) 
             {
                 sendAck = true;
@@ -2693,8 +2697,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                 //if (NULL != upstreamHistory) upstreamHistory->IncrementActiveFlowCount();
             }
             upstreamRelay->Reset(currentTick);
-            pktCount = 1;
-            updateInterval = 0;
+            //pktCount = 1;
+            //updateInterval = 0;
         }
         else
         {
@@ -2702,8 +2706,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             // Existing upstream relay.  Acking controller when needed.
             if (fibEntry->GetAckingStatus())
             {
-                pktCount = upstreamRelay->GetUpdateCount() - 1;
-                updateInterval = upstreamRelay->GetUpdateInterval();
+                //pktCount = upstreamRelay->GetUpdateCount() - 1;
+                //updateInterval = upstreamRelay->GetUpdateInterval();
                 // We always ack EM_ADV to be responsive to topology changes
                 // TBD - perhaps should pass a variable "bool advertisement"
                 // to explicitly denote this case instead of inferring from
@@ -2711,7 +2715,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                 if (upstreamRelay->AckPending(*fibEntry) || (advMetric >= 0.0))
                 {
                     sendAck = true;
-                    updateController = true;  
+                    //updateController = true;  
                     upstreamRelay->Reset(currentTick);
                     if (MulticastFIB::UpstreamRelay::NULLARY == upstreamRelay->GetStatus())
                     {
@@ -2729,6 +2733,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
         
         if (sendAck)
         {
+            char ifaceName[IF_NAME_MAX+1];
+            ProtoNet::GetInterfaceName(srcIface.GetIndex(), ifaceName, IF_NAME_MAX);
             if (srcIface.IsReliable())
             {
                 // TBD - support hop-count based relay selection when not doing reliable forwarding?
@@ -2774,6 +2780,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
     }
     if (sendAck)
     {
+        char ifaceName[IF_NAME_MAX+1];
+        ProtoNet::GetInterfaceName(srcIface.GetIndex(), ifaceName, IF_NAME_MAX);
         if (!SendAck(srcIface, relayAddr, fibEntry->GetFlowDescription()))
             PLOG(PL_ERROR, "Smf::UpdateElasticRouting() error: EM_ACK transmission failure\n");
     }  // end if (sendAck)
@@ -2813,8 +2821,8 @@ void Smf::HandleAdv(unsigned int                    currentTick,
     
     char flowId[34];  // worst case is  IPV6 <dpdType:proto:srcAddr:dstAddr> w/ taggerID a IPv6 addr (8 + 8 + 2*128 bits)
     unsigned int flowIdSize = (34*8);
-    char pktId[2];  // 16-bit ElasticAdv ID
-    unsigned int pktIdSize = 2*8;  // in bits 
+    char pktId[16+2];  // worst case is IPv6 advertiser and 16-bit ElasticAdv ID
+    unsigned int pktIdSize = 18*8;  // in bits 
     
     flowId[0] = (char)255;  // fake 'dpdType' to differentiate within dup table (TBD - do this for packet entries, too)
     switch (srcIp.GetType())
@@ -2836,9 +2844,10 @@ void Smf::HandleAdv(unsigned int                    currentTick,
         default:
             return;
     }
+    memcpy(pktId, advIp.GetRawHostAddress(), advIp.GetLength());
     UINT16 advId = elasticAdv.GetId();  // no need to do Endian swap since this is farm use only
-    memcpy(pktId, &advId, 2);
-    pktIdSize = 16;
+    memcpy(pktId + advIp.GetLength(), &advId, 2);
+    pktIdSize = (advIp.GetLength() + 2) * 8;
     
     const ProtoAddress& relayAddr = (NULL != upstreamHistory) ? upstreamHistory->GetAddress() : srcMac;
     
@@ -2852,9 +2861,9 @@ void Smf::HandleAdv(unsigned int                    currentTick,
         if (NULL == fibEntry) return; // do nothing
         MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->FindUpstreamRelay(relayAddr);
         if (NULL == upstreamRelay) return;  // no upstream relay state
-        upstreamRelay->SetAdvMetric(elasticAdv.GetMetric());
-        upstreamRelay->SetAdvTTL(elasticAdv.GetTTL());
-        upstreamRelay->SetAdvHopCount(elasticAdv.GetHopCount());
+        //upstreamRelay->SetAdvMetric(elasticAdv.GetMetric());
+        //upstreamRelay->SetAdvTTL(elasticAdv.GetTTL());
+        //upstreamRelay->SetAdvHopCount(elasticAdv.GetHopCount());
         if (NULL != upstreamHistory)
             upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
         return;  // do nothing else, this is a duplicate EM_ADV message
@@ -3319,23 +3328,25 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
     //ethPkt source address will be set per-interface below
     ethPkt.SetDstAddr(ElasticAdv::ELASTIC_MAC);
     ethPkt.SetType(ProtoPktETH::IP);  // TBD - based upon IP address type
-    ProtoPktIPv4 ip4Pkt(ethPkt.AccessPayload(), frameLenMax - ethPkt.GetHeaderLength());
-    ip4Pkt.SetTTL(1);
-    ip4Pkt.SetProtocol(ProtoPktIP::UDP);
-    //ip4Pkt source address will be set per-interface below
-    ip4Pkt.SetDstAddr(ElasticAdv::ELASTIC_ADDR);
-    ProtoPktUDP udpPkt(ip4Pkt.AccessPayload(), ip4Pkt.GetBufferLength() - ip4Pkt.GetHeaderLength(), false);
-    udpPkt.SetSrcPort(ElasticAdv::ELASTIC_PORT);
-    udpPkt.SetDstPort(ElasticAdv::ELASTIC_PORT);
-    unsigned msgLenMax = udpPkt.GetBufferLength() - udpPkt.GetHeaderLength();
-    char* msgBuffer = (char*)udpPkt.AccessPayload();  // note this is actually 32-bit aligned because of above offsets
     
-    xxx - the problem is we set the UMP option on the ADV and it messes up the next message built for the next iface
     
     Interface* iface;
     InterfaceList::Iterator iferator(iface_list);
     while (NULL != (iface = iferator.GetNextInterface()))
     {
+        // We init our IP packet here since "reliable" interface will change buffer with 
+        // addition of UMP IP option header
+        ProtoPktIPv4 ip4Pkt(ethPkt.AccessPayload(), frameLenMax - ethPkt.GetHeaderLength());
+        ip4Pkt.SetTTL(1);
+        ip4Pkt.SetProtocol(ProtoPktIP::UDP);
+        //ip4Pkt source address will be set per-interface below
+        ip4Pkt.SetDstAddr(ElasticAdv::ELASTIC_ADDR);
+        ProtoPktUDP udpPkt(ip4Pkt.AccessPayload(), ip4Pkt.GetBufferLength() - ip4Pkt.GetHeaderLength(), false);
+        udpPkt.SetSrcPort(ElasticAdv::ELASTIC_PORT);
+        udpPkt.SetDstPort(ElasticAdv::ELASTIC_PORT);
+        unsigned msgLenMax = udpPkt.GetBufferLength() - udpPkt.GetHeaderLength();
+        char* msgBuffer = (char*)udpPkt.AccessPayload();  // note this is actually 32-bit aligned because of above offsets
+    
         // Is this interface in an "elastic" InterfaceGroup
         // (TBD - mark interfaces with "elastic count" for more efficiency)
         Interface::AssociateList::Iterator iterator(*iface);
@@ -3348,12 +3359,6 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
         if (NULL == assoc) 
             continue; // not in an elastic mcast iface group
 	    
-	    char ifaceName[IF_NAME_MAX+1];
-	    ifaceName[IF_NAME_MAX] = '\0';
-	    ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, IF_NAME_MAX);
-	    TRACE("OnAdvTimeout() iface %s (addr:%s)\n", ifaceName, iface->GetIpAddress().GetHostString());
-	
-        
         // TBD 'continue' if iface isn't pending
         MulticastFIB::Entry* fibEntry;
         MulticastFIB::EntryTable::Iterator fiberator(mcast_fib.AccessFlowTable());
@@ -3471,10 +3476,7 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                 continue;  // don't advertise flows that have reached ttl limit 
             }
             const FlowDescription& flowDescription = fibEntry->GetFlowDescription();
-	        TRACE("   flow ");
-	        flowDescription.Print();
-	        TRACE("\n");
-            adv.SetId(advId);
+	        adv.SetId(advId);
             adv.SetProtocol(flowDescription.GetProtocol());
             adv.SetTrafficClass(flowDescription.GetTrafficClass());
             ElasticAck::AddressType addrType;
@@ -3501,6 +3503,15 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
             adv.SetHopCount(advHopCount);
             adv.SetMetric(advMetric);
             adv.SetAdvAddr(advAddr);
+            
+            if (GetDebugLevel() >= PL_DEBUG)  
+            {
+                PLOG(PL_DEBUG, "Smf::OnAdvTimeout() sending EM_ADV adv>%s id>%hu ttl>%u hopCount>%u metric>%lf (%lf) flow>",
+                        advAddr.GetHostString(), advId, advTTL, advHopCount, advMetric, adv.GetMetric());
+                flowDescription.Print();
+                PLOG(PL_ALWAYS, "\n");
+            }            
+            
             ASSERT(msgLen == adv.GetLength());
             
             bufferIndex += adv.GetLength();
@@ -3717,7 +3728,7 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
                     else
                         etx = 1.0/etx;
                     etx += upstream->GetAdvMetric();
-                    PLOG(PL_ALWAYS, " upstream:%s metric:%lf", upstream->GetAddress().GetHostString(), etx);
+                    PLOG(PL_ALWAYS, " upstream:%s metric:%lf hops:%u quality:%lf", upstream->GetAddress().GetHostString(), etx, (unsigned int)upstream->GetAdvHopCount(), upstream->GetLinkQuality());
                 }
             }
             PLOG(PL_ALWAYS, "\n");
