@@ -601,6 +601,7 @@ double MulticastFIB::UpstreamHistory::UpdateLossEstimate(unsigned int gapCount)
     {
         double loss = (double)gapCount / (double)(good_count + gapCount);
         loss_estimate = 0.75*loss_estimate + 0.25*loss;
+        good_count = 1;
     }
     else
     {
@@ -712,13 +713,14 @@ unsigned int MulticastFIB::UpstreamRelay::GetUpdateInterval() const
     }
 }  // end MulticastFIB::UpstreamRelay::GetUpdateInterval()
 
-bool MulticastFIB::UpstreamRelay::AckPending(const Entry& entry, bool actual) const
+bool MulticastFIB::UpstreamRelay::AckPending(const Entry& entry) const //, bool actual) const
 {
     unsigned int ackingCountThreshold = entry.GetAckingCountThreshold();
     unsigned int ackingIntervalMax = entry.GetAckingIntervalMax();
     unsigned int ackingIntervalMin = entry.GetAckingIntervalMin();
     unsigned int pktCount = GetUpdateCount();
-    if (actual) pktCount--;
+    //if (actual) 
+        pktCount--;
     unsigned int updateInterval = GetUpdateInterval();
     if (((0 != ackingCountThreshold) &&
         (pktCount >= ackingCountThreshold) &&
@@ -1195,13 +1197,87 @@ bool MulticastFIB::Entry::CopyStatus(Entry& entry)
 }  // end MulticastFIB::Entry::CopyStatus()
 
 
+void MulticastFIB::Entry::Reset(unsigned int currentTick)
+{
+    update_count = 1;
+    update_start = currentTick;
+    update_max = false; 
+    activity_status.Refresh(currentTick);
+    // Do we need to refresh the token buckets here?
+    // or this just set update_count to zero and call Refresh()
+}  // end MulticastFIB::Entry::Reset()
+
+void MulticastFIB::Entry::Refresh(unsigned int currentTick)
+{
+    if (0 == update_count)
+    {
+        update_start = currentTick;
+        update_max = false;
+    }
+    update_count += 1;
+    activity_status.Refresh(currentTick);
+    RefreshTokenBuckets(currentTick);
+    AgeUpstreamRelays(currentTick);
+}  // emd  MulticastFIB::Entry::Refresh()
+
+
 unsigned int MulticastFIB::Entry::Age(unsigned int currentTick)
 {
      // "Age" token buckets and upstream relays
     RefreshTokenBuckets(currentTick);
     AgeUpstreamRelays(currentTick);
-    return activity_status.Age(currentTick);
+    unsigned int age = activity_status.Age(currentTick);
+    if (TICK_AGE_MAX == age) return TICK_AGE_MAX;
+    if (!update_max)
+    {
+        int updateInterval = currentTick - update_start;
+        if ((updateInterval < 0) || (updateInterval > TICK_AGE_MAX))
+            update_max = true;
+    }
+    return age;
 }  // end MulticastFIB::Entry::Age()
+
+unsigned int MulticastFIB::Entry::GetUpdateInterval() const
+{
+    if (update_max || !activity_status.IsValid())
+    {
+        return TICK_AGE_MAX;
+    }
+    else
+    {
+        int updateInterval = activity_status.GetAgeTick() - update_start;
+        if ((updateInterval < 0) || (updateInterval > TICK_AGE_MAX))
+        {
+            // This is not expected to happen under proper
+            PLOG(PL_WARN, "MulticastFIB::Entry::GetUpdateInterval() warning: unexpected aging\n");
+            return TICK_AGE_MAX;
+        }
+        else
+        {
+            return updateInterval;
+        }
+    }
+}  // end MultcastFIB::Entry::GetUpdateInterval()
+
+bool MulticastFIB::Entry::UpdatePending() const 
+{
+    unsigned int pktCount = GetUpdateCount();
+    pktCount--;
+    unsigned int updateInterval = GetUpdateInterval();
+    if (((0 != acking_count_threshold) &&
+        (pktCount >= acking_count_threshold) &&
+        (updateInterval >= acking_interval_min)) ||
+        ((0 != acking_interval_max) &&
+        (updateInterval >= acking_interval_max)))
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}  // end MulticastFIB::Entry::UpdatePending()
+
 
 void MulticastFIB::Entry::SetAckingStatus(bool status)
 {
@@ -1297,7 +1373,8 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
     MulticastFIB::UpstreamRelay* bestPathRelay = NULL;  // upstream relay with best overall path quality (lowest ETX metric)
     MulticastFIB::UpstreamRelay* bestLinkRelay = NULL;  // upstream relay with best one-hop link quality
     double bestLinkQuality = -1.0; 
-    double bestPathMetric = -1.0;
+    double bestPathMetric = -1.0;  // lowest cost ETX path metric
+    double bestLossMetric = 1.0;    // lowest packet loss path metric (bestPathMetric - hopCount)
     unsigned int bestLinkAge = 0;  // how long since last activitiy for this upstream 
     unsigned int bestPathAge = 0;
     MulticastFIB::UpstreamRelayList::Iterator uperator(upstream_list);
@@ -1341,6 +1418,7 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
             bestLinkQuality = linkQuality;
             bestLinkAge = upstreamAge;
         }
+        double lossMetric = -1.0;
         double pathMetric = -1.0;
         if (nextRelay->AdvMetricIsValid())
         {
@@ -1349,22 +1427,32 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
                 pathMetric += 1.0 / linkQuality;
             else
                 pathMetric += 1.0;  // assume a perfect link in absence of measurement?
+            lossMetric = pathMetric - nextRelay->GetAdvHopCount();
             if (NULL != bestPathRelay)
             {
+                double thePathMetric = pathMetric;
+                double theBestPathMetric = bestPathMetric;
+                if (false)
+                {
+                    thePathMetric = lossMetric;
+                    theBestPathMetric = bestLossMetric;
+                }
                 if (bestPathAge >= MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT)
                 {
-                    if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) || (pathMetric < bestPathMetric))
+                    if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) || (thePathMetric < theBestPathMetric))
                     {
                         bestPathRelay = nextRelay;
                         bestPathMetric = pathMetric;
                         bestPathAge = upstreamAge;
+                        bestLossMetric = lossMetric;
                     }
                 }
-                else if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) && (pathMetric < bestPathMetric))
+                else if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) && (thePathMetric < theBestPathMetric))
                 {
                     bestPathRelay = nextRelay;
                     bestPathMetric = pathMetric;
                     bestPathAge = upstreamAge;
+                    bestLossMetric = lossMetric;
                 }
             }
             else
@@ -1373,6 +1461,7 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
                 bestPathRelay = nextRelay;
                 bestPathMetric = pathMetric;
                 bestPathAge = upstreamAge;
+                bestLossMetric = lossMetric;
             }
         }
         
@@ -1545,11 +1634,10 @@ bool MulticastFIB::ParseFlowList(ProtoPktIP& pkt, Entry*& fibEntry, unsigned int
                 PLOG(PL_ALWAYS, "\n");
             }
             // This keeps our time ticks current
-            fibEntry->Refresh(currentTick);
             if (fibEntry->IsActive())
             {
                 // Refresh active flow
-                TouchEntry(*fibEntry, currentTick);
+                RefreshFlow(*fibEntry, currentTick);
             }
             else
             {
@@ -1703,7 +1791,7 @@ bool ElasticMulticastForwarder::SetAckingStatus(const FlowDescription& flowDescr
                     // flow ackingStatus is "false", then send an EM-ACK right away
                     MulticastFIB::UpstreamRelayList::Iterator upserator(entry->AccessUpstreamRelayList());
                     MulticastFIB::UpstreamRelay* upstream = entry->GetBestUpstreamRelay(currentTick);
-                    // TBD - only NACK "best upstream" in reliable mode
+                    // TBD - only NACK "best upstream" in reliable mode and all upstreams if not reliable ..
                     //while (NULL != (upstream = upserator.GetNextItem()))
                     if (NULL != upstream)
                     {
@@ -2324,8 +2412,4 @@ void ElasticMulticastController::Update(const FlowDescription&  flowDescription,
     }
     if (ackingStatus != oldAckingStatus)
         mcast_forwarder->SetAckingStatus(flowDescription, ackingStatus);
-    //if (!ackingStatus)
-    //    mcast_forwarder->SetAckingStatus(flowDescription, false);
-    //else if (!oldAckingStatus)
-    //    mcast_forwarder->SetAckingStatus(flowDescription, true);
 }  // end ElasticMulticastController::Update()

@@ -196,6 +196,7 @@ class MulticastFIB
                     {relay_status = status;}
                 Status GetStatus() const
                     {return relay_status;}
+                
 
                 // Set start of update count/interval (if non-zero count)
                 void Reset(unsigned int currentTick)
@@ -223,12 +224,7 @@ class MulticastFIB
                     {return update_count;}
                 unsigned int GetUpdateInterval() const;
 
-                bool AckPending(const Entry& entry, bool actual = true) const;
-                
-                //void UpdatePacketRate(unsigned int currentTick);
-                
-                //double GetPacketRate() const
-                //    {return packet_rate;}
+                bool AckPending(const Entry& entry) const; //, bool actual = true) const;
                 
                 void SetAdvAddr(const ProtoAddress& addr)
                     {adv_addr = addr;}
@@ -276,7 +272,6 @@ class MulticastFIB
                 unsigned int    update_count;
                 unsigned int    update_start; // tick when update_count started
                 bool            update_max;
-                //double          packet_rate;  // estimate of packet_rate received from this upstream
                 ActivityStatus  activity_status; // last time of packet from this upstream
                 
                 ProtoAddress    adv_addr;       // valid when in recipt of EM-ADV from this upstream
@@ -529,16 +524,15 @@ class MulticastFIB
                     {flow_idle = status;}
                 bool IsIdle() const
                     {return flow_idle;}
-
-                void Refresh(unsigned int currentTick)
-                {
-                    activity_status.Refresh(currentTick);
-                    RefreshTokenBuckets(currentTick);
-                    AgeUpstreamRelays(currentTick);
-                }
-
+                
+                void Reset(unsigned int currentTick);  // resets of update count/interval
+                void Refresh(unsigned int currentTick);
                 unsigned int Age(unsigned int currentTick);
-                unsigned int GetAge(unsigned int currentTick) const;
+                unsigned int GetUpdateCount() const
+                    {return update_count;}
+                unsigned int GetUpdateInterval() const;
+                bool UpdatePending() const;
+                //unsigned int GetAge(unsigned int currentTick) const;
 
                 MulticastFIB::UpstreamRelay* AddUpstreamRelay(const ProtoAddress& addr, unsigned int ifaceIndex);
                 UpstreamRelay* FindUpstreamRelay(const ProtoAddress& addr) const
@@ -578,7 +572,16 @@ class MulticastFIB
                 ForwardingStatus        default_forwarding_status;
                 unsigned int            forwarding_count;   // how many interfaces forwarding to ...
 
-                ActivityStatus          activity_status;
+                
+                
+                
+                unsigned int    update_count;    // count of non-dup packets received since last update 
+                unsigned int    update_start;    // tick when update_count started
+                bool            update_max;      // set to "true" when
+                ActivityStatus  activity_status; // last time of non-dup packet received for this entry
+                
+                
+                
                 BucketList              bucket_list;        // list of token buckets for outbound interfaces (allows independent interface policies)
                 UpstreamRelayList       upstream_list;
                 UpstreamRelay           downstream_relay;       // Next unicast hop (MAC address / Interface)
@@ -957,12 +960,14 @@ class MulticastFIB
             ActivateFlow(entry, currentTick);
         }
         void DeactivateFlow(Entry& entry, unsigned int currentTick);
-        void TouchEntry(Entry& entry, unsigned int currentTick)
+        void RefreshFlow(Entry& entry, unsigned int currentTick)
         {
-            active_list.Remove(entry);
+            // Refresh and bump entry to head of active_list
             entry.Refresh(currentTick);
+            active_list.Remove(entry);
             active_list.Prepend(entry);
         }
+        
 
         void PruneFlowList(unsigned int currentTick, ElasticMulticastController* controller = NULL);
 
