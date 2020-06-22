@@ -41,8 +41,9 @@ int main(int argc, char* argv[])
             if (NULL == pcapDevice)
             {
                 fprintf(stderr, "pcap2mgen: pcap_fopen_offline() error: %s\n", pcapErrBuf);
-                return -1;
+                continue;
             }
+            fprintf(stderr, "pcap2em: processing %s ....\n", path);
             UINT32 alignedBuffer[16384/4];   // 128 buffer for packet parsing
             UINT16* ethBuffer = ((UINT16*)alignedBuffer) + 1; 
             unsigned int maxBytes = 16384 - 2;  // due to offset, can only use 4094 bytes of buffer
