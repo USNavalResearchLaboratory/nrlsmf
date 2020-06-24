@@ -3049,7 +3049,7 @@ unsigned int Smf::UpdateUpstreamHistory(unsigned int                   currentTi
     }
  }  // end Smf::SendNack()
 
-
+/*
 MulticastFIB::UpstreamRelay* Smf::GetBestUpstreamRelay(MulticastFIB::Entry& fibEntry, unsigned int currentTick)
 {
     MulticastFIB::UpstreamRelay* bestPathRelay = NULL;  // upstream relay with best overall path quality (lowest ETX metric)
@@ -3073,7 +3073,7 @@ MulticastFIB::UpstreamRelay* Smf::GetBestUpstreamRelay(MulticastFIB::Entry& fibE
         Interface* iface = GetInterface(nextRelay->GetInterfaceIndex());
         if (NULL == iface)
         {
-            PLOG(PL_WARN, "mf::GetBestUpstreamRelay() warning: upstream with unknown itnerface index?!\n");
+            PLOG(PL_WARN, "Smf::GetBestUpstreamRelay() warning: upstream with unknown itnerface index?!\n");
             continue;
         }
         MulticastFIB::UpstreamHistory* upstreamHistory = iface->FindUpstreamHistory(nextRelay->GetAddress());
@@ -3145,7 +3145,7 @@ MulticastFIB::UpstreamRelay* Smf::GetBestUpstreamRelay(MulticastFIB::Entry& fibE
         return bestLinkRelay;
     
 }  // end Smf::GetBestUpstreamRelay()
-
+*/
 #endif // ELASTIC_MCAST
 
 
@@ -3422,7 +3422,7 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
             UINT16 advId;
             UINT8 advTTL, advHopCount;
             double advMetric = 0.0;
-            MulticastFIB::UpstreamRelay* upstreamRelay = GetBestUpstreamRelay(*fibEntry, currentTick);
+            MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->GetBestUpstreamRelay(currentTick);
             if (NULL != upstreamRelay)
             {
                 if (!upstreamRelay->GetAdvAddr().IsValid())
@@ -3571,7 +3571,7 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
     MulticastFIB::EntryTable::Iterator fiberator(mcast_fib.AccessFlowTable());
     while (NULL != (fibEntry = fiberator.GetNextEntry()))
     {
-    	MulticastFIB::UpstreamRelay* upstreamRelay = GetBestUpstreamRelay(*fibEntry, currentTick);
+    	MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->GetBestUpstreamRelay(currentTick);
         if (NULL != upstreamRelay)
         {
             upstreamRelay->ClearAdvAddr(); // so we don't duplicatively advertise this flow
