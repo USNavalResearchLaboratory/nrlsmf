@@ -258,6 +258,13 @@ class MulticastFIB
                     {return link_quality >= 0.0;}
                 double GetLinkQuality() const
                     {return link_quality;}
+                
+                double GetPathMetric() const
+                {
+                    double pathMetric = (link_quality > 0.0) ? (1.0 / link_quality) : 1.0;   
+                    pathMetric += (adv_metric >= 0.0) ? adv_metric : 0.0;
+                    return pathMetric;
+                }
 
                 const char* GetKey() const
                     {return relay_addr.GetRawHostAddress();}

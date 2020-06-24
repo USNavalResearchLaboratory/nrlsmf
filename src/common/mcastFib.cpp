@@ -1423,11 +1423,7 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
         double pathMetric = -1.0;
         if (nextRelay->AdvMetricIsValid())
         {
-            pathMetric = nextRelay->GetAdvMetric();
-            if (linkQuality >= 0.0)
-                pathMetric += 1.0 / linkQuality;
-            else
-                pathMetric += 1.0;  // assume a perfect link in absence of measurement?
+            pathMetric = nextRelay->GetPathMetric();
             lossMetric = pathMetric - nextRelay->GetAdvHopCount();
             if (NULL != bestPathRelay)
             {
@@ -1478,8 +1474,16 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
             {
                 if (GetDebugLevel() >= PL_INFO)
                 {
-                    PLOG(PL_INFO, "nrlsmf: new upstream relay %s for flow ", bestPathRelay->GetAddress().GetHostString());
+                    PLOG(PL_INFO, "nrlsmf: new upstream relay %s with metric>%lf for flow ", bestPathRelay->GetAddress().GetHostString(), bestPathMetric);
                     GetFlowDescription().Print();
+                    
+                    double oldMetric = best_relay->GetAdvMetric();
+                    double oldQuality = best_relay->GetLinkQuality();
+                    
+                    
+                    PLOG(PL_ALWAYS, " (old relay %s metric>%lf)", 
+                            best_relay ? best_relay->GetAddress().GetHostString() : "(none)",
+                            best_relay ? -1.0 : best_relay->GetLinkQuality());
                     PLOG(PL_ALWAYS, "\n");
                 }
                 best_relay = bestPathRelay;
@@ -1501,8 +1505,11 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
         // Only have one-hop link quality so use it
         if (GetDebugLevel() >= PL_INFO)
         {
-            PLOG(PL_INFO, "nrlsmf: new upstream link relay %s for flow ", bestLinkRelay->GetAddress().GetHostString());
+            PLOG(PL_INFO, "nrlsmf: new upstream link relay %s with quality>%lf for flow ", bestLinkRelay->GetAddress().GetHostString(), bestLinkQuality);
             GetFlowDescription().Print();
+            PLOG(PL_ALWAYS, " (old relay %s metric>%lf)", 
+                            best_relay ? best_relay->GetAddress().GetHostString() : "(none)",
+                            best_relay ? -1.0 : best_relay->GetLinkQuality());
             PLOG(PL_ALWAYS, "\n");
         }
         best_relay = bestLinkRelay;
