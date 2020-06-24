@@ -1468,12 +1468,7 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
             (best_relay->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT))
         {
             // Only select a new upstream relay if > 10% improvement
-            double priorPathMetric = best_relay->GetAdvMetric();
-            double priorLinkQuality = best_relay->GetLinkQuality();
-            if (priorLinkQuality >= 0.0)
-                priorPathMetric += 1.0 / priorLinkQuality;
-            else
-                priorPathMetric += 1.0;  // assume a perfect link in absence of measurement?
+            double priorPathMetric = best_relay->GetPathMetric();
             double delta = priorPathMetric - bestPathMetric;  // should be positive
             double percent = delta / priorPathMetric;
             if (percent >= 0.10)
@@ -1482,14 +1477,7 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
                 {
                     PLOG(PL_INFO, "nrlsmf: new upstream relay %s with metric>%lf for flow ", bestPathRelay->GetAddress().GetHostString(), bestPathMetric);
                     GetFlowDescription().Print();
-                    
-                    double oldMetric = best_relay->GetAdvMetric();
-                    double oldQuality = best_relay->GetLinkQuality();
-                    
-                    
-                    PLOG(PL_ALWAYS, " (old relay %s metric>%lf)", 
-                            best_relay ? best_relay->GetAddress().GetHostString() : "(none)",
-                            best_relay ? -1.0 : best_relay->GetLinkQuality());
+                    PLOG(PL_ALWAYS, " (old relay %s metric>%lf)", best_relay->GetAddress().GetHostString(), priorPathMetric);
                     PLOG(PL_ALWAYS, "\n");
                 }
                 best_relay = bestPathRelay;
@@ -1499,9 +1487,16 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
         {
             if (GetDebugLevel() >= PL_INFO)
             {
-                PLOG(PL_INFO, "nrlsmf: new upstream relay %s for flow ", bestPathRelay->GetAddress().GetHostString());
+                PLOG(PL_INFO, "nrlsmf: new upstream relay %s with metric>%lf for flow ", bestPathRelay->GetAddress().GetHostString(), bestPathMetric);
                 GetFlowDescription().Print();
-                PLOG(PL_ALWAYS, " (timeout?)\n");
+                if (NULL != best_relay)
+                {
+                    PLOG(PL_ALWAYS, " (old relay %s metric>%lf timeout age>%lf sec)", 
+                                    best_relay->GetAddress().GetHostString(), 
+                                    best_relay->GetPathMetric(), 
+                                    best_relay->Age(currentTick)*TICK_INTERVAL);
+                }
+                PLOG(PL_ALWAYS, "\n");
             }
             best_relay = bestPathRelay;
         }   
