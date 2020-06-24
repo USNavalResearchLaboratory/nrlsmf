@@ -1472,8 +1472,14 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
             (best_relay->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT))
         {
             // Only select a new upstream relay if > 10% improvement
-            double delta = best_relay->GetAdvMetric() - bestPathRelay->GetAdvMetric();  // should be positive
-            double percent = delta / best_relay->GetAdvMetric();
+            double priorPathMetric = best_relay->GetAdvMetric();
+            double priorLinkQuality = best_relay->GetLinkQuality();
+            if (priorLinkQuality >= 0.0)
+                priorPathMetric += 1.0 / priorLinkQuality;
+            else
+                priorPathMetric += 1.0;  // assume a perfect link in absence of measurement?
+            double delta = priorPathMetric - bestPathMetric;  // should be positive
+            double percent = delta / priorPathMetric;
             if (percent >= 0.10)
             {
                 if (GetDebugLevel() >= PL_INFO)
