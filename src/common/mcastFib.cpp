@@ -1509,8 +1509,8 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
             PLOG(PL_INFO, "nrlsmf: new upstream link relay %s with quality>%lf for flow ", bestLinkRelay->GetAddress().GetHostString(), bestLinkQuality);
             GetFlowDescription().Print();
             PLOG(PL_ALWAYS, " (old relay %s metric>%lf)", 
-                            best_relay ? best_relay->GetAddress().GetHostString() : "(none)",
-                            best_relay ? -1.0 : best_relay->GetLinkQuality());
+                            (NULL != best_relay) ? best_relay->GetAddress().GetHostString() : "(none)",
+                            (NULL != best_relay) ? best_relay->GetLinkQuality() : -1.0);
             PLOG(PL_ALWAYS, "\n");
         }
         best_relay = bestLinkRelay;
