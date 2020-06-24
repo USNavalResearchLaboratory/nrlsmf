@@ -1153,7 +1153,7 @@ MulticastFIB::Entry::Entry(const FlowDescription& flowDescription, int flags)
    flow_managed(false), flow_active(false), flow_idle(false),
    default_forwarding_status(LIMIT), forwarding_count(0),
    //downstream_relay(), 
-   unicast_probability(0.0),
+   best_relay(NULL), unicast_probability(0.0),
    acking_status(false),
    acking_count_threshold(DEFAULT_ACKING_COUNT),
    acking_interval_max(DEFAULT_ACKING_INTERVAL_MAX),
