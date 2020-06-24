@@ -1381,18 +1381,19 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
     MulticastFIB::UpstreamRelay* nextRelay;
     while (NULL != (nextRelay = uperator.GetNextItem()))
     {
-        unsigned int deadTime = nextRelay->Age(currentTick);
-        if (deadTime > MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT)
+        unsigned int upstreamAge = nextRelay->Age(currentTick);
+        if (upstreamAge > MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT)
         {
             // Prune this "dead" upstream relay
             upstream_list.Remove(*nextRelay);
             delete nextRelay;
+            if (best_relay == nextRelay)
+                best_relay = NULL;
             if (upstream_list.IsEmpty())
                 SetTTL(0);  // so this flow isn't reactivated until another packet seen
             continue;
         }
         double linkQuality = nextRelay->GetLinkQuality();
-        unsigned int upstreamAge = nextRelay->Age(currentTick);
         if (NULL != bestLinkRelay)
         {
             if (bestLinkAge >= MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT)
@@ -1465,7 +1466,6 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
             }
         }
     }
-    
     if (NULL != bestPathRelay)
     {
         if ((NULL != best_relay) && (best_relay->GetAdvMetric() >= 0.0) && (best_relay != bestPathRelay) && 
@@ -1496,7 +1496,7 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
             best_relay = bestPathRelay;
         }   
     }
-    else if (best_relay != bestLinkRelay)
+    else if ((NULL != bestLinkRelay) && (best_relay != bestLinkRelay))
     {
         // Only have one-hop link quality so use it
         if (GetDebugLevel() >= PL_INFO)
