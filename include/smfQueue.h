@@ -1,10 +1,10 @@
 #ifndef _SMF_QUEUE
 #define _SMF_QUEUE
 
-//#include <protoList.h>
 #include <protoTree.h>
 #include <protoAddress.h>
 #include <protoPktIP.h>
+#include <protoTime.h>
 
 // Per-flow packet queuing classes
 
@@ -147,9 +147,15 @@ class SmfIndexedPacket : public SmfPacketTemplate<ProtoTree::Item>
         UINT16 GetIndex() const
             {return pkt_index;}
         
+        void SetTimestamp(const ProtoTime& timestamp)
+            {pkt_timestamp = timestamp;}
+        const ProtoTime GetTimestamp() const
+            {return pkt_timestamp;}
+        
         class Pool : public ProtoTreeTemplate<SmfIndexedPacket>::ItemPool {};
         
-        ProtoTree::Endian GetEndian() const {return ProtoTree::GetNativeEndian();}
+        ProtoTree::Endian GetEndian() const 
+            {return ProtoTree::GetNativeEndian();}
         
     private:
         const char* GetKey() const
@@ -157,7 +163,8 @@ class SmfIndexedPacket : public SmfPacketTemplate<ProtoTree::Item>
         unsigned int GetKeysize() const
             {return sizeof(UINT16) << 3;}
             
-        UINT16  pkt_index;
+        UINT16      pkt_index;
+        ProtoTime   pkt_timestamp;
 };  // end class SmfIndexedPacket
 
 class SmfCache : public SmfQueueBase, public ProtoTreeTemplate<SmfIndexedPacket>

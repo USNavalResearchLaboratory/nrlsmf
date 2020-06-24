@@ -1139,7 +1139,7 @@ MulticastFIB::Entry::Entry(const ProtoAddress&  dst,
   : FlowEntryTemplate(dst, src, trafficClass, protocol),
     flow_managed(false), flow_active(false), flow_idle(false),
     default_forwarding_status(LIMIT), forwarding_count(0), 
-    unicast_probability(0.0),
+    best_relay(NULL), unicast_probability(0.0),
     acking_status(false), 
     acking_count_threshold(DEFAULT_ACKING_COUNT),
     acking_interval_max(DEFAULT_ACKING_INTERVAL_MAX), 
@@ -1464,12 +1464,50 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
                 bestLossMetric = lossMetric;
             }
         }
-        
     }
+    
     if (NULL != bestPathRelay)
-        return bestPathRelay;
-    else
-        return bestLinkRelay;
+    {
+        if ((NULL != best_relay) && (best_relay->GetAdvMetric() >= 0.0) && (best_relay != bestPathRelay) && 
+            (best_relay->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT))
+        {
+            // Only select a new upstream relay if > 10% improvement
+            double delta = best_relay->GetAdvMetric() - bestPathRelay->GetAdvMetric();  // should be positive
+            double percent = delta / best_relay->GetAdvMetric();
+            if (percent >= 0.10)
+            {
+                if (GetDebugLevel() >= PL_INFO)
+                {
+                    PLOG(PL_INFO, "nrlsmf: new upstream relay %s for flow ", bestPathRelay->GetAddress().GetHostString());
+                    GetFlowDescription().Print();
+                    PLOG(PL_ALWAYS, "\n");
+                }
+                best_relay = bestPathRelay;
+            }
+        }
+        else if (best_relay != bestPathRelay)
+        {
+            if (GetDebugLevel() >= PL_INFO)
+            {
+                PLOG(PL_INFO, "nrlsmf: new upstream relay %s for flow ", bestPathRelay->GetAddress().GetHostString());
+                GetFlowDescription().Print();
+                PLOG(PL_ALWAYS, " (timeout?)\n");
+            }
+            best_relay = bestPathRelay;
+        }   
+    }
+    else if (best_relay != bestLinkRelay)
+    {
+        // Only have one-hop link quality so use it
+        if (GetDebugLevel() >= PL_INFO)
+        {
+            PLOG(PL_INFO, "nrlsmf: new upstream link relay %s for flow ", bestLinkRelay->GetAddress().GetHostString());
+            GetFlowDescription().Print();
+            PLOG(PL_ALWAYS, "\n");
+        }
+        best_relay = bestLinkRelay;
+    }
+    return best_relay;
     
 }  // end MulticastFIB::Entry::GetBestUpstreamRelay()
 

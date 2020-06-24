@@ -298,6 +298,10 @@ class Smf
                 UINT16 IncrementLocalAdvId()
                     {return local_adv_id++;}
                 void PruneUpstreamHistory(unsigned int currentTick);
+                void SetRepairWindow(double sec)
+                    {repair_window = sec;}
+                double GetRepairWindow() const
+                    {return repair_window;}
 #endif // ELASTIC_MCAST
                 
                 // This is for adding an opaque "decorator" extension to the interface
@@ -417,11 +421,12 @@ class Smf
                 SmfQueue                              pkt_queue;           // interface output queue
 #ifdef ELASTIC_MCAST                
                 MulticastFIB::UpstreamHistoryTable    upstream_history_table;
+                double                                repair_window;  // in secs (max retransmit packet age)
                 UINT16                                local_adv_id;
 #endif // ELASTIC_MCAST
                                
                 unsigned int                          sent_count;  // count of outbound (sent) packets for iface
-                unsigned int                          retr_count;  // count of retransmissions ('reliable' option)
+                unsigned int                          retr_count;  // count of repairs ('reliable' option)
                 unsigned int                          recv_count;  // count of inbound (unicast and multicast) packets
                 unsigned int                          mrcv_count;  // count of inbound IP multicast packets received
                 unsigned int                          dups_count;  // count of outbound duplicate detected (non-forwarded)
@@ -744,6 +749,7 @@ class Smf
                      const FlowDescription& flowDescription);
         
         // For reliable forwarding option
+        static const double DEFAULT_REPAIR_WINDOW;
         static const unsigned int DEFAULT_REPAIR_CACHE_SIZE;
         bool CreatePacketCache(Interface& iface, unsigned int cacheSize);
         bool CachePacket(const Interface& iface, UINT16 sequence, char* frameBuffer, unsigned int frameLength);

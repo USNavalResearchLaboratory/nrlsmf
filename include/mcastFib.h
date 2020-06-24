@@ -571,19 +571,15 @@ class MulticastFIB
                 bool                    flow_idle;
                 ForwardingStatus        default_forwarding_status;
                 unsigned int            forwarding_count;   // how many interfaces forwarding to ...
-
-                
-                
                 
                 unsigned int    update_count;    // count of non-dup packets received since last update 
                 unsigned int    update_start;    // tick when update_count started
                 bool            update_max;      // set to "true" when
                 ActivityStatus  activity_status; // last time of non-dup packet received for this entry
                 
-                
-                
                 BucketList              bucket_list;        // list of token buckets for outbound interfaces (allows independent interface policies)
                 UpstreamRelayList       upstream_list;
+                UpstreamRelay*          best_relay;             // current selected best upstream relay
                 UpstreamRelay           downstream_relay;       // Next unicast hop (MAC address / Interface)
                 double                  unicast_probability;    // probability of forwarding to next unicast hop
                 bool                    acking_status;

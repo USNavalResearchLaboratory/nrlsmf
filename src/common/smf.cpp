@@ -18,6 +18,7 @@ const unsigned int REPAIR_AGE_MAX = 30*1000000;  // 30 seconds in microseconds
 const unsigned int REPAIR_IDLE_MAX = 30;         // 30 idle packets max?
 const int REPAIR_DELTA_MAX = 8;
 const unsigned int Smf::DEFAULT_REPAIR_CACHE_SIZE = 32;
+const double Smf::DEFAULT_REPAIR_WINDOW = 0.500;  // 500 msec
 #endif // ELASTIC_MCAST
 
 // These are used to mark the IPSec "type" for DPD
@@ -64,7 +65,11 @@ Smf::Interface::Interface(unsigned int ifIndex)
  : if_index(ifIndex), resequence(false), is_tunnel(false), 
    is_layered(false), is_reliable(false), is_shadowing(false), block_igmp(false),
    ump_sequence(0), ip_encapsulate(false), dup_detector(NULL), 
-   unicast_group_count(0), sent_count(0), retr_count(0), recv_count(0), 
+   unicast_group_count(0), 
+#ifdef ELASTIC_MCAST
+   repair_window(DEFAULT_REPAIR_WINDOW), 
+#endif // ELASTIC_MCAST
+   sent_count(0), retr_count(0), recv_count(0), 
    mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0), extension(NULL)
 {
 }
@@ -1199,13 +1204,20 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                         UINT16 seqIndex = elasticNack.GetSeqStart();
                                         UINT16 seqStop = elasticNack.GetSeqStop();
                                         INT16 seqDelta = seqStop - seqIndex;
+                                        ProtoTime currentTime;
+                                        currentTime.GetCurrentTime();
                                         while (seqDelta >= 0)
                                         {
                                             SmfIndexedPacket* pkt = cache->FindPacket(seqIndex);
                                             if (NULL != pkt) // Resend frame
                                             {
-                                                if (output_mechanism->SendFrame(iface->GetIndex(), (char*)pkt->GetBuffer(), pkt->GetLength()))
-                                                    iface->IncrementRetransmissionCount();
+                                                double pktAge = currentTime - pkt->GetTimestamp();
+                                                double retransWindow = iface->GetRepairWindow();
+                                                if ((retransWindow <= 0.0) || (pktAge <= retransWindow))
+                                                {
+                                                    if (output_mechanism->SendFrame(iface->GetIndex(), (char*)pkt->GetBuffer(), pkt->GetLength()))
+                                                        iface->IncrementRetransmissionCount();
+                                                }
                                                 // The current very simple ARQ only allows one retransmision per packet so
                                                 // we remove it from the cache
                                                 cache->RemovePacket(*pkt);
@@ -3025,7 +3037,7 @@ unsigned int Smf::UpdateUpstreamHistory(unsigned int                   currentTi
         if (srcIface.SetUMPOption(ip4Pkt, false))
         {
             ethPkt.SetPayloadLength(ip4Pkt.GetLength());
-            // Cache the packet for possible retransmission if NACKed
+            // Cache the packet for possible repair if NACKed
             //UINT16 umpSequence = srcIface.GetUmpSequence();
             //CachePacket(srcIface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
         }
@@ -3216,7 +3228,7 @@ bool Smf::SendAck(Interface&             iface,        // interface it goes out 
         if (iface.SetUMPOption(ip4Pkt, true))
         {
             ethPkt.SetPayloadLength(ip4Pkt.GetLength());
-            // Cache the packet for possible retransmission if NACKed
+            // Cache the packet for possible repair if NACKed
             CachePacket(iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
         }
         else
@@ -3311,6 +3323,9 @@ bool Smf::CachePacket(const Interface& iface, UINT16 sequence, char* frameBuffer
     memcpy(pkt->AccessBuffer(), frameBuffer, frameLength);
     pkt->SetLength(frameLength);
     pkt->SetIndex(sequence);
+    ProtoTime currentTime;
+    currentTime.GetCurrentTime();
+    pkt->SetTimestamp(currentTime);
     cache->EnqueuePacket(*pkt);
     return true;
 }  // end Smf::CachePacket()
@@ -3328,8 +3343,6 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
     //ethPkt source address will be set per-interface below
     ethPkt.SetDstAddr(ElasticAdv::ELASTIC_MAC);
     ethPkt.SetType(ProtoPktETH::IP);  // TBD - based upon IP address type
-    
-    
     Interface* iface;
     InterfaceList::Iterator iferator(iface_list);
     while (NULL != (iface = iferator.GetNextInterface()))
@@ -3386,7 +3399,7 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                     if (iface->SetUMPOption(ip4Pkt, false))
                     {
                         ethPkt.SetPayloadLength(ip4Pkt.GetLength());
-                        // Cache the packet for possible retransmission if NACKed
+                        // Cache the packet for possible repair if NACKed
                         //UINT16 umpSequence = iface->GetUmpSequence();
                         //CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
                     }
