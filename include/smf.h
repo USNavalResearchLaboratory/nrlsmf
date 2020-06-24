@@ -755,7 +755,7 @@ class Smf
         bool CachePacket(const Interface& iface, UINT16 sequence, char* frameBuffer, unsigned int frameLength);
         void OnAdvTimeout(ProtoTimer& theTimer);
         
-        MulticastFIB::UpstreamRelay* GetBestUpstreamRelay(MulticastFIB::Entry& fibEntry, unsigned int currentTick);
+        //MulticastFIB::UpstreamRelay* GetBestUpstreamRelay(MulticastFIB::Entry& fibEntry, unsigned int currentTick);
 #endif // ELASTIC_MCAST
         
     private:
