@@ -1981,6 +1981,32 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
         RelayType relayType = ifaceGroup.GetRelayType();
 #ifdef ELASTIC_MCAST
         bool elastic = ifaceGroup.GetElasticMulticast();  // yyy - change to use IsElastic() method
+        if (!elastic && mcast_controller->HasPolicies())
+        {
+            // Check for matching fibEntry to get "default forwarding status".  This is used to 
+            // check if there is a DENY policy for the given flow.  Note that currently, the ligher-weight
+            // "exhaustiveSearch=false" match is used. TBD - use approach similar to what elastic multicast
+            // code does to do "exhaustiveSearch=true" to find the true best match policy on newly detected
+            // flows, but note then flow_table entries will need to be maintained for per-packet handling
+            FlowDescription flowDescription;
+            flowDescription.InitFromPkt(ipPkt);
+            fibEntry = mcast_fib.FindBestMatch(flowDescription, false);  
+            if (MulticastFIB::DENY == fibEntry->GetDefaultForwardingStatus())
+            {
+                // If outbound, pass through (only to current interface), else ignore
+                if (outbound)
+                {
+                    // This instructs the controller pass-through the 
+                    // outbound packet on the given interface.
+                    dstIfArray[0] = srcIface.GetIndex();
+                    return 1;
+                }
+                else
+                {
+                    return 0;
+                }
+            }
+        }
 #else
         bool elastic = false;
 #endif // if/else ELASTIC_MCAST
@@ -2192,7 +2218,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             // Don't forward unicast packets destined to ourself
             ifaceForward = false;
         }
-        if (elastic)  // note 'elastic'is only true for non-duplicate packets
+        if (elastic)  // note 'elastic' can only be true for non-duplicate packets
         {
             if (NULL == fibEntry)  
             {
@@ -2552,8 +2578,10 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
         flowDescription.Print();
         PLOG(PL_ALWAYS, " ...\n");
     }
+   
+    /*  This commented block always called FindBestMatch() ... newer code below
     MulticastFIB::Entry* fibEntry = NULL;
-    MulticastFIB::Entry* match = mcast_fib.FindBestMatch(flowDescription);
+    MulticastFIB::Entry* match = mcast_fib.FindBestMatch(flowDescription);  // lighter-weight exhaustiveSearch=false match
     if (NULL != match)
     {
         if (GetDebugLevel() >= PL_DETAIL)
@@ -2585,34 +2613,43 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
         }
         // else it's a dst-only match so a flow entry needs to be created
     }
+    */
+    MulticastFIB::Entry* fibEntry = mcast_fib.FindEntry(flowDescription); // light-weight exact match lookup
     
     unsigned int pktCount = 0;
     unsigned int updateInterval = 0;
     bool updateController = false;
     bool sendAck = false;
-    
+    bool deny = false;
     const ProtoAddress& relayAddr = (NULL != upstreamHistory) ? upstreamHistory->GetAddress() : srcMac;
     if (NULL == fibEntry)
     {
         // This is a newly-detected flow, so we need to alert control plane!!!!!
         // TBD - implement default handling policies for new flows
         // (for now, we implement forwarding governed by default token bucket)
-        if (NULL == (fibEntry = new MulticastFIB::Entry(flowDescription)))//dstIp, srcIp)))
+        if (NULL == (fibEntry = new MulticastFIB::Entry(flowDescription)))
         {
             PLOG(PL_ERROR, "Smf::UpdateElasticRouting() new MulticastFIB::Entry() error: %s\n", GetErrorString());
 	        return NULL;
         }
-        fibEntry->SetDefaultForwardingStatus(default_forwarding_status);  // inherited from ElasticForwarder
+        fibEntry->SetDefaultForwardingStatus(default_forwarding_status);  // default inherited from ElasticForwarder
+        // Newly-detected flow, so do "exhaustiveSearch=true" FindBestMatch() to get proper policy, etc
+        MulticastFIB::Entry* match = mcast_fib.FindBestMatch(flowDescription, true);
         if (NULL != match)
         {
+            if (MulticastFIB::DENY == match->GetDefaultForwardingStatus()) deny = true;
             if (GetDebugLevel() >= PL_INFO)
             {
                 PLOG(PL_INFO, "Smf::UpdateElasticRouting() newly matched flow: ");
                 fibEntry->GetFlowDescription().Print();
                 PLOG(PL_ALWAYS, " matching: ");
                 match->GetFlowDescription().Print();
-                PLOG(PL_ALWAYS, "\n");
+                if (deny) 
+                    PLOG(PL_ALWAYS, " (DENY)\n");
+                else
+                    PLOG(PL_ALWAYS, "\n");
             }
+            // CopyStatus() will bring in match->default_forwarding_status, etc
             if (!fibEntry->CopyStatus(*match))
             {
                 PLOG(PL_ERROR, "Smf::UpdateElasticRouting() error: unable to copy entry status!\n");
@@ -2665,6 +2702,15 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
         }
     }  // end if/else NULL == (fibEntry)
     
+    if (deny)
+    {
+        // Ignore the packet. I.e. if inbound, do nothing else pass through
+        if (outbound)
+            return fibEntry;  // caller should check for DENY status
+        else
+            return NULL;   
+    }
+    
     if (updateController)
     {
         // New or reactivated flow ...
@@ -2679,7 +2725,6 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                 PLOG(PL_DEBUG, "Smf::UpdateElasticRouting() activated adv_timer ...\n");
             }
         }
-        
         pktCount = fibEntry->GetUpdateCount() - 1;
         updateInterval = fibEntry->GetUpdateInterval();
         fibEntry->Reset(currentTick);
@@ -3022,7 +3067,7 @@ unsigned int Smf::UpdateUpstreamHistory(unsigned int                   currentTi
             utype = ElasticNack::ADDR_IPV4;
             break;
         default:
-            PLOG(PL_ERROR, "Smf::ProcessPacket() error: unsupported upstream address type!\n");
+            PLOG(PL_ERROR, "Smf::SendNack() error: unsupported upstream address type!\n");
             break;
     }
     if (ElasticNack::ADDR_INVALID != utype)

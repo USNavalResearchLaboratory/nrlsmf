@@ -1149,6 +1149,9 @@ class ElasticMulticastController
         
         bool SetPolicy(const FlowDescription& description, bool allow);
         
+        bool HasPolicies() const
+            {return !policy_table.IsEmpty();}
+        
         
         // NEXT STEP - IMPLEMENT MECHANISM TO SEND ACKS to UPSTREAM FORWARDERS
         // 1) When do we send an ACK?

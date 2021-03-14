@@ -1805,14 +1805,7 @@ ElasticMulticastForwarder::~ElasticMulticastForwarder()
 bool ElasticMulticastForwarder::SetAckingStatus(const FlowDescription& flowDescription,
                                                 bool                   ackingStatus)
 {
-    // Note there are currently two kind of "managed" flow entries that are set/unset by
-    // the controller.  These are:
-    //     1) Managed membership entries.  These have a non-zero interface index.
-    //     2) Mananged flow policy entries.  These currently have an interface index of zero.
-    // If we ever provide polices that are interface-specific, we may need to handle these
-    // differently somehow.
-    
-    // Sets acking status for all matching entries.
+    // Sets acking status for all matching entries for the given "flowDescription"
     MulticastFIB::EntryTable& flowTable = mcast_fib.AccessFlowTable();
     MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription);
     MulticastFIB::Entry* entry = iterator.GetNextEntry();
