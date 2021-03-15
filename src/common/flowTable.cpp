@@ -599,8 +599,9 @@ FlowTable::Iterator::~Iterator()
 {
 }
 
-void FlowTable::Iterator::Reset(const FlowDescription* description, int flags)
+void FlowTable::Iterator::Reset(const FlowDescription* description, int flags, bool bimatch)
 {
+    bi_match = bimatch;
     prefix_mask_size = current_mask_size = 0;
     next_mask_size = -1;
     src_addr.Invalidate();
@@ -712,27 +713,30 @@ FlowTable::Entry* FlowTable::Iterator::GetNextEntry()
                 // conditional here ensures matching entries are returned only once
                 // upon the secondary, etc. iterations at different prefix mask lengths
                 // according to the "mask_list" of table being iterated.
+                
                 if ((entry->GetPrefixSize() < current_mask_size) ||
-                    ((current_mask_size < prefix_mask_size) && (entry->GetPrefixSize() > current_mask_size)))
+                    (((entry->GetPrefixSize() > current_mask_size) || !bi_match) && (current_mask_size < prefix_mask_size)))
+                {
                     continue;  // not a match (yet)
+                }
             }
             if (src_addr.IsValid())
             {
                 ProtoAddress src;
                 entry->GetSrcAddr(src);
-                if (src.IsValid() && !src.PrefixIsEqual(src_addr, src_mask_size))
-                    continue; // not a match
+                if ((src.IsValid() || !bi_match) && !src.PrefixIsEqual(src_addr, src_mask_size))
+                        continue; // not a match
             }
             if (0x03 != traffic_class)
             {
                 UINT8 t = entry->GetTrafficClass();
-                if ((0x03 != t) && (t != traffic_class))
+                if (((0x03 != t) || !bi_match) && (t != traffic_class))
                     continue; // not a match
             }
             if (ProtoPktIP::RESERVED != protocol)
             {
                 ProtoPktIP::Protocol p = entry->GetProtocol();
-                if ((ProtoPktIP::RESERVED != p) && (p != protocol))
+                if (((ProtoPktIP::RESERVED != p) || !bi_match) && (p != protocol))
                     continue;  // not a match
             }
             break;

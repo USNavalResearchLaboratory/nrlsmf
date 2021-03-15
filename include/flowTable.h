@@ -317,7 +317,7 @@ class FlowTable
                 Iterator(BaseIterator&    tableIterator, 
                          MaskLengthList&  maskLengthList);
             
-                void Reset(const FlowDescription* flowDescription = NULL, int flags = FlowDescription::FLAG_ALL);
+                void Reset(const FlowDescription* flowDescription = NULL, int flags = FlowDescription::FLAG_ALL, bool bimatch = true);
                 
                 Entry* GetNextEntry();
                 
@@ -338,6 +338,8 @@ class FlowTable
                 UINT8                       traffic_class;
                 ProtoPktIP::Protocol        protocol;
                 unsigned int                iface_index;
+                bool                        bi_match;  // if true, do wildcard matching using both "flowDescription" param and candidates wildcard fields.
+                                                       // else do wildcard match using only "flowDescription" param wildcard fields.
                 
         };  // end class FlowTable::Iterator
         
@@ -443,14 +445,18 @@ class FlowTableTemplate : public FlowTable, public TABLE_TYPE
             public:
                 Iterator(FlowTableTemplate&     table, 
                          const FlowDescription* flowDescription = NULL, 
-                         int                    flags = FlowDescription::FLAG_ALL) 
+                         int                    flags = FlowDescription::FLAG_ALL,
+                         bool                   bimatch = true) 
                   : FlowTable::Iterator(base_iterator, table.mask_list), base_iterator(table)
-                    {FlowTable::Iterator::Reset(flowDescription, flags);}
+                    {FlowTable::Iterator::Reset(flowDescription, flags, bimatch);}
             
                 ~Iterator() {}
                 
-                void Reset(const FlowDescription* flowDescription = NULL, int flags = FlowDescription::FLAG_ALL)
-                    {FlowTable::Iterator::Reset(flowDescription, flags);}
+                // "bimatch=true" does fully reciprocal matching of flowDescription with wildcard to/from entries with wildcards,
+                // while "bimatch=false" ignores entry wildcard values, thus matching only "subordinate" entries ...
+                
+                void Reset(const FlowDescription* flowDescription = NULL, int flags = FlowDescription::FLAG_ALL, bool bimatch = true)
+                    {FlowTable::Iterator::Reset(flowDescription, flags, bimatch);}
                 
                 ENTRY_TYPE* GetNextEntry()
                     {return static_cast<ENTRY_TYPE*>(FlowTable::Iterator::GetNextEntry());}

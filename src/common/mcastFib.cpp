@@ -1595,6 +1595,8 @@ const char* MulticastFIB::GetForwardingStatusString(ForwardingStatus status)
             return "LIMIT";
         case FORWARD:
             return "FORWARD";
+        case DENY:
+            return "DENY";
         default:
             return "???";
     }
@@ -1807,7 +1809,7 @@ bool ElasticMulticastForwarder::SetAckingStatus(const FlowDescription& flowDescr
 {
     // Sets acking status for all matching entries for the given "flowDescription"
     MulticastFIB::EntryTable& flowTable = mcast_fib.AccessFlowTable();
-    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription);
+    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, FlowDescription::FLAG_ALL, false);  // non bimatch iterator
     MulticastFIB::Entry* entry = iterator.GetNextEntry();
     //bool exactMatch = false;
     if (NULL != entry)
@@ -1858,6 +1860,7 @@ bool ElasticMulticastForwarder::SetAckingStatus(const FlowDescription& flowDescr
     return true;
 }  // end ElasticMulticastForwarder::SetAckingStatus()
 
+
 bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&          flowDescription,
                                                     unsigned int                    ifaceIndex,
                                                     MulticastFIB::ForwardingStatus  forwardingStatus,
@@ -1868,9 +1871,9 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&      
     //                   dictates regardless of acking status.  This enables 
     //                   static forwarding entries).
 
-    // Sets forwarding status for all matching entries.
+    // Sets forwarding status for all matching (sub-matching, non-bimatch) entries.
     MulticastFIB::EntryTable& flowTable = mcast_fib.AccessFlowTable();
-    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription);
+    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, FlowDescription::FLAG_ALL, false);  // non bimatch iterator
     MulticastFIB::Entry* entry = iterator.GetNextEntry();
     bool exactMatch = false;
     if (NULL != entry)
@@ -1878,10 +1881,10 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&      
         unsigned int currentTick = UpdateTicker();
         do
         {
-            if (GetDebugLevel() >= PL_DEBUG)
+            //if (GetDebugLevel() >= PL_DEBUG)
             {
                 const char* forwardingStatusString = MulticastFIB::GetForwardingStatusString(forwardingStatus);
-                PLOG(PL_DEBUG, "nrlsmf: setting ForwardingStatus %s and AckingStatus to %d for existing flow ",
+                PLOG(PL_ALWAYS, "nrlsmf: setting ForwardingStatus %s and AckingStatus to %d for existing flow ",
                                 forwardingStatusString, ackingStatus);
                 entry->GetFlowDescription().Print();
                 PLOG(PL_ALWAYS, "\n");

@@ -3770,7 +3770,17 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
             double age = (double)fibEntry->Age(currentTick) * 1.0e-06;
             if (fibEntry->IsIdle()) age += (double)MulticastFIB::DEFAULT_FLOW_ACTIVE_TIMEOUT * 1.0e-06;
             PLOG(PL_ALWAYS, " age:%.1f", age);
-            const char* status = fibEntry->IsActive() ? "actv" : (fibEntry->IsIdle() ? "idle" : "????");
+            const char* status;
+            if (fibEntry->IsActive())
+                status = "actv";
+            else if (fibEntry->IsIdle())
+                status = "idle";
+            else if (MulticastFIB::DENY == fibEntry->GetDefaultForwardingStatus())
+                status = "DENY";
+            //else if (MulticastFIB::ALLOW == fibEntry->GetDefaultForwardingStatus())
+            //    status = "ALLOW";
+            else
+                status = MulticastFIB::GetForwardingStatusString(fibEntry->GetDefaultForwardingStatus());
             PLOG(PL_ALWAYS, " status:%s", status);
             bool ackingStatus = fibEntry->GetAckingStatus();
             PLOG(PL_ALWAYS, " acking:%d", ackingStatus);
