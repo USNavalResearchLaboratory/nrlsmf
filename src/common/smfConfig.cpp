@@ -151,7 +151,8 @@ bool SmfConfig::AddInterfaceGroup(const char*           groupName,
                                   Smf::RelayType        relayType,
                                   Smf::InterfaceList&   ifaceList,  // comma-delimited list of interfaces
                                   bool                  elastic,
-                                  bool                  unicast)
+                                  bool                  unicast,
+                                  bool                  etx)
 {
     if (!Initialized() && !Init()) return false;
     // First, find or create "group" object
@@ -226,6 +227,11 @@ bool SmfConfig::AddInterfaceGroup(const char*           groupName,
     if (!error && !group->InsertBoolean("unicast", unicast))
     {
         PLOG(PL_ERROR, "SmfConfig::AddInterfaceGroup() error setting 'unicast' attribute: %s\n", GetErrorString());
+        error = true;
+    }
+    if (!error && !group->InsertBoolean("etx", etx))
+    {
+        PLOG(PL_ERROR, "SmfConfig::AddInterfaceGroup() error setting 'etx' attribute: %s\n", GetErrorString());
         error = true;
     }
     if (error)

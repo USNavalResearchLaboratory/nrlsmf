@@ -63,7 +63,7 @@ Smf::Interface::Extension::~Extension()
 
 Smf::Interface::Interface(unsigned int ifIndex)
  : if_index(ifIndex), resequence(false), is_tunnel(false), 
-   is_layered(false), is_reliable(false), is_shadowing(false), block_igmp(false),
+   is_layered(false), is_reliable(false), use_etx(false), is_shadowing(false), block_igmp(false),
    ump_sequence(0), ip_encapsulate(false), dup_detector(NULL), 
    unicast_group_count(0), 
 #ifdef ELASTIC_MCAST
@@ -316,7 +316,7 @@ Smf::InterfaceGroup::InterfaceGroup(const char* groupName)
  : push_src(NULL), is_template(false),
    forwarding_mode(RELAY), relay_type(CF),
    resequence(false), is_tunnel(false),
-   elastic_mcast(false), elastic_ucast(false), adaptive_routing(false)
+   elastic_mcast(false), elastic_ucast(false), use_etx(false), adaptive_routing(false)
 {
     strncpy(group_name, groupName, IF_GROUP_NAME_MAX + IF_NAME_MAX+1);
     group_name[IF_GROUP_NAME_MAX + IF_NAME_MAX + 1] = '\0';
@@ -338,7 +338,19 @@ void Smf::InterfaceGroup::SetElasticMulticast(bool state)
 void Smf::InterfaceGroup::SetAdaptiveRouting(bool state)
 {
     adaptive_routing = state;
+}  // end Smf::InterfaceGroup::SetElasticMulticast()
+
+void Smf::InterfaceGroup::SetETX(bool state)
+{
+    if (state == use_etx) return;  // no change
+    use_etx = state;
+    InterfaceList::Iterator ifaceIterator(iface_list);
+    Interface* iface;
+    while (NULL != (iface = ifaceIterator.GetNextItem()))
+    {
+        iface->SetETX(state);
     }
+}  // end Smf::InterfaceGroup::SetETX(bool state)
 
 void Smf::InterfaceGroup::SetElasticUnicast(bool state)
 {
@@ -1092,7 +1104,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     unsigned int currentTick = time_ticker.Update();
     UINT16 upstreamSeq = 0;
     MulticastFIB::UpstreamHistory* upstreamHistory = 
-        (srcIface.IsReliable() && !outbound) ?
+        (srcIface.UseETX() && !outbound) ?
             GetUpstreamHistory(srcIface, ipPkt, upstreamSeq) :
             NULL;
      UINT16 nackCount = 0;
@@ -1244,7 +1256,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 //       to active upstreams??? The potential problem is this is reliable EM-ADV,
                 //       and most notably reliable EM-ACK, would be compromised?  Also does NACKing
                 //       EM-ADV create a problem with out-of-order AM-ADV delivery or even really add value?
-                if (0 != nackCount)
+                if (srcIface.IsReliable() && (0 != nackCount))
                 {
                     SendNack(srcIface, *upstreamHistory, upstreamSeq, nackCount);
                     PLOG(PL_DEBUG, "Smf::ProcessPacket() sent NACK after EM control message received from %s\n", upstreamHistory->GetAddress().GetHostString());
@@ -2514,7 +2526,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     }
 
 #ifdef ELASTIC_MCAST   
-    if (nackCount > 0) 
+    if (srcIface.IsReliable() && (nackCount > 0))
     {
         // A packet is 'nackable' if forwarded or nonDuplicate for flow of active interest
         bool nackable = (dstCount > 0) || (nonDuplicate && (NULL != fibEntry) && fibEntry->GetAckingStatus());
@@ -2792,9 +2804,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
         {
             char ifaceName[IF_NAME_MAX+1];
             ProtoNet::GetInterfaceName(srcIface.GetIndex(), ifaceName, IF_NAME_MAX);
-            if (srcIface.IsReliable())
+            if (srcIface.UseETX())
             {
-                // TBD - support hop-count based relay selection when not doing reliable forwarding?
                 MulticastFIB::UpstreamRelay* bestRelay = fibEntry->GetBestUpstreamRelay(currentTick);
                 if (NULL != bestRelay)
                 { 
@@ -2807,7 +2818,6 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                         }
                         sendAck = false;  // don't ack this relay if it's not the best one
                         upstreamRelay->Preset(fibEntry->GetAckingCountThreshold());  // this will stimulate an immediate ACK if this relay becomes viable again
-                        
                         if (MulticastFIB::UpstreamRelay::NULLARY != upstreamRelay->GetStatus())
                         {
                             upstreamRelay->SetStatus(MulticastFIB::UpstreamRelay::NULLARY);
@@ -3266,7 +3276,7 @@ bool Smf::SendAck(Interface&             iface,        // interface it goes out 
     ip4Pkt.SetPayloadLength(udpPkt.GetLength());
     udpPkt.FinalizeChecksum(ip4Pkt);
     
-    if (iface.IsReliable())
+    if (iface.UseETX())
     {
         // Apply Upstream Multicast Packet header option on iterfaces configured for "reliable forwarding"
         UINT16 umpSequence = iface.GetUmpSequence();
@@ -3274,7 +3284,8 @@ bool Smf::SendAck(Interface&             iface,        // interface it goes out 
         {
             ethPkt.SetPayloadLength(ip4Pkt.GetLength());
             // Cache the packet for possible repair if NACKed
-            CachePacket(iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+            if (iface.IsReliable())
+                CachePacket(iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
         }
         else
         {
@@ -3439,14 +3450,17 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                 ip4Pkt.SetSrcAddr(iface->GetIpAddress());
                 udpPkt.FinalizeChecksum(ip4Pkt);
                 ethPkt.SetSrcAddr(iface->GetInterfaceAddress());
-                if (iface->IsReliable())
+                if (iface->UseETX())
                 {
                     if (iface->SetUMPOption(ip4Pkt, false))
                     {
                         ethPkt.SetPayloadLength(ip4Pkt.GetLength());
                         // Cache the packet for possible repair if NACKed
-                        //UINT16 umpSequence = iface->GetUmpSequence();
-                        //CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+                        /*if (iface->IsReliable())
+                        {
+                            UINT16 umpSequence = iface->GetUmpSequence();
+                            CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+                        }*/
                     }
                     else
                     {
@@ -3587,14 +3601,17 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
             ip4Pkt.SetSrcAddr(iface->GetIpAddress());
             udpPkt.FinalizeChecksum(ip4Pkt);
             ethPkt.SetSrcAddr(iface->GetInterfaceAddress());
-            if (iface->IsReliable())
+            if (iface->UseETX())
             {
                 if (iface->SetUMPOption(ip4Pkt, false))
                 {
                     ethPkt.SetPayloadLength(ip4Pkt.GetLength());
                     // Cache the packet for possible retransmission if NACKed
-                    //UINT16 umpSequence = iface->GetUmpSequence();
-                    //CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+                    /*if (iface->IsReliable()) 
+                    {
+                        UINT16 umpSequence = iface->GetUmpSequence();
+                        CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+                    }*/
                 }
                 else
                 {

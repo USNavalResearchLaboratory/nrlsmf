@@ -1562,8 +1562,29 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         smf.SetDefaultForwardingStatus(MulticastFIB::HYBRID);
         mcast_controller.SetDefaultForwardingStatus(MulticastFIB::HYBRID);
 #else
-        PLOG(PL_ERROR, "SmfApp::OnCommand(reliable) error: 'advertise' option only supported elastic multicast build\n");
+        PLOG(PL_ERROR, "SmfApp::OnCommand(advertise) error: 'advertise' option only supported elastic multicast build\n");
 #endif
+    }
+    else if (!strncmp("etx", cmd, len))
+    {
+#ifdef ELASTIC_MCAST
+        ProtoTokenator tk(val, ',');
+        const char* ifaceName;
+        while (NULL != (ifaceName = tk.GetNextItem()))
+        {
+            unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(ifaceName);
+            Smf::Interface*iface = smf.GetInterface(ifaceIndex);
+            if (NULL == iface)
+            {
+                PLOG(PL_ERROR, "OnCommand(etx) error: invalid interface \"%s\"\n", ifaceName);
+                return false;
+            }
+            ASSERT(iface->GetIpAddress().IsValid());
+            iface->SetETX(true);
+        }
+#else
+        PLOG(PL_ERROR, "SmfApp::OnCommand(etx) error: 'etx' option only supported elastic multicast build\n");
+#endif // if/else ELASTIC_MCAST
     }
     else if (!strncmp("reliable", cmd, len))
     {
@@ -2625,6 +2646,8 @@ bool SmfApp::ProcessGroupConfig(ProtoJson::Object& groupConfig)
         OnCommand("elastic", groupName);
     if (groupConfig.GetBoolean("unicast"))
         OnCommand("unicast", groupName);
+    if (groupConfig.GetBoolean("etx"))
+        OnCommand("etx", groupName);
     
     return true;
 }  // end SmfApp::ProcessGroupConfig()
@@ -2676,7 +2699,8 @@ bool SmfApp::SaveConfig(const char* configPath)
                 addrList = &iface->AccessAddressList();
         }
         if (!config.AddInterface(ifaceName, addrList, (NULL != vif) ? deviceName : NULL,
-                                 iface->IsReliable(), iface->IsLayered(), iface->IsShadowing(), iface->BlockIGMP()))
+                                 iface->IsReliable(), iface->IsLayered(), 
+                                 iface->IsShadowing(), iface->BlockIGMP()))
         {
             PLOG(PL_ERROR, "SmfApp::SaveConfig() error: unable to add interface item\n");
             return false;
@@ -2687,9 +2711,8 @@ bool SmfApp::SaveConfig(const char* configPath)
     Smf::InterfaceGroup* group;
     while (NULL != (group = grouperator.GetNextItem()))
     {
-        if (!config.AddInterfaceGroup(group->GetName(), group->GetRelayType(), 
-                                      group->AccessInterfaceList(), group->IsElastic(),
-                                      group->GetElasticUnicast()))
+        if (!config.AddInterfaceGroup(group->GetName(), group->GetRelayType(), group->AccessInterfaceList(), 
+                                      group->IsElastic(), group->GetElasticUnicast(), group->UseETX()))
         {
             PLOG(PL_ERROR, "SmfApp::SaveConfig() error: unable to add interface item\n");
             return false;
@@ -4935,10 +4958,10 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                     // (e.g., instead of dstIfIndices array, pass an array of Smf::Interface pointers)
                     Smf::Interface* dstIface = smf.GetInterface(dstIfIndices[i]);
                     ASSERT(NULL != dstIface);
-                    if (dstIface->IsReliable() && (4 == ipPkt.GetVersion()))
+                    if (dstIface->UseETX() && (4 == ipPkt.GetVersion()))
                     {
                         UINT8 utos = smf.GetUnreliableTOS();
-                        bool reliable = (0 == utos) || (utos != trafficClass);
+                        bool reliable = dstIface->IsReliable() && ((0 == utos) || (utos != trafficClass));
                         // add (or update) UMP option
                         ProtoPktIPv4 ip4Pkt(ipPkt);
                         UINT16 sequence = dstIface->GetUmpSequence();
@@ -5585,10 +5608,10 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
         // (e.g., instead of dstIfIndices array, pass an array of Smf::Interface pointers)
         Smf::Interface* dstIface = smf.GetInterface(dstIfIndices[i]);
         ASSERT(NULL != dstIface);
-        if (dstIface->IsReliable() &&  (4 == ipPkt.GetVersion()))
+        if (dstIface->UseETX() &&  (4 == ipPkt.GetVersion()))
         {
             UINT8 utos = smf.GetUnreliableTOS();
-            bool reliable = (0 == utos) || (utos != trafficClass);
+            bool reliable = dstIface->IsReliable() && ((0 == utos) || (utos != trafficClass));
             // add (or update) UMP option
             ProtoPktIPv4 ip4Pkt(ipPkt);
             UINT16 sequence = dstIface->GetUmpSequence();

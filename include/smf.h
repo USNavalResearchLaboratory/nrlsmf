@@ -226,9 +226,16 @@ class Smf
                     {return block_igmp;}
                 // These enable/disable reliable forwarding for the interface
                 void SetReliable(bool state)
-                    {is_reliable = state;}
+                {
+                    is_reliable = state;
+                    use_etx = state ? true : use_etx;
+                }                
                 bool IsReliable() const
                     {return is_reliable;}
+                void SetETX(bool state)
+                    {use_etx = state;}
+                bool UseETX() const
+                    {return use_etx;}
                 bool SetUMPOption(ProtoPktIPv4& ipPkt, bool increment);
                 
                 void SetEncapsulation(bool state)
@@ -406,7 +413,8 @@ class Smf
                 bool                                  resequence;                                                               
                 bool                                  is_tunnel;                                                                
                 bool                                  is_layered;                                                               
-                bool                                  is_reliable;   
+                bool                                  is_reliable;  
+                bool                                  use_etx; 
                 bool                                  is_shadowing;  // nrlsmf vif 'device' interfaces only   
                 bool                                  block_igmp;    // nrlsmf vif 'device' elastic mcast interfaces only                                            
                 UINT16                                ump_sequence;                                                             
@@ -493,6 +501,7 @@ class Smf
                     if (iface_list.Insert(iface))
                     {
                         if (elastic_ucast) iface.IncrementUnicastGroupCount();
+                        iface.SetETX(use_etx);
                         return true;
                     }
                     return false;
@@ -564,6 +573,9 @@ class Smf
                     {return adaptive_routing;}
                 bool IsElastic() const
                     {return (elastic_mcast || elastic_ucast);}
+                void SetETX(bool state);
+                bool UseETX() const
+                    {return use_etx;}
                 
                 void CopyAttributes(InterfaceGroup& group)
                 {
@@ -573,6 +585,7 @@ class Smf
                     is_tunnel = group.is_tunnel;
                     elastic_mcast = group.elastic_mcast;
                     elastic_ucast = group.elastic_ucast;
+                    use_etx = group.use_etx;
 					adaptive_routing = group.adaptive_routing;
                 }
                 
@@ -597,6 +610,7 @@ class Smf
                 bool            is_tunnel;
                 bool            elastic_mcast;
                 bool            elastic_ucast;
+                bool            use_etx;
                 bool            adaptive_routing;
 				
         };  // end class Smf::InterfaceGroup

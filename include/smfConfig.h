@@ -59,13 +59,17 @@ class SmfConfig : public ProtoJson::Document
                                Smf::RelayType       relayType,
                                Smf::InterfaceList&  ifaceList,  // comma-delimited list of interfaces
                                bool                 elastic = false,
-                               bool                 unicast = false);
+                               bool                 unicast = false,
+                               bool                 etx = false);
         
         bool SetElastic(const char* groupName,  bool state)
             {return SetGroupAttribute(groupName, "elastic", state);}
         
         bool SetUnicast(const char* groupName,  bool state)
             {return SetGroupAttribute(groupName, "unicast", state);}
+        
+        bool SetETX(const char* groupName, bool state)
+            {return SetGroupAttribute(groupName, "etx", state);}
         
         ProtoJson::Object* FindInterface(const char* ifaceName);
         
