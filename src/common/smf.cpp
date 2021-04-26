@@ -1991,6 +1991,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     {
         InterfaceGroup& ifaceGroup = assoc->GetInterfaceGroup();
         RelayType relayType = ifaceGroup.GetRelayType();
+        
 #ifdef ELASTIC_MCAST
         bool elastic = ifaceGroup.GetElasticMulticast();  // yyy - change to use IsElastic() method
         if (!elastic && mcast_controller->HasPolicies())
@@ -2022,11 +2023,13 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 #else
         bool elastic = false;
 #endif // if/else ELASTIC_MCAST
+        
 #ifdef  ADAPTIVE_ROUTING
         bool adaptive = ifaceGroup.GetAdaptiveRouting();
 #else
         bool adaptive = false;
 #endif  // end if/else ADAPTIVE_ROUTING
+        
         // Should we forward this packet on this associated "dstIface"?
         bool ifaceForward = false;
         bool updateDupTree = false;
@@ -2102,11 +2105,12 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             asym_count++;
             srcIface.IncrementAsymCount();
         }
-
         Interface& dstIface = assoc->GetInterface();
+        
 #ifdef ADAPTIVE_ROUTING
         smart_controller->UpdateInterfaces(dstIface.GetInterfaceAddress(),dstIface.GetIndex());
 #endif // ADAPTIVE_ROUTING
+        
         if (GetDebugLevel() >= PL_MAX)
         {
             char flowIdText[2048];
@@ -2227,7 +2231,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 #ifdef ELASTIC_MCAST
         if (IsOwnAddress(dstIp))
         {
-            // Don't forward unicast packets destined to ourself
+            // Don't forward unicast packets destined to self
             ifaceForward = false;
         }
         if (elastic)  // note 'elastic' can only be true for non-duplicate packets
@@ -2249,7 +2253,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     // If outbound, pass through (only to current interface), else ignore
                     if (outbound)
                     {
-                        // This instructs the controller pass-through the 
+                        // This instructs the controller to pass-through the 
                         // outbound packet on the given interface.
                         dstIfArray[0] = srcIface.GetIndex();
                         return 1;
@@ -2279,9 +2283,6 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
         
         if (ifaceForward && srcIface.IsLayered())
         {
-            // This check is likely redundant since the srcIface.IsLeyered() check
-            // above marks the packet as duplicate checked and "ifaceForward"
-            // should thus be "false" and we never will get here ...
             if (dstIface.GetIndex() == srcIface.GetIndex())
                 ifaceForward = false;  // don't relay on same iface if layered
         }
