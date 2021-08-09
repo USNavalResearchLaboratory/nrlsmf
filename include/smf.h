@@ -1,5 +1,6 @@
 #ifndef _SMF
 #define _SMF
+#include "protoDefs.h"
 #include "smfHash.h"
 #include "smfDpd.h"
 #include "smfQueue.h"    // for optional per-flow interface queues
@@ -7,6 +8,11 @@
 #include "protoPktIP.h"  // (TBD) use something different for OPNET and/or ns-2?
 #include "protoPktETH.h"
 #include "protoQueue.h"
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <unordered_set>
 #if defined(ELASTIC_MCAST) || defined(ADAPTIVE_ROUTING)
 #include "mcastFib.h"
 #ifdef ADAPTIVE_ROUTING
@@ -136,7 +142,79 @@ class Smf
         }
         
         class InterfaceGroup;  // really an association group, if you will
-        
+
+        #define VRF_NAME_SIZE 36
+        #define VRF_DEFAULT 0
+        #define VRF_DEFAULT_NAME "default"
+        #define VRF_UKKNOWN UINT32_MAX
+
+        class SmfVRF : public ProtoQueue::Item {
+
+            public:
+                SmfVRF(UINT32 vid)
+                    {vrf_id = vid;}
+                SmfVRF(UINT32 vid, const char* new_name)
+                    {vrf_id = vid; SetName(new_name);}
+
+                ~SmfVRF()
+                    {iface_list.clear();}
+
+                void SetID(UINT32 vid)
+                    {vrf_id = vid;}
+                UINT32 GetID()
+                    {return vrf_id;}
+
+                void SetName(const char* new_name);
+                const char* GetName() const
+                    {return vrf_name;}
+
+                // Used for SmfVRFList required ProtoIndexedQueue overrides
+                const char* GetKey() const
+                    {return ((const char*)&vrf_id);}
+                unsigned int GetKeysize() const
+                    {return (8*sizeof(UINT32));}
+
+                bool AddInterface(const char* iface);
+                std::unordered_set<std::string> GetIfaceList()
+                    {return iface_list;}
+
+            private:
+                UINT32 vrf_id;
+                char vrf_name[VRF_NAME_SIZE + 1];
+                std::unordered_set<std::string> iface_list;
+        };
+
+
+        class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF>
+        {
+            public:
+                SmfVRF* FindVRF(UINT32 vid) const
+                    {return Find((const char*)&vid, 8*sizeof(UINT32));}
+
+                class Iterator : public ProtoIndexedQueueTemplate<SmfVRF>::Iterator
+                {
+                    public:
+                        Iterator(SmfVRFList& vrfList) : ProtoIndexedQueueTemplate<SmfVRF>::Iterator(vrfList) {}
+                        SmfVRF* GetNextVRF()
+                            {return ProtoIndexedQueueTemplate<SmfVRF>::Iterator::GetNextItem();}
+                };  // end class SmfVRFList::Iterator
+
+            private:
+                const char* GetKey(const Item& item) const
+                    {return static_cast<const SmfVRF&>(item).GetKey();}
+                unsigned int GetKeysize(const Item& item) const
+                    {return static_cast<const SmfVRF&>(item).GetKeysize();}
+        };  // end class Smf::SmfVRFList
+
+
+        SmfVRF* AddVRF(const char* vrf_name, UINT32 vrf_id);
+        void DeleteVRF(SmfVRF& vrf);
+        void DumpVRFs();
+        SmfVRF* GetVRFByName(const char* vrf_name);
+        SmfVRF* GetVRF(UINT32 vrf_id) const
+            {return vrf_list.FindVRF(vrf_id);}
+
+
         // We derive from "ProtoQueue::Item here so we can keep multiple lists of 
         // "Interfaces" indexed by their "ifIndex", "ifName", etc
         class Interface : public ProtoQueue::Item
@@ -395,6 +473,11 @@ class Smf
                 unsigned int GetQueueLength() const
                     {return pkt_queue.GetQueueLength();}
                 
+                SmfVRF* GetVRF() const
+                    {return vrf;}
+                bool isVRF(const SmfVRF* new_vrf) const;  // check whether the interface belongs to this vrf
+                void SetVRF(SmfVRF* new_vrf)
+                    {vrf = new_vrf;}
                 // Used for InterfaceList required ProtoIndexedQueue overrides
                 const char* GetKey() const
                     {return ((const char*)&if_index);}
@@ -418,7 +501,8 @@ class Smf
                 SmfDpd*                               dup_detector;                                                             
                 AssociateList                         assoc_source_list;   // associates targeting this Interface                 
                 AssociateList                         assoc_target_list;   // associates that this Interface targets              
-                unsigned int                          unicast_group_count;                     
+                unsigned int                          unicast_group_count;
+                SmfVRF*                                vrf;                 // The VRF that this interface belongs to
                                                 
                 SmfQueueTable                         queue_table;         // TBD - per flow (or next hop?) queues                      
                 SmfQueue                              pkt_queue;           // interface output queue
@@ -709,7 +793,7 @@ class Smf
         static const unsigned int DEFAULT_AGE_MAX; // (in seconds)
         static const unsigned int PRUNE_INTERVAL;  // (in seconds)
         
-        
+
         
         InterfaceGroup* AddInterfaceGroup(const char* groupName);
         InterfaceGroup* FindInterfaceGroup(const char* groupName)
@@ -794,6 +878,7 @@ class Smf
         
         InterfaceList       iface_list;
         InterfaceGroupList  iface_group_list;
+        SmfVRFList          vrf_list;
         
         ProtoAddressList    local_addr_list;  // list of local interface addresses
         

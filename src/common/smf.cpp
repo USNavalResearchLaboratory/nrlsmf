@@ -2,6 +2,7 @@
 //#include "smartController.h"
 //#include "smartForwarder.h"
 
+#include "protoDebug.h"
 #include "smfHashMD5.h"
 #include "smfHashSHA1.h"
 
@@ -271,6 +272,82 @@ bool Smf::Interface::SetUMPOption(ProtoPktIPv4& ipPkt, bool increment)
     ipPkt.CalculateChecksum();  // TBD - the delta could be done, maybe
     return true;
 }  // end Smf::Interface::SetUMPOption()
+
+
+void Smf::SmfVRF::SetName(const char* new_name)
+{
+    strncpy(vrf_name, new_name, VRF_NAME_SIZE);
+    vrf_name[VRF_NAME_SIZE]='\0';
+}
+bool Smf::SmfVRF::AddInterface(const char* iface)
+{
+   iface_list.insert(iface);
+   return true;
+}
+
+Smf::SmfVRF* Smf::AddVRF(const char *vrf_name, UINT32 vrf_id)
+{
+    SmfVRF* vrf = GetVRFByName(vrf_name);
+    static UINT32 vrf_id_pool = 100;
+    if (NULL == vrf)
+    {
+        if (0 != strcmp(VRF_DEFAULT_NAME, vrf_name))
+        {
+            if (VRF_UKKNOWN == vrf_id || VRF_DEFAULT == vrf_id)
+            {
+                // automatic vrf id
+                vrf_id = vrf_id_pool++;
+            }
+        }
+        else  if ( (0 == strcmp(VRF_DEFAULT_NAME, vrf_name)) && ( VRF_DEFAULT != vrf_id))
+        {
+            // make sure default vrf name and id are synced
+            vrf_id = VRF_DEFAULT;
+        }
+
+        vrf = new SmfVRF(vrf_id, vrf_name);
+        if (NULL == vrf)
+        {
+            PLOG(PL_ERROR, "Smf::AddVRF()) new Smf::SmfVRF error: %s\n", GetErrorString());
+            return NULL;
+        }
+
+        vrf_list.Insert(*vrf);
+    }
+    return vrf;
+}
+Smf::SmfVRF* Smf::GetVRFByName(const char* vrf_name)
+{
+
+    SmfVRFList::Iterator vrfIterator(vrf_list);
+    SmfVRF* vrf;
+    while (NULL != (vrf = vrfIterator.GetNextItem()))
+    {
+        if (0 == strcmp(vrf_name, vrf->GetName()))
+            return vrf;
+    }
+  return NULL;
+}
+
+void Smf::DumpVRFs()
+{
+    SmfVRFList::Iterator vrfIterator(vrf_list);
+    SmfVRF* vrf;
+    PLOG(PL_DEBUG, "============== VRF table ==============\n");
+    while (NULL != (vrf = vrfIterator.GetNextItem()))
+    {
+        PLOG(PL_DEBUG, "vrf name = %s   vrf id =%u\n", vrf->GetName(), vrf->GetID());
+        PLOG(PL_DEBUG, "    inerfaces:\n");
+        for (std::string s : vrf->GetIfaceList())
+            PLOG(PL_DEBUG, "             %s\n", s.c_str());
+    }
+    PLOG(PL_DEBUG, "=======================================\n");
+}
+
+void Smf::DeleteVRF(SmfVRF &vrf)
+{
+
+}
 
 #ifdef ELASTIC_MCAST
 void Smf::Interface::PruneUpstreamHistory(unsigned int currentTick)

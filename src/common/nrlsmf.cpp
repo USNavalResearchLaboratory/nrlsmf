@@ -1,3 +1,4 @@
+#include "protoDebug.h"
 #include "smfVersion.h"
 
 #include "smf.h"
@@ -1008,6 +1009,7 @@ void SmfApp::Usage()
     fprintf(stderr, "Usage: nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}\n"
                     "              [add [<group>,]{cf|smpr|ecds|push|rpush|merge|rmerge},<ifaceList>]\n"
                     "              [remove {<group> | [<group>,]<ifaceList>}][elastic <group>][adaptive <group>]\n"
+                    "              [vrf <vrfName>,[<vrfId>,]<ifaceList>]\n"
                     "              [cf <ifaceList>][smpr <ifaceList>][ecds <ifaceList>]\n"
                     "              [push <srcIface>,<dstIfaceList>] [rpush <srcIface>,<dstIfaceList>]\n"
                     "              [merge <ifaceList>][rmerge <ifaceList>]\n"
@@ -1040,6 +1042,7 @@ const char* const SmfApp::CMD_LIST[] =
     "+merge",       // <ifaceList> forward _among_ all iface's listed
     "+rmerge",      // <ifaceList> : reseq/forward _among_ all iface's listed
     "+tunnel",      // <ifaceList> forward _among_ all iface's listed with no TTL decrement
+    "+vrf",         // <vrf-name>,<vrf-id>,<ifaceList> : list of interfaces belonging to a vrf
     "+cf",          // <ifaceList> : CF relay among all iface's listed
     "+smpr",        // <ifaceList> : S_MPR relay among all iface's listed
     "+ecds",        // <ifaceList> : E_CDS relay among all iface's listed
@@ -1199,6 +1202,7 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
         OnShutdown();
         return false;
     }
+    smf.DumpVRFs();
 
     // Check to see if any ifaces were configured
     // (or if outbound resequencing is set up)
@@ -1621,6 +1625,73 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         bool result = ParseInterfaceList(groupNamePtr, mode, ifaceListPtr, relayType, rseq);
         delete[] vtext;
         if (!result) return false;
+    }
+    else if (!strncmp("vrf", cmd, len))
+    {
+        // vrf <vrf-name>,[<vrf-id>,]<ifaceList> : add interface(s) to a vrf
+        size_t vlen = strlen(val);
+        char* vtext = new char[vlen + 1];
+        if (NULL == vtext)
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(vrf) new string[] error: %s\n", GetErrorString());
+            return false;
+        }
+        strcpy(vtext, val);
+        char* vrfNamePtr = vtext;
+        char* vrfIdPtr = strchr(vrfNamePtr, ',');
+        if (NULL == vrfIdPtr)
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(vrf) error: missing vrf id and|or interface list\n");
+            delete[] vtext;
+            return false;
+        }
+
+        // Is vrf-id actually given?
+        char* ifaceListPtr;
+        *vrfIdPtr++ = '\0';
+        int vrf_id = atoi(vrfIdPtr);
+
+        if (vrf_id < 0 )
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(vrf) error: invalid vrf id (%i), must be 0 or more\n", vrf_id);
+            delete[] vtext;
+            return false;
+        }
+        else if ( (0 == vrf_id)  &&  ('0' != vrfIdPtr[0]))
+        {
+            // if we dont have vrf id set it to -1 , parse as iface list
+            vrf_id = -1;
+            ifaceListPtr = vrfIdPtr;
+        }
+        else {
+            ifaceListPtr = strchr(vrfIdPtr, ',');
+            *ifaceListPtr++ = '\0';
+        }
+
+        if (NULL == ifaceListPtr) {
+          PLOG(PL_ERROR,
+               "SmfApp::OnCommand(vrf) error: missing interface list\n");
+          delete[] vtext;
+          return false;
+        }
+        Smf::SmfVRF* vrf = smf.AddVRF(vrfNamePtr, (1==vrf_id)?VRF_DEFAULT:(UINT32)vrf_id);
+
+        ProtoTokenator tk(ifaceListPtr, ',');
+        bool noIface = true;
+        const char *ifaceName;
+        while (NULL != (ifaceName = tk.GetNextItem())) {
+          vrf->AddInterface(ifaceName);
+          noIface = false;
+        }
+        if (noIface) {
+          PLOG(PL_ERROR,
+               "SmfApp::OnCommand(vrf) error: missing interface list\n");
+          delete[] vtext;
+          return false;
+        }
+
+        delete[] vtext;
+        return true;
     }
     else if (!strncmp("remove", cmd, len))
     {
