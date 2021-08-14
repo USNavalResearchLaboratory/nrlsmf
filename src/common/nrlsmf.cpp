@@ -11,6 +11,7 @@
 
 #if defined(ELASTIC_MCAST) || defined(ADAPTIVE_ROUTING)
 #include "mcastFib.h"
+#include "smfIgmp.h"
 #ifdef ADAPTIVE_ROUTING
 #include "smartController.h"
 #include "smartForwarder.h"
@@ -170,6 +171,8 @@ class SmfApp : public ProtoApp
                           ProtoSocket::Event theEvent);
 
         bool OnIgmpQueryTimeout(ProtoTimer& theTimer);
+        void OnIgmpMembershipUpdate(ProtoChannel&               theChannel, 
+                                    ProtoChannel::Notification  notifyType);
 
         void DisplayGroups();
 
@@ -397,6 +400,7 @@ class SmfApp : public ProtoApp
 
 #ifdef ELASTIC_MCAST
         ElasticMulticastController  mcast_controller;
+        SmfIgmp                     igmp_controller;
         ProtoTimer                  igmp_query_timer;
 #endif // ELASTIC_MCAST
 #ifdef ADAPTIVE_ROUTING
@@ -967,6 +971,7 @@ SmfApp::SmfApp()
 #endif // MNE_SUPPORT
 #ifdef ELASTIC_MCAST
    mcast_controller(GetTimerMgr()),
+   igmp_controller(GetTimerMgr()),
 #endif // ELASTIC_MCAST
 #ifdef ADAPTIVE_ROUTING
    smart_controller(GetTimerMgr()),
@@ -989,6 +994,8 @@ SmfApp::SmfApp()
     smf.SetController(&mcast_controller);
     smf.SetOutputMechanism(this);
     igmp_query_timer.SetListener(this, &SmfApp::OnIgmpQueryTimeout);
+    igmp_controller.SetNotifier(&GetChannelNotifier());
+    igmp_controller.SetListener(this, &SmfApp::OnIgmpMembershipUpdate);
 #endif // ELASTIC_MCAST
 #ifdef ADAPTIVE_ROUTING
     smart_controller.SetForwarder(&smf);
@@ -1292,6 +1299,7 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
         ActivateTimer(igmp_query_timer);
     }
     */
+   igmp_controller.Open();
 #endif // ELASTIC_MCAST
 
     dispatcher.SetPriorityBoost(priority_boost);
@@ -1345,7 +1353,7 @@ void SmfApp::OnShutdown()
                 unsigned int capIndex = cap.GetInterfaceIndex();
                 ProtoAddressList addrList;
                 ProtoNet::GetInterfaceAddressList(capIndex, ProtoAddress::IPv4, addrList);
-#ifdef HAVE_IPV6
+#ifdef HAVE_IPV6 
                 ProtoNet::GetInterfaceAddressList(capIndex, ProtoAddress::IPv6, addrList);
 #endif // HAVE_IPV6
                 // Weed out link local addrs
@@ -5305,6 +5313,29 @@ bool SmfApp::OnIgmpQueryTimeout(ProtoTimer& theTimer)
     theTimer.SetInterval(10.0);
     return true;
 }  // end SmfApp::OnIgmpQueryTimeout()
+
+void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel, 
+                                    ProtoChannel::Notification  notifyType)
+{
+    // igmp_controller has updates for group membership
+    // Get the membership updates from the igmp_controller and update the mcast_controller
+    // Returns an array of tuples, each defining a group, add/remove flag, and the interface index
+    for (const auto& u : igmp_controller.GetMembershipUpdates())
+    {
+        ProtoAddress group;
+        bool added;
+        std::uint32_t index;
+        std::tie(group, added, index) = u;
+        if (added)
+        {
+            mcast_controller.AddManagedMembership(index, group);
+        }
+        else
+        {
+            mcast_controller.RemoveManagedMembership(index, group);
+        }
+    }
+}
 #endif // ELASTIC_MCAST
 
 // This is the notification handler called when outbound virtual interface packets are received
