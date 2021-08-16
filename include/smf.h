@@ -164,6 +164,11 @@ class Smf
                 UINT32 GetID()
                     {return vrf_id;}
 
+                void SetTableID(UINT32 tid)
+                    {table_id = tid;}
+                UINT32 GetTableID()
+                    {return table_id;}
+
                 void SetName(const char* new_name);
                 const char* GetName() const
                     {return vrf_name;}
@@ -175,11 +180,15 @@ class Smf
                     {return (8*sizeof(UINT32));}
 
                 bool AddInterface(const char* iface);
+                void SetIfaceList(std::unordered_set<std::string> new_iface_list)
+                    {iface_list = new_iface_list;}
+
                 std::unordered_set<std::string> GetIfaceList()
                     {return iface_list;}
 
             private:
                 UINT32 vrf_id;
+                int table_id;
                 char vrf_name[VRF_NAME_SIZE + 1];
                 std::unordered_set<std::string> iface_list;
         };
@@ -207,10 +216,12 @@ class Smf
         };  // end class Smf::SmfVRFList
 
 
-        SmfVRF* AddVRF(const char* vrf_name, UINT32 vrf_id);
+        SmfVRF* AddVRF(const char* vrf_name, UINT32 vrf_id, int table_id);
         void DeleteVRF(SmfVRF& vrf);
         void DumpVRFs();
         SmfVRF* GetVRFByName(const char* vrf_name);
+        void QueryFRRVRFs();
+        void QueryFRRVRFInterface(std::string vrf_name);
         SmfVRF* GetVRF(UINT32 vrf_id) const
             {return vrf_list.FindVRF(vrf_id);}
 
@@ -502,8 +513,7 @@ class Smf
                 AssociateList                         assoc_source_list;   // associates targeting this Interface                 
                 AssociateList                         assoc_target_list;   // associates that this Interface targets              
                 unsigned int                          unicast_group_count;
-                SmfVRF*                                vrf;                 // The VRF that this interface belongs to
-                                                
+                SmfVRF*                               vrf;                 // The VRF that this interface belongs to
                 SmfQueueTable                         queue_table;         // TBD - per flow (or next hop?) queues                      
                 SmfQueue                              pkt_queue;           // interface output queue
 #ifdef ELASTIC_MCAST                
@@ -734,6 +744,10 @@ class Smf
 	        {dscp[idxDSCP] = (char)RESET_DSCP;}
 	    char* GetUnicastDSCP(void)
 	        {return dscp;}
+        bool withFRR() const
+            {return with_FRR;}
+        void SetWithFRR(bool state)
+            {with_FRR = state;}
         void SetDelayTime(double time)
             {delay_time = time;} 
         enum DpdType
@@ -915,6 +929,7 @@ class Smf
         unsigned int        dups_count;
         unsigned int        asym_count;
         unsigned int        fwd_count;
+        bool                with_FRR;             // running along side FRR
         
 };  // end class Smf
 #endif // _SMF

@@ -1009,7 +1009,7 @@ void SmfApp::Usage()
     fprintf(stderr, "Usage: nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}\n"
                     "              [add [<group>,]{cf|smpr|ecds|push|rpush|merge|rmerge},<ifaceList>]\n"
                     "              [remove {<group> | [<group>,]<ifaceList>}][elastic <group>][adaptive <group>]\n"
-                    "              [vrf <vrfName>,[<vrfId>,]<ifaceList>]\n"
+                    "              [vrf <vrfName>,[<vrfId>,]<ifaceList>][with-frr] \n"
                     "              [cf <ifaceList>][smpr <ifaceList>][ecds <ifaceList>]\n"
                     "              [push <srcIface>,<dstIfaceList>] [rpush <srcIface>,<dstIfaceList>]\n"
                     "              [merge <ifaceList>][rmerge <ifaceList>]\n"
@@ -1042,6 +1042,7 @@ const char* const SmfApp::CMD_LIST[] =
     "+merge",       // <ifaceList> forward _among_ all iface's listed
     "+rmerge",      // <ifaceList> : reseq/forward _among_ all iface's listed
     "+tunnel",      // <ifaceList> forward _among_ all iface's listed with no TTL decrement
+    "-with-frr",    // run along frr and pull configuration where appropriate, such as vrf info
     "+vrf",         // <vrf-name>,<vrf-id>,<ifaceList> : list of interfaces belonging to a vrf
     "+cf",          // <ifaceList> : CF relay among all iface's listed
     "+smpr",        // <ifaceList> : S_MPR relay among all iface's listed
@@ -1201,6 +1202,10 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
             PLOG(PL_FATAL, "smfApp::OnStartup() error: bad command line.\n");
         OnShutdown();
         return false;
+    }
+    if (smf.withFRR())
+    {
+        smf.QueryFRRVRFs();
     }
     smf.DumpVRFs();
 
@@ -1531,6 +1536,12 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         need_help = true;
         return false;
     }
+    else if (!strncmp("with-frr", cmd, len))
+    {
+        PLOG(PL_DEBUG,"Setup to pull VRF data from FRR\n");
+        smf.SetWithFRR(true);
+        return true;
+    }
     else if (!strncmp("ipv6", cmd, len))
     {
         ipv6_enabled = true;
@@ -1674,7 +1685,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
           delete[] vtext;
           return false;
         }
-        Smf::SmfVRF* vrf = smf.AddVRF(vrfNamePtr, (1==vrf_id)?VRF_DEFAULT:(UINT32)vrf_id);
+        Smf::SmfVRF* vrf = smf.AddVRF(vrfNamePtr, (1==vrf_id)?VRF_DEFAULT:(UINT32)vrf_id, -1);
 
         ProtoTokenator tk(ifaceListPtr, ',');
         bool noIface = true;
