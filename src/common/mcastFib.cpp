@@ -2307,7 +2307,10 @@ bool ElasticMulticastController::AddManagedMembership(const ProtoFlow::Descripti
         PLOG(PL_ALWAYS, "\n");
     }
     if (0 == membership->GetFlags())
+    {
         mcast_forwarder->SetAckingStatus(membership->GetFlowDescription(), true);
+        mcast_forwarder->SetForwardingStatus(membership->GetFlowDescription(), ifaceIndex, MulticastFIB::FORWARD, true, true);
+    }
     // Set MANAGED status for  _all_ matching memberships for this "ifaceIndex"
     MulticastFIB::MembershipTable::Iterator iterator(membership_table, &membership->GetFlowDescription());
     unsigned int ifaceIndex = flowDescription.GetInterfaceIndex();
@@ -2344,7 +2347,10 @@ bool ElasticMulticastController::RemoveManagedMembership(const ProtoFlow::Descri
         }
     }
     if (match && !ackingStatus)
+    {
         mcast_forwarder->SetAckingStatus(flowDescription, false);
+        mcast_forwarder->SetForwardingStatus(flowDescription, ifaceIndex, default_forwarding_status, false, false);
+    }
     return match;
 }  // end ElasticMulticastController::RemoveManagedMembership()
 
