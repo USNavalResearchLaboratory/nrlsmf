@@ -1212,9 +1212,9 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
     }
     if (smf.withFRR())
     {
-        smf.QueryFRRVRFs();
+        smf.GetVRFs()->QueryFRRVRFs();
     }
-    smf.DumpVRFs();
+    smf.GetVRFs()->DumpVRFs();
 
     // Check to see if any ifaces were configured
     // (or if outbound resequencing is set up)
@@ -1693,7 +1693,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
           delete[] vtext;
           return false;
         }
-        Smf::SmfVRF* vrf = smf.AddVRF(vrfNamePtr, (1==vrf_id)?VRF_DEFAULT:(UINT32)vrf_id, -1);
+        SmfVRF* vrf = smf.GetVRFs()->AddVRF(vrfNamePtr, (1==vrf_id)?VRF_DEFAULT:(UINT32)vrf_id, -1);
 
         ProtoTokenator tk(ifaceListPtr, ',');
         bool noIface = true;

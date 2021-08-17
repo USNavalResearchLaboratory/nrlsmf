@@ -36,7 +36,7 @@ $(PROTOLIB)/lib/libprotokit.a:
 
 NRLSMF_SRC = $(COMMON)/nrlsmf.cpp $(COMMON)/smf.cpp $(COMMON)/smfDpd.cpp \
 	$(COMMON)/smfHash.cpp $(COMMON)/smfHashMD5.cpp $(COMMON)/smfHashSHA1.cpp \
-	$(COMMON)/smfQueue.cpp $(COMMON)/smfConfig.cpp $(SYSTEM_SRC)
+	$(COMMON)/smfQueue.cpp $(COMMON)/smfConfig.cpp $(COMMON)/smfVrf.cpp $(SYSTEM_SRC)
 
 NRLSMF_OBJ = $(NRLSMF_SRC:.cpp=.o)
 
