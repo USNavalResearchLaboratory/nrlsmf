@@ -31,10 +31,14 @@ public:
   const char *GetKey() const { return ((const char *)&vrf_id); }
   unsigned int GetKeysize() const { return (8 * sizeof(UINT32)); }
 
+  bool IsMemberInterface(const char *iface_name);
+  bool IsMemberInterface(unsigned int iface_index);
+
   bool AddInterface(const char *iface);
   bool SetIfaceList(std::unordered_set<std::string> new_iface_list);
 
   std::unordered_set<std::string> GetIfaceList() { return iface_list; }
+  std::unordered_set<unsigned int> GetIfaceIndexList() { return iface_index_list; }
 
 private:
   UINT32 vrf_id;
@@ -42,7 +46,7 @@ private:
   char vrf_name[VRF_NAME_SIZE + 1];
   std::unordered_set<std::string> iface_list;
   std::unordered_set<unsigned int> iface_index_list;
-};  // end class SmfVRF
+}; // end class SmfVRF
 
 
 class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF> {
@@ -68,6 +72,7 @@ void QueryFRRVRFs();
 void QueryFRRVRFInterface(std::string vrf_name);
 SmfVRF *GetVRF(UINT32 vrf_id) const { return FindVRF(vrf_id); }
 
+SmfVRF *GetVRFbyIfaceIndex(unsigned int iface_index);
 
 private:
   const char *GetKey(const Item &item) const {
@@ -76,5 +81,7 @@ private:
   unsigned int GetKeysize(const Item &item) const {
     return static_cast<const SmfVRF &>(item).GetKeysize();
   }
-}; // end class SmfVRFList
+};
+
+ // end class SmfVRFList
 

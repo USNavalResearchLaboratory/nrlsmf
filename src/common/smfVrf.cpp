@@ -10,6 +10,23 @@ void SmfVRF::SetName(const char* new_name)
     strncpy(vrf_name, new_name, VRF_NAME_SIZE);
     vrf_name[VRF_NAME_SIZE]='\0';
 }
+
+bool SmfVRF::IsMemberInterface(const char *iface_name)
+{
+  if (iface_list.find(iface_name) != iface_list.end())
+    return true;
+  else
+    return false;
+}
+
+bool SmfVRF::IsMemberInterface(unsigned int iface_index)
+{
+  if (iface_index_list.find(iface_index) != iface_index_list.end())
+    return true;
+  else
+    return false;
+}
+
 bool SmfVRF::AddInterface(const char *iface) {
   // iface_list.
   if (iface_list.find(iface) != iface_list.end())
@@ -44,13 +61,15 @@ bool SmfVRF::AddInterface(const char *iface) {
         new_iface_index_list.clear();
         return false;
       }
-      iface_index_list.insert(ifaceIndex);
+      new_iface_index_list.insert(ifaceIndex);
     }
 
     iface_list = new_iface_list;
     iface_index_list = new_iface_index_list;
     return true;
   }
+
+
 
 SmfVRF* SmfVRFList::AddVRF(const char *vrf_name, UINT32 vrf_id, int table_id)
 {
@@ -224,6 +243,17 @@ SmfVRF* SmfVRFList::GetVRFByName(const char* vrf_name)
   return NULL;
 }
 
+SmfVRF* SmfVRFList::GetVRFbyIfaceIndex(unsigned int iface_index)
+{
+    SmfVRFList::Iterator vrfIterator(*this);
+    SmfVRF* vrf;
+    while (NULL != (vrf = vrfIterator.GetNextItem()))
+    {
+        if (vrf->IsMemberInterface(iface_index))
+            return vrf;
+    }
+    return nullptr;
+}
 void SmfVRFList::DumpVRFs()
 {
     SmfVRFList::Iterator vrfIterator(*this);
@@ -235,6 +265,8 @@ void SmfVRFList::DumpVRFs()
         PLOG(PL_DEBUG, "    inerfaces:\n");
         for (std::string s : vrf->GetIfaceList())
             PLOG(PL_DEBUG, "             %s\n", s.c_str());
+        //for (unsigned int i : vrf->GetIfaceIndexList())
+        //    PLOG(PL_DEBUG, "             %u\n", i);
     }
     PLOG(PL_DEBUG, "===========================================\n");
 }

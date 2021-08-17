@@ -1086,6 +1086,8 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     //    and ttl/hopLimit (and also decrement ttl/hopLimit for forwarding)
     ProtoAddress srcIp, dstIp;
 
+    SmfVRF * vrf = vrf_list.GetVRFbyIfaceIndex(srcIface.GetIndex());
+
     char flowId[48];  // worst case is probably IPV6 <taggerID:srcAddr:dstAddr> w/ taggerID a IPv6 addr (3*128 bits)
     unsigned int flowIdSize = (48*8);
     char pktId[32];  // worst case 32-bits of ID plus 160 bits of hash
@@ -2118,7 +2120,18 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
         }
         Interface& dstIface = assoc->GetInterface();
         
-        //SmfVRF * vrf = vrf_list.GetVRFByName(dstIface.);
+        // If we have VRFs, check if the outgoing interface belongs to the
+        // same VRF, if it doesn't, stop processing
+        if (NULL != vrf)
+        {
+            if (!vrf->IsMemberInterface(dstIface.GetIndex()))
+            {
+                    //PLOG(PL_DEBUG, "Smf::ProcessPacket(): Interface %u does't belong to VRF %s\n",
+                    //dstIface.GetIndex(), vrf->GetName());
+                    continue;;
+            }
+
+        }
 
 #ifdef ADAPTIVE_ROUTING
         smart_controller->UpdateInterfaces(dstIface.GetInterfaceAddress(),dstIface.GetIndex());
