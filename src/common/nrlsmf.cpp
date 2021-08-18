@@ -1210,10 +1210,8 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
         OnShutdown();
         return false;
     }
-    if (smf.withFRR())
-    {
-        smf.GetVRFs()->QueryFRRVRFs();
-    }
+
+    smf.GetVRFs()->EnableFRRUpdates(smf.withFRR());
     smf.GetVRFs()->DumpVRFs();
 
     // Check to see if any ifaces were configured

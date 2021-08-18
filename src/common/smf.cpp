@@ -380,7 +380,7 @@ Smf::Smf(ProtoTimerMgr& timerMgr)
    update_age_max(DEFAULT_AGE_MAX), current_update_time(0),
    selector_list_len(0), neighbor_list_len(0),
    recv_count(0), mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0),
-   with_FRR(false)
+   vrf_list(timerMgr), with_FRR(false)
 {
     delay_relay_off_timer.SetInterval(delay_time);
     delay_relay_off_timer.SetListener(this,&Smf::OnDelayRelayOffTimeout);

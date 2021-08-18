@@ -1,5 +1,6 @@
 #include "protoDefs.h"
 #include "protoQueue.h"
+#include "protoTimer.h"
 #include <unordered_set>
 
 #define VRF_NAME_SIZE 36
@@ -10,13 +11,10 @@
 class SmfVRF : public ProtoQueue::Item {
 
 public:
-  SmfVRF(UINT32 vid) { vrf_id = vid; }
-  SmfVRF(UINT32 vid, const char *new_name) {
-    vrf_id = vid;
-    SetName(new_name);
-  }
-
-  ~SmfVRF() { iface_list.clear(); }
+  SmfVRF(UINT32 vid);
+  SmfVRF(UINT32 vid, const char *new_name);
+  ~SmfVRF()
+  { iface_list.clear(); iface_index_list.clear();}
 
   void SetID(UINT32 vid) { vrf_id = vid; }
   UINT32 GetID() { return vrf_id; }
@@ -46,11 +44,13 @@ private:
   char vrf_name[VRF_NAME_SIZE + 1];
   std::unordered_set<std::string> iface_list;
   std::unordered_set<unsigned int> iface_index_list;
-}; // end class SmfVRF
-
+};// end class SmfVRF
 
 class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF> {
 public:
+  SmfVRFList(ProtoTimerMgr& timerMgr);
+  ~SmfVRFList();
+
   SmfVRF *FindVRF(UINT32 vid) const {
     return Find((const char *)&vid, 8 * sizeof(UINT32));
   }
@@ -69,19 +69,20 @@ void DeleteVRF(SmfVRF &vrf);
 void DumpVRFs();
 SmfVRF *GetVRFByName(const char *vrf_name);
 void QueryFRRVRFs();
+void EnableFRRUpdates(bool enable);
 void QueryFRRVRFInterface(std::string vrf_name);
 SmfVRF *GetVRF(UINT32 vrf_id) const { return FindVRF(vrf_id); }
-
 SmfVRF *GetVRFbyIfaceIndex(unsigned int iface_index);
+void DoUpdate(ProtoTimer& theTimer);
 
 private:
+  ProtoTimerMgr& timer_mgr;
+  ProtoTimer update_timer;
   const char *GetKey(const Item &item) const {
     return static_cast<const SmfVRF &>(item).GetKey();
   }
   unsigned int GetKeysize(const Item &item) const {
     return static_cast<const SmfVRF &>(item).GetKeysize();
   }
-};
-
- // end class SmfVRFList
+};// end class SmfVRFList
 

@@ -5,6 +5,19 @@
 #include <string>
 #include <stdlib.h>  // for atoi()
 
+SmfVRF::SmfVRF(UINT32 vid):
+    ProtoQueue::Item(),
+    vrf_id(vid)
+{
+}
+
+SmfVRF::SmfVRF(UINT32 vid, const char *new_name):
+    ProtoQueue::Item(),
+    vrf_id(vid)
+{
+    SetName(new_name);
+}
+
 void SmfVRF::SetName(const char* new_name)
 {
     strncpy(vrf_name, new_name, VRF_NAME_SIZE);
@@ -70,6 +83,40 @@ bool SmfVRF::AddInterface(const char *iface) {
   }
 
 
+SmfVRFList::SmfVRFList(ProtoTimerMgr& timerMgr) :
+    ProtoIndexedQueueTemplate<SmfVRF>(),
+    timer_mgr(timerMgr),
+    update_timer()
+{
+    update_timer.SetInterval(15.0);
+    update_timer.SetRepeat(-1);
+    update_timer.SetListener(this, &SmfVRFList::DoUpdate);
+}
+
+SmfVRFList::~SmfVRFList()
+{
+    if (update_timer.IsActive())
+    {
+        update_timer.Deactivate();
+    }
+}
+
+void SmfVRFList::SmfVRFList::EnableFRRUpdates(bool enable)
+{
+  if (enable) {
+    if (!update_timer.IsActive()) {
+      timer_mgr.ActivateTimer(update_timer);
+    }
+  } else {
+    if (update_timer.IsActive()) {
+      timer_mgr.DeactivateTimer(update_timer);
+    }
+  }
+}
+void SmfVRFList::DoUpdate(ProtoTimer& theTimer)
+{
+    QueryFRRVRFs();
+}
 
 SmfVRF* SmfVRFList::AddVRF(const char *vrf_name, UINT32 vrf_id, int table_id)
 {
@@ -103,7 +150,7 @@ SmfVRF* SmfVRFList::AddVRF(const char *vrf_name, UINT32 vrf_id, int table_id)
         else
             vrf->SetTableID(vrf_id);
 
-        this->Insert(*vrf);
+        Insert(*vrf);
     }
     return vrf;
 }

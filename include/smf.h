@@ -811,7 +811,6 @@ class Smf
         
         InterfaceList       iface_list;
         InterfaceGroupList  iface_group_list;
-        SmfVRFList          vrf_list;
         
         ProtoAddressList    local_addr_list;  // list of local interface addresses
         
@@ -848,6 +847,7 @@ class Smf
         unsigned int        dups_count;
         unsigned int        asym_count;
         unsigned int        fwd_count;
+        SmfVRFList          vrf_list;
         bool                with_FRR;             // running along side FRR
         
 };  // end class Smf
