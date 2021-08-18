@@ -33,7 +33,7 @@ class SmfIgmp : public ProtoChannel
         SmfIgmp(ProtoTimerMgr& timerMgr);
         ~SmfIgmp();
 
-        virtual bool Open();
+        virtual bool Open(bool withFRR);
         virtual void Close();
         virtual bool IsOpen() const;
 

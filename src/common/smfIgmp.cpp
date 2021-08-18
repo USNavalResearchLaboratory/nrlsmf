@@ -20,7 +20,7 @@ SmfIgmp::SmfIgmp(ProtoTimerMgr& timerMgr) :
 
 SmfIgmp::~SmfIgmp() {}
 
-bool SmfIgmp::Open()
+bool SmfIgmp::Open(bool withFRR)
 {
     // Open the pipe here and set descriptor
     int p[2];
@@ -33,7 +33,7 @@ bool SmfIgmp::Open()
     descriptor = p[0]; // For reading in SMF core app
     wpipe = p[1]; // For writing IGMP updates locally
 
-    if (!update_timer.IsActive())
+    if (withFRR && !update_timer.IsActive())
     {
         timer_mgr.ActivateTimer(update_timer);
     }
@@ -100,7 +100,7 @@ void SmfIgmp::DoUpdate(ProtoTimer& theTimer)
     // # show ip igmp groups
     // Interface        Address         Group           Mode Timer    Srcs V Uptime
     // eth1             192.168.229.87  239.255.255.250 EXCL 00:03:11    1 3 03:34:01
-    PLOG(PL_DEBUG, "SnfIgmp::DoUpdate() Current IGMP Groups\n%s\n", ret.first.c_str());
+    PLOG(PL_DEBUG, "SmfIgmp::DoUpdate() Current IGMP Groups\n%s\n", ret.first.c_str());
     std::istringstream iss(ret.first);
     std::string line;
     int totalGroups = 0;
@@ -152,7 +152,7 @@ void SmfIgmp::DoUpdate(ProtoTimer& theTimer)
 
     if (totalGroups != 0 && totalGroups != groupCnt) // Only check the total if we found that information in the output
     {
-        PLOG(PL_ERROR, "SnfIgmp::DoUpdate() Total number of groups does not match the number parsed\n");
+        PLOG(PL_ERROR, "SmfIgmp::DoUpdate() Total number of groups does not match the number parsed\n");
         return;
     }
 
@@ -184,7 +184,7 @@ bool SmfIgmp::FindChanges(const GroupMap& currentGroups)
             unsigned int idx = GetInterfaceIndex(cit->first);
             if (idx == 0)
             {
-                PLOG(PL_ERROR, "Smf::FindChanges() Failed to get index for interface %s\n", cit->first.c_str());
+                PLOG(PL_ERROR, "SmfIgmp::FindChanges() Failed to get index for interface %s\n", cit->first.c_str());
                 cit = std::next(cit);
                 continue;
             }
@@ -200,7 +200,7 @@ bool SmfIgmp::FindChanges(const GroupMap& currentGroups)
             unsigned int idx = GetInterfaceIndex(pit->first);
             if (idx == 0)
             {
-                PLOG(PL_ERROR, "Smf::FindChanges() Failed to get index for interface %s\n", pit->first.c_str());
+                PLOG(PL_ERROR, "SmfIgmp::FindChanges() Failed to get index for interface %s\n", pit->first.c_str());
                 pit = std::next(pit);
                 continue;
             }
@@ -216,7 +216,7 @@ bool SmfIgmp::FindChanges(const GroupMap& currentGroups)
             unsigned int idx = GetInterfaceIndex(pit->first);
             if (idx == 0)
             {
-                PLOG(PL_ERROR, "Smf::FindChanges() Failed to get index for interface %s\n", pit->first.c_str());
+                PLOG(PL_ERROR, "SmfIgmp::FindChanges() Failed to get index for interface %s\n", pit->first.c_str());
                 pit = std::next(pit);
                 continue;
             }
@@ -232,7 +232,7 @@ bool SmfIgmp::FindChanges(const GroupMap& currentGroups)
             unsigned int idx = GetInterfaceIndex(cit->first);
             if (idx == 0)
             {
-                PLOG(PL_ERROR, "Smf::FindChanges() Failed to get index for interface %s\n", cit->first.c_str());
+                PLOG(PL_ERROR, "SmfIgmp::FindChanges() Failed to get index for interface %s\n", cit->first.c_str());
                 cit = std::next(cit);
                 continue;
             }
@@ -248,7 +248,7 @@ bool SmfIgmp::FindChanges(const GroupMap& currentGroups)
             unsigned int idx = GetInterfaceIndex(pit->first);
             if (idx == 0)
             {
-                PLOG(PL_ERROR, "Smf::FindChanges() Failed to get index for interface %s\n", cit->first.c_str());
+                PLOG(PL_ERROR, "SmfIgmp::FindChanges() Failed to get index for interface %s\n", cit->first.c_str());
                 pit = std::next(pit);
                 cit = std::next(cit);
                 continue;
@@ -308,7 +308,7 @@ unsigned int SmfIgmp::GetInterfaceIndex(const std::string& iface)
         unsigned int idx = ProtoNet::GetInterfaceIndex(iface.c_str());
         if (idx == 0)
         {
-            PLOG(PL_ERROR, "SmgIgmp::GetInterfaceIndex() Failed to get index for interface %s\n", iface.c_str());
+            PLOG(PL_ERROR, "SmfIgmp::GetInterfaceIndex() Failed to get index for interface %s\n", iface.c_str());
             return 0;
         }
         it = iface_index_cache.emplace(iface, idx).first;

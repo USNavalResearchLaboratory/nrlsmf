@@ -1299,7 +1299,7 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
         ActivateTimer(igmp_query_timer);
     }
     */
-   igmp_controller.Open();
+   igmp_controller.Open(smf.withFRR());
 #endif // ELASTIC_MCAST
 
     dispatcher.SetPriorityBoost(priority_boost);
