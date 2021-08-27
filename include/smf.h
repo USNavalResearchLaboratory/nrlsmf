@@ -315,6 +315,11 @@ class Smf
                     {repair_window = sec;}
                 double GetRepairWindow() const
                     {return repair_window;}
+                // Elastic routing state variables
+                void SetElasticMulticast(bool state)
+                    {elastic_mcast = state;}
+                bool GetElasticMulticast() const
+                    {return elastic_mcast;}
 #endif // ELASTIC_MCAST
                 
                 // This is for adding an opaque "decorator" extension to the interface
@@ -439,6 +444,7 @@ class Smf
                 MulticastFIB::UpstreamHistoryTable    upstream_history_table;
                 double                                repair_window;      // in secs (max retransmit packet age)
                 UINT16                                local_adv_id;
+                bool                                  elastic_mcast;
 #endif // ELASTIC_MCAST
                                
                 unsigned int                          sent_count;  // count of outbound (sent) packets for iface

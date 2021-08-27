@@ -1877,6 +1877,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         {
             char ifaceName[64];
             ifaceName[63] = '\0';
+            iface->SetElasticMulticast(true);
             if (!ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, 63))
             {
                 PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: unable to retrieve interface name\n");

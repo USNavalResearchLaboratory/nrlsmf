@@ -71,7 +71,8 @@ Smf::Interface::Interface(unsigned int ifIndex)
    ump_sequence(0), ip_encapsulate(false), dup_detector(NULL), 
    unicast_group_count(0), 
 #ifdef ELASTIC_MCAST
-   repair_window(DEFAULT_REPAIR_WINDOW), 
+   repair_window(DEFAULT_REPAIR_WINDOW),
+   elastic_mcast(false),
 #endif // ELASTIC_MCAST
    sent_count(0), retr_count(0), recv_count(0), 
    mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0), extension(NULL)
@@ -2004,9 +2005,11 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     {
         InterfaceGroup& ifaceGroup = assoc->GetInterfaceGroup();
         RelayType relayType = ifaceGroup.GetRelayType();
+        Interface& dstIface = assoc->GetInterface();
         
 #ifdef ELASTIC_MCAST
-        bool elastic = ifaceGroup.GetElasticMulticast();  // yyy - change to use IsElastic() method
+        // yyy - change to use IsElastic() method
+        bool elastic = ifaceGroup.GetElasticMulticast() || dstIface.GetElasticMulticast();
         if (!elastic && mcast_controller->HasPolicies())
         {
             // Check for matching fibEntry to get "default forwarding status".  This is used to 
@@ -2052,7 +2055,8 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             {
                 ifaceForward = relay_enabled;
                 updateDupTree = ifaceForward;
-                PLOG(PL_DETAIL, "Smf::ProcessPacket(): forward on interface?: %d\n", ifaceForward );
+                PLOG(PL_DETAIL, "Smf::ProcessPacket(): forward on interface?: %d  elastic?%i  relay-type:%i\n",
+                     ifaceForward, elastic, relayType );
                 break;
             }
             case E_CDS:
@@ -2118,7 +2122,6 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             asym_count++;
             srcIface.IncrementAsymCount();
         }
-        Interface& dstIface = assoc->GetInterface();
         
         // If we have VRFs, check if the outgoing interface belongs to the
         // same VRF, if it doesn't, stop processing
@@ -2130,7 +2133,6 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     //dstIface.GetIndex(), vrf->GetName());
                     continue;;
             }
-
         }
 
 #ifdef ADAPTIVE_ROUTING
