@@ -971,7 +971,7 @@ SmfApp::SmfApp()
 #endif // MNE_SUPPORT
 #ifdef ELASTIC_MCAST
    mcast_controller(GetTimerMgr()),
-   igmp_controller(GetTimerMgr()),
+   igmp_controller(GetTimerMgr(), smf),
 #endif // ELASTIC_MCAST
 #ifdef ADAPTIVE_ROUTING
    smart_controller(GetTimerMgr()),
@@ -5328,10 +5328,20 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
         if (added)
         {
             mcast_controller.AddManagedMembership(index, group);
+            auto iface = smf.GetInterface(index);
+            if (iface)
+            {
+                iface->AddManagedMembership(group);
+            }
         }
         else
         {
             mcast_controller.RemoveManagedMembership(index, group);
+            auto iface = smf.GetInterface(index);
+            if (iface)
+            {
+                iface->RemoveManagedMembership(group);
+            }
         }
     }
 }

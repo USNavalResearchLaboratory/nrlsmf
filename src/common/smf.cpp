@@ -73,6 +73,8 @@ Smf::Interface::Interface(unsigned int ifIndex)
 #ifdef ELASTIC_MCAST
    repair_window(DEFAULT_REPAIR_WINDOW),
    elastic_mcast(false),
+   managed(false),
+   managed_memberships(),
 #endif // ELASTIC_MCAST
    sent_count(0), retr_count(0), recv_count(0), 
    mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0), extension(NULL)
@@ -2035,6 +2037,11 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     return 0;
                 }
             }
+        }
+
+        if (dstIface.IsManaged() && !dstIface.HasActiveMembership(dstIp))
+        { // Host interfaces that don't have any active receivers should not be forwarded to
+            continue;
         }
 #else
         bool elastic = false;

@@ -3,6 +3,7 @@
 #ifndef _SMF_IGMP
 #define _SMF_IGMP
 
+#include "smf.h"
 #include <map>
 #include <set>
 #include <vector>
@@ -26,11 +27,11 @@
 
 class SmfIgmp : public ProtoChannel
 {
-    using GroupMap = std::map<std::string, std::set<ProtoAddress>>;
+    using GroupMap = std::map<std::uint32_t, std::set<ProtoAddress>>;
     using GroupChangeArray = std::vector<std::tuple<ProtoAddress, bool, std::uint32_t>>;
 
     public:
-        SmfIgmp(ProtoTimerMgr& timerMgr);
+        SmfIgmp(ProtoTimerMgr& timerMgr, Smf& _smf);
         ~SmfIgmp();
 
         virtual bool Open(bool withFRR);
@@ -41,15 +42,17 @@ class SmfIgmp : public ProtoChannel
 
     private:
         void DoUpdate(ProtoTimer& theTimer);
+        void UpdateInterfaces();
+        void UpdateMemberships();
         bool FindChanges(const GroupMap& currentGroups);
-        unsigned int GetInterfaceIndex(const std::string& iface);
 
         int wpipe;
         ProtoTimerMgr& timer_mgr;
+        Smf& smf;
         ProtoTimer update_timer;
         GroupMap previous_groups;
         GroupChangeArray group_changes;
-        std::map<std::string, unsigned int> iface_index_cache;
+        std::map<std::uint32_t, bool> active_interfaces;
 };
 
 #endif // _SMF_IGMP
