@@ -1013,6 +1013,17 @@ SmfApp::~SmfApp()
 
 void SmfApp::Usage()
 {
+    const char* const* nextCmd = CMD_LIST;
+    fprintf(stderr, "Usage: nrlsmf [options]:\n");
+    while (*nextCmd) {
+        const char* cmd = &(*nextCmd)[1];
+        nextCmd++;
+        const char* cmdhelp = *nextCmd;
+        nextCmd++;
+        fprintf(stderr,"\t%-20s%s\n", (char*)cmd, (char*)cmdhelp);
+    }
+    fprintf(stderr, "\n  Note \"firewall\" options must be specified _before_ iface config commands!\n\n");
+ /*
     fprintf(stderr, "Usage: nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}\n"
                     "              [add [<group>,]{cf|smpr|ecds|push|rpush|merge|rmerge},<ifaceList>]\n"
                     "              [remove {<group> | [<group>,]<ifaceList>}][elastic <group>][adaptive <group>]\n"
@@ -1034,69 +1045,73 @@ void SmfApp::Usage()
                     "              [debug <debugLevel>][log <debugLogFile>]\n"
                     "              [cid <vifName>,<iface>[/{t|r|d}][, <iface2>[/{t|r|d}],...]\n"
                     "   (Note \"firewall\" options must be specified _before_ iface config commands!\n");
+*/
+
 }
 
 const char* const SmfApp::CMD_LIST[] =
 {
-    "-version",     // show version and exit
-    "-help",        // print help info an exit
-    "-ipv6",        // enable IPv6 support (must be first on command-line)
-    "+add",         // [<group>,]{cf|smpr|ecds},<ifaceList> : add interface(s) to flooding group with relay algorithm type given
-    "+remove",      // {<group>|[<group>,]<ifaceList>] : remove entire interface group, or the interface(s) from the specified or all group(s)
-    "+push",        // <srcIface,dstIfaceList> : forward packets from srcIFace to all dstIface's listed
-    "+rpush",       // <srcIface,dstIfaceList> : reseq/forward packets from srcIFace to all dstIface's listed
-    "+rpush",       // <srcIface,dstIfaceList> : reseq/forward packets from srcIFace to all dstIface's listed
-    "+merge",       // <ifaceList> forward _among_ all iface's listed
-    "+rmerge",      // <ifaceList> : reseq/forward _among_ all iface's listed
-    "+tunnel",      // <ifaceList> forward _among_ all iface's listed with no TTL decrement
-    "-with-frr",    // run along frr and pull configuration where appropriate, such as vrf info
-    "+vrf",         // <vrf-name>,<vrf-id>,<ifaceList> : list of interfaces belonging to a vrf
-    "+cf",          // <ifaceList> : CF relay among all iface's listed
-    "+smpr",        // <ifaceList> : S_MPR relay among all iface's listed
-    "+ecds",        // <ifaceList> : E_CDS relay among all iface's listed
-    "+forward",     // {on | off}  : forwarding enable/disable (default = "on")
-    "+relay",       // {on | off}  : act as relay node (default = "on")
-    "+elastic",     // <ifaceGroup> : enable Elastic Multicast for specific interface group
-    "+reliable",    // <ifaceList> : experimental reliable hop-by-hop forwarding option (adds UMP option to IPv4 packets)
-    "+utos",        // <trafficClass> : set IP traffic class to be ignored by reliable forwarding
-    "-advertise",   //  Sets elastic multicast operation to advertise flows instead of token-bucket limited forwarding
-    "+etx",         // <iface> use IP_UMP header extension to measure link quality and build/use ETX metric
-    "+flow",        // [<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)
-    "+join",        // [<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)
-    "+leave",       // [<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)
-    "+allow",       // {<filterSpec> | all}: set filter for flows that nrlsmf elastic mcast is allowed to forward.
-    "+deny",        // {<filterSpec> | all}: set filter for flows that nrlsmf elastic mcast should ignore
-    "+adaptive",    // <ifaceGroup>: enable Smart Routing for specific interface group
-    "+unicast",     // {unicastPrefix | off}  : allow unicast forwarding for a given prefix, or off (default = "off")
-    "+filterDups",  // {on | off} : filter received duplicates for "device" operation (default = "on")
-    "+encapsulate", // <ifaceList> - use IPIP encapsulation for outbound unicast packets on listed smf "device" interfaces
-    "+route",       // <dstAddr>,<nextHopAddr>  (used for debugging encapsulation only)
-    "+dscpCapture", // {value,dscpValueList}  : set the DSCP values(s) for unicast capture.
-    "+dscpRelease", // {value,dscpValueList}  : unset DSCP values(s) for unicast capture.
-    "+defaultForward", // {on | off}  : same as "relay" (for backwards compatibility)
-    "+delayoff",    // {<double> : number of microseconds delay before executing a relay off command (default = 0)
-    "+ihash",       // <algorithm> to set ihash_only hash algorithm
-    "+hash",        // <algorithm> to set H-DPD hash algorithm
-    "+idpd",        // {on | off} to do I-DPD when possible
-    "+window",      // {on | off} do window-based I-DPD of sequenced packets
-    "+resequence",  // {on | off}  : resequence outbound multicast packets
-    "+ttl",         // <value> : set TTL of outbound packets
-    "+device",      // <vifName>,<ifaceName>[/{t|r|d}][,<addr1>[,addr2, ...]] to create virtual interface 'device' associated with one or more physical interfaces
-    "+cid",         // <vifName>,<iface1>[/{t|r|d}][,<iface2>[/{t|r|d}][,<iface3>[/{t|r|d}],...]] to add/delete elements to composite interface device
-    "+rate",        // [<ifaceName>,]<bitsPerSecond> : impose forwarding/transmit rate limit
-    "+queue",       // perform SMF packet queuing ...
-    "+layered",     // <ifaceList> : mark interface(s) as "layered", where it has its own underlying multicast distribution mechanism
-    //"+firewall",  // {on | off} : use firewall instead of ProtoCap to capture _and_ forward packets
-    "+firewallCapture", // {on | off} : use firewall instead of ProtoCap to capture packets
-    "+firewallForward", // {on | off} : use firewall instead of ProtoCap to forward packets
-    "+instance",    // <instanceName> : sets our instance (control_pipe) name
-    "+load",        // <configFile>  : load nrlsmf JSON configuration file
-    "+boost",       // {on | off} : boost process priority (default = "on")
-    "+smfServer",   // <serverName> : instructs smf to "register" itself to the given server (pipe only)"+smfTap"
-    "+tap",         // <tapName> : instructs smf to divert forwarded packets to process ProtoPipe named <tapName>
-    "+debug",       // <debugLevel> : set debug level
-    "+log",         // <logFile> : debug log file,
-    "+save",        // <configFile> : save JSON configurstion file upon exit
+    "-version",         "show version and exit",
+    "-help",            "print help info an exit",
+    "-ipv6",            "enable IPv6 support (must be first on command-line)",
+    "-with-frr",        "run along frr and pull configuration where appropriate, such as vrf info",
+    "-advertise",       "Sets elastic multicast operation to advertise flows instead of token-bucket limited forwarding",
+    "+vrf",             "<vrf-name>,[<vrf-id>,]<ifaceList> : list of interfaces belonging to a vrf",
+    "+add",             "<group>,{cf|smpr|ecds},<ifaceList> : add interface(s) to flooding group with relay algorithm type given",
+    "+remove",          "<group>[,<ifaceList>] : remove entire interface group, or the interface(s) from the specified or all group(s)",
+    "+push",            "<srcIface,dstIfaceList> : forward packets from srcIFace to all dstIface's listed",
+    "+rpush",           "<srcIface,dstIfaceList> : reseq/forward packets from srcIFace to all dstIface's listed",
+    "+merge",           "<ifaceList>  : forward _among_ all iface's listed",
+    "+rmerge",          "<ifaceList>  : reseq/forward _among_ all iface's listed",
+    "+tunnel",          "<ifaceList>  : forward _among_ all iface's listed with no TTL decrement",
+    "+cf",              "<ifaceList>  : CF relay among all iface's listed",
+    "+smpr",            "<ifaceList>  : S_MPR relay among all iface's listed",
+    "+ecds",            "<ifaceList>  : E_CDS relay among all iface's listed",
+    "+layered",         "<ifaceList>  : mark interface(s) as \"layered\", where it has its own underlying multicast distribution mechanism",
+    "+reliable",        "<ifaceList>  : experimental reliable hop-by-hop forwarding option (adds UMP option to IPv4 packets)",
+    "+encapsulate",     "<ifaceList>  : use IPIP encapsulation for outbound unicast packets on listed smf \"device\" interfaces", 
+    "+elastic",         "<group> : enable Elastic Multicast for specific interface group",
+    "+adaptive",        "<group> : enable Smart Routing for specific interface group",
+    "+utos",            "<trafficClass> : set IP traffic class to be ignored by reliable forwarding",
+    "+route",           "<dstAddr>,<nextHopAddr> : used for debugging encapsulation only",
+    "+dscpCapture",     "<dscpValue>,<dscpValueList> : set the DSCP values(s) for unicast capture.",
+    "+dscpRelease",     "<dscpValue>,<dscpValueList> : unset DSCP values(s) for unicast capture.",
+
+    "+etx",             "<iface> use IP_UMP header extension to measure link quality and build/use ETX metric",
+    "+flow",            "[<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)",
+    "+join",            "[<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)",
+    "+leave",           "[<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)",
+
+    "+device",          "<vifName>,<ifaceName>[/{t|r|d}][,<addr1>[,addr2, ...]] to create virtual interface 'device' associated with one or more physical interfaces",
+    "+cid",             "<vifName>,<iface1>[/{t|r|d}][,<iface2>[/{t|r|d}][,<iface3>[/{t|r|d}],...]] to add/delete elements to composite interface device",
+
+    "+rate",            "[<iface>,]<bitsPerSecond> : impose forwarding/transmit rate limit",
+    "+queue",           "[<iface>,]<limit> : perform SMF packet queuing",
+    "+allow",           "{<filterSpec>  | all} : set filter for flows that nrlsmf elastic mcast is allowed to forward.",
+    "+deny",            "{<filterSpec>  | all} : set filter for flows that nrlsmf elastic mcast should ignore",
+    "+unicast",         "{unicastPrefix | off} : allow unicast forwarding for a given prefix, or off (default = off)",
+    "+delayoff",        "<double>    : number of microseconds delay before executing a relay off command (default = 0)",
+    "+ihash",           "<algorithm> : to set ihash_only hash algorithm",
+    "+hash",            "<algorithm> : to set H-DPD hash algorithm",
+    "+ttl",             "<value>     : set TTL of outbound packets",
+    //"+firewall",      "{on | off}  : use firewall instead of ProtoCap to capture _and_ forward packets",
+    "+firewallCapture", "{on | off}  : use firewall instead of ProtoCap to capture packets",
+    "+firewallForward", "{on | off}  : use firewall instead of ProtoCap to forward packets",
+    "+forward",         "{on | off}  : forwarding enable/disable (default = on)",
+    "+relay",           "{on | off}  : act as relay node (default = on)",
+    "+boost",           "{on | off}  : boost process priority (default = on)",
+    "+idpd",            "{on | off}  : to do I-DPD when possible",
+    "+window",          "{on | off}  : do window-based I-DPD of sequenced packets",
+    "+resequence",      "{on | off}  : resequence outbound multicast packets",
+    "+filterDups",      "{on | off}  : filter received duplicates for \"device\" operation (default = on)",
+    "+defaultForward",  "{on | off}  : same as \"relay\" (for backwards compatibility)",
+    "+instance",        "<instanceName> : sets our instance (control_pipe) name",
+    "+smfServer",       "<serverName>   : instructs smf to \"register\" itself to the given server (pipe only)\"+smfTap\"",
+    "+tap",             "<tapName>      : instructs smf to divert forwarded packets to process ProtoPipe named <tapName>",
+    "+debug",           "<debugLevel>   : set debug level [0..6]",
+    "+log",             "<logFile>      : debug log file",
+    "+load",            "<configFile>   : load nrlsmf JSON configuration file",
+    "+save",            "<configFile>   : save JSON configurstion file upon exit",
     NULL
 };
 
@@ -1127,6 +1142,7 @@ SmfApp::CmdType SmfApp::GetCmdType(const char* cmd)
                     return type;  // exact match occurred
             }
         }
+        nextCmd++; // skip help
         nextCmd++;
     }
     return type;
