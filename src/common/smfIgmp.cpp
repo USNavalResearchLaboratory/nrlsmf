@@ -123,19 +123,6 @@ void SmfIgmp::UpdateInterfaces()
     //       "version":3,
     //       "querier":true,
     //       "queryTimer":"00:00:12"
-    //     },
-    //     "red1":{
-    //       "name":"red1",
-    //       "state":"up",
-    //       "address":"192.168.23.1",
-    //       "index":15,
-    //       "flagMulticast":true,
-    //       "flagBroadcast":true,
-    //       "lanDelayEnabled":true,
-    //       "upTime":"38:17:49",
-    //       "version":3,
-    //       "querier":true,
-    //       "queryTimer":"00:00:39"
     //     }
     //   },
     //   "vblue": {
@@ -149,8 +136,6 @@ void SmfIgmp::UpdateInterfaces()
     //       "version":3,
     //       "mtraceOnly":true
     //     }
-    //   },
-    //   "vpurple": {
     //   }
     // }
 
@@ -208,6 +193,15 @@ void SmfIgmp::UpdateInterfaces()
                 continue;
             }
 
+            // TODO: There appears to be an mtrace only interface added out of nowhere?? What to do with
+            // that situation??
+            entry = obj->FindEntry("mtraceOnly");
+            bool mtraceOnly = false;
+            if (entry && static_cast<const ProtoJson::Boolean*>(entry->GetValue())->GetValue())
+            { // This is an mtrace only interface, what to do with it?
+                mtraceOnly = true;
+            }
+
             // This interface is up, so the rest of this information should be available and we should find at least one group
             // First we need the index for this interface
             entry = obj->FindEntry("index");
@@ -220,7 +214,10 @@ void SmfIgmp::UpdateInterfaces()
             auto iface = smf.GetInterface(iffidx);
             if (!iface)
             {
-                PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Failed to find IGMP interface in the interface list, is it configured?\n");
+                if (!mtraceOnly)
+                {
+                    PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Failed to find IGMP interface in the interface list, is it configured?\n");
+                }
                 continue;
             }
             iface->SetManaged(true);
