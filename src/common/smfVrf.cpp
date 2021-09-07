@@ -1,5 +1,6 @@
 #include "smfVrf.h"
 #include "frrVty.h"
+#include "protoDebug.h"
 #include "protoNet.h"
 #include <iterator>
 #include <sstream>
@@ -169,7 +170,7 @@ void SmfVRFList::QueryFRRVRFs()
     AddVRF("default", 0, 254);
     QueryFRRVRFInterface("default");
     //ret.first; // The string response to parse through
-    PLOG(PL_DEBUG,"SmfVRFList::QueryFRRVRFs VRFs from FRR:\n%s\n", ret.first.c_str());
+    PLOG(PL_DETAIL,"SmfVRFList::QueryFRRVRFs VRFs from FRR:\n%s\n", ret.first.c_str());
 
     // FRR# show vrf
     // vrf blue id 13 table 10
@@ -230,7 +231,7 @@ void SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
         return;
     }
     //ret.first; // The string response to parse through
-    PLOG(PL_DEBUG,"SmfVRFList::QueryFRRVRFInterface: VRF FRR %s interface list:\n%s\n", vrf_name.c_str(), ret.first.c_str());
+    PLOG(PL_DETAIL,"SmfVRFList::QueryFRRVRFInterface: VRF FRR %s interface list:\n%s\n", vrf_name.c_str(), ret.first.c_str());
 
     // jtr# show  interface vrf  vblue brief
     // Interface       Status  VRF             Addresses
@@ -310,17 +311,17 @@ void SmfVRFList::DumpVRFs()
 {
     SmfVRFList::Iterator vrfIterator(*this);
     SmfVRF* vrf;
-    PLOG(PL_DEBUG, "================ VRF table ================\n");
+    PLOG(PL_DETAIL, "================ VRF table ================\n");
     while (NULL != (vrf = vrfIterator.GetNextItem()))
     {
-        PLOG(PL_DEBUG, "vrf name = %s   vrf id =%u   table =%i\n", vrf->GetName(), vrf->GetID(), vrf->GetTableID());
-        PLOG(PL_DEBUG, "    inerfaces:\n");
+        PLOG(PL_DETAIL, "vrf name = %s   vrf id =%u   table =%i\n", vrf->GetName(), vrf->GetID(), vrf->GetTableID());
+        PLOG(PL_DETAIL, "    inerfaces:\n");
         for (std::string s : vrf->GetIfaceList())
-            PLOG(PL_DEBUG, "             %s\n", s.c_str());
+            PLOG(PL_DETAIL, "             %s\n", s.c_str());
         //for (unsigned int i : vrf->GetIfaceIndexList())
         //    PLOG(PL_DEBUG, "             %u\n", i);
     }
-    PLOG(PL_DEBUG, "===========================================\n");
+    PLOG(PL_DETAIL, "===========================================\n");
 }
 
 void SmfVRFList::DeleteVRF(SmfVRF &vrf)
