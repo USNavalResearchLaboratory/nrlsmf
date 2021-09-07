@@ -27,8 +27,9 @@
 
 class SmfIgmp : public ProtoChannel
 {
-    using GroupMap = std::map<std::uint32_t, std::set<ProtoAddress>>;
-    using GroupChangeArray = std::vector<std::tuple<ProtoAddress, bool, std::uint32_t>>;
+    using MembershipMap = std::map<std::uint32_t, std::set<ProtoAddress>>;
+    using MembershipChangeArray = std::vector<std::tuple<ProtoAddress, bool, std::uint32_t>>;
+    using InterfacesMap = std::map<std::uint32_t, bool>;
 
     public:
         SmfIgmp(ProtoTimerMgr& timerMgr, Smf& _smf);
@@ -38,21 +39,29 @@ class SmfIgmp : public ProtoChannel
         virtual void Close();
         virtual bool IsOpen() const;
 
-        GroupChangeArray GetMembershipUpdates();
+        void ProcessUpdates();
+        bool HasMembershipUpdates() const 
+            {return !membership_changes.empty();}
+        MembershipChangeArray GetMembershipUpdates()
+            {return std::move(membership_changes);}
+        bool HasInterfaceUpdates() const
+            {return !interface_changes.empty();}
+        InterfacesMap GetInterfaceUpdates()
+            {return std::move(interface_changes);}
 
     private:
         void DoUpdate(ProtoTimer& theTimer);
         void UpdateInterfaces();
         void UpdateMemberships();
-        bool FindChanges(const GroupMap& currentGroups);
 
         int wpipe;
         ProtoTimerMgr& timer_mgr;
         Smf& smf;
         ProtoTimer update_timer;
-        GroupMap previous_groups;
-        GroupChangeArray group_changes;
-        std::map<std::uint32_t, bool> active_interfaces;
+        MembershipMap active_memberships;
+        MembershipChangeArray membership_changes;
+        InterfacesMap active_interfaces;
+        InterfacesMap interface_changes;
 };
 
 #endif // _SMF_IGMP

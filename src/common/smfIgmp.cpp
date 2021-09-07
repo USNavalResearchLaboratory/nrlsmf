@@ -11,9 +11,10 @@ SmfIgmp::SmfIgmp(ProtoTimerMgr& timerMgr, Smf& _smf) :
     timer_mgr(timerMgr),
     smf(_smf),
     update_timer(),
-    previous_groups(),
-    group_changes(),
-    active_interfaces()
+    active_memberships(),
+    membership_changes(),
+    active_interfaces(),
+    interface_changes()
 {
     update_timer.SetInterval(5.0);
     update_timer.SetRepeat(-1);
@@ -79,21 +80,28 @@ bool SmfIgmp::IsOpen() const
     return ProtoChannel::IsOpen() && wpipe != INVALID_HANDLE;
 }
 
-SmfIgmp::GroupChangeArray SmfIgmp::GetMembershipUpdates()
+void SmfIgmp::ProcessUpdates()
 {
     char c[2];
     if (read(descriptor, c, 2) == -1)
     {
-        PLOG(PL_ERROR, "SmfIgmp::GetMembershipUpdates() Failed to read from pipe, %s\n", GetErrorString());
+        PLOG(PL_ERROR, "SmfIgmp::ProcessUpdates() Failed to read from pipe, %s\n", GetErrorString());
     }
-    // This will invalidate the current group_changes, moving the contents rather than copying them.
-    return std::move(group_changes);
 }
 
 void SmfIgmp::DoUpdate(ProtoTimer& theTimer)
 {
     UpdateInterfaces();
     UpdateMemberships();
+    if (!interface_changes.empty() || !membership_changes.empty())
+    {
+        // There were changes, send a signal on the pipe
+        char c;
+        if (write(wpipe, &c, 1) == -1)
+        {
+            PLOG(PL_ERROR, "SmfIgmp::DoUpdate() Failed to write to pipe, %s\n", GetErrorString());
+        }
+    }
 }
 
 void SmfIgmp::UpdateInterfaces()
@@ -176,7 +184,7 @@ void SmfIgmp::UpdateInterfaces()
             ProtoJson::Object* obj = reinterpret_cast<ProtoJson::Object*>(item);
             if (!obj)
             {
-                PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Failed to cast item to object\n");
+                PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() Failed to cast item to object\n");
                 continue;
             }
             // Look for the interface objects by first testing for the "state" key
@@ -186,20 +194,18 @@ void SmfIgmp::UpdateInterfaces()
                 continue;
             }
 
-            // This is an interface, check and make sure it's up
+            // This is an interface, make sure it's up
             std::string state = static_cast<const ProtoJson::String*>(entry->GetValue())->GetText();
             if (state != "up")
-            { // Not up, skip it
+            {
                 continue;
             }
 
-            // TODO: There appears to be an mtrace only interface added out of nowhere?? What to do with
-            // that situation??
+            // Check for an mtrace only IGMP interface, which isn't actually configured for IGMP
             entry = obj->FindEntry("mtraceOnly");
-            bool mtraceOnly = false;
             if (entry && static_cast<const ProtoJson::Boolean*>(entry->GetValue())->GetValue())
-            { // This is an mtrace only interface, what to do with it?
-                mtraceOnly = true;
+            {
+                continue;
             }
 
             // This interface is up, so the rest of this information should be available and we should find at least one group
@@ -207,20 +213,20 @@ void SmfIgmp::UpdateInterfaces()
             entry = obj->FindEntry("index");
             if (!entry)
             {
-                PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Failed to find interface index\n");
+                PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() Failed to find interface index\n");
                 continue;
             }
+
             std::uint32_t iffidx = static_cast<const ProtoJson::Number*>(entry->GetValue())->GetInteger();
             auto iface = smf.GetInterface(iffidx);
-            if (!iface)
+            if (iface)
             {
-                if (!mtraceOnly)
-                {
-                    PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Failed to find IGMP interface in the interface list, is it configured?\n");
-                }
-                continue;
+                iface->SetManaged(true);
             }
-            iface->SetManaged(true);
+            else
+            {
+                interface_changes[iffidx] = true;
+            }
             active_interfaces[iffidx] = true;
         }
     }
@@ -234,6 +240,7 @@ void SmfIgmp::UpdateInterfaces()
             if (iface)
             {
                 iface->SetManaged(false);
+                interface_changes[it->first] = false;
             }
             it = active_interfaces.erase(it);
         }
@@ -314,7 +321,7 @@ void SmfIgmp::UpdateMemberships()
             break;
     }
 
-    GroupMap currentGroups;
+    MembershipMap currentMemberships;
     ProtoJson::Document::Iterator dit(*doc);
     ProtoJson::Item* item = nullptr;
     while ((item = dit.GetNextItem()) != nullptr)
@@ -369,109 +376,94 @@ void SmfIgmp::UpdateMemberships()
                     break;
                 }
                 ProtoAddress grp(static_cast<const ProtoJson::String*>(entry->GetValue())->GetText());
-                currentGroups[iffidx].emplace(grp);
+                currentMemberships[iffidx].emplace(grp);
             }
         }
     }
 
     // Find difference between previous state and the current state
-    // This function will set the group_changes if any differences are found
-    // Returns true if there are changes to be handled
-    if (FindChanges(currentGroups))
-    { // There were changes, send a signal on the pipe
-        char c;
-        if (write(wpipe, &c, 1) == -1)
-        {
-            PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Failed to write to pipe, %s\n", GetErrorString());
-        }
-    }
-}
-
-bool SmfIgmp::FindChanges(const GroupMap& currentGroups)
-{
-    auto pit = previous_groups.begin();
-    auto cit = currentGroups.begin();
+    auto ait = active_memberships.begin();
+    auto cit = currentMemberships.begin();
     while (true)
     {
-        if (pit == previous_groups.end() && cit == currentGroups.end())
+        if (ait == active_memberships.end() && cit == currentMemberships.end())
         { // Reached the end of both, break loop
             break;
         }
-        else if (pit == previous_groups.end())
+        else if (ait == active_memberships.end())
         { // End of previous groups, anything left in current groups is new
             for (const auto& i : cit->second)
             { // Add all groups as new for this interface
-                group_changes.emplace_back(i, true, cit->first);
+                membership_changes.emplace_back(i, true, cit->first);
             }
             cit = std::next(cit);
         }
-        else if (cit == currentGroups.end())
+        else if (cit == currentMemberships.end())
         { // End of current groups, anything left in previous groups is removed
-            for (const auto& i : pit->second)
+            for (const auto& i : ait->second)
             { // Add all groups as removed for this interface
-                group_changes.emplace_back(i, false, pit->first);
+                membership_changes.emplace_back(i, false, ait->first);
             }
-            pit = std::next(pit);
+            ait = std::next(ait);
         }
-        else if (pit->first < cit->first)
+        else if (ait->first < cit->first)
         { // Previous iface is less than current, means the iface was removed
-            for (const auto& i : pit->second)
+            for (const auto& i : ait->second)
             { // Add all groups as removed for this interface
-                group_changes.emplace_back(i, false, pit->first);
+                membership_changes.emplace_back(i, false, ait->first);
             }
-            pit = std::next(pit);
+            ait = std::next(ait);
         }
-        else if (pit->first > cit->first)
+        else if (ait->first > cit->first)
         { // Current iface is less than previous, means the iface was added
             for (const auto& i : cit->second)
             { // Add all groups as added for this interface
-                group_changes.emplace_back(i, true, cit->first);
+                membership_changes.emplace_back(i, true, cit->first);
             }
             cit = std::next(cit);
         }
         else
         { // Same interface, look at groups to find differences
-            auto pgit = pit->second.begin();
+            auto agit = ait->second.begin();
             auto cgit = cit->second.begin();
             while (true)
             {
-                if (pgit == pit->second.end() && cgit == cit->second.end())
+                if (agit == ait->second.end() && cgit == cit->second.end())
                 {
                     break;
                 }
-                else if (pgit == pit->second.end())
+                else if (agit == ait->second.end())
                 { // Anything left in current groups is new
-                    group_changes.emplace_back(*cgit, true, pit->first);
+                    membership_changes.emplace_back(*cgit, true, ait->first);
                     cgit = std::next(cgit);
                 }
                 else if (cgit == cit->second.end())
                 { // Anything left in previous groups is removed
-                    group_changes.emplace_back(*pgit, false, pit->first);
-                    pgit = std::next(pgit);
+                    membership_changes.emplace_back(*agit, false, ait->first);
+                    agit = std::next(agit);
                 }
-                else if (*pgit < *cgit)
+                else if (*agit < *cgit)
                 { // Previous group is less than current, means previous group is removed
-                    group_changes.emplace_back(*pgit, false, pit->first);
+                    membership_changes.emplace_back(*agit, false, ait->first);
                     // Advance previous group only
-                    pgit = std::next(pgit);
+                    agit = std::next(agit);
                 }
-                else if (*pgit > *cgit)
+                else if (*agit > *cgit)
                 { // Current group is less than previous, means current group is new
-                    group_changes.emplace_back(*cgit, true, pit->first);
+                    membership_changes.emplace_back(*cgit, true, ait->first);
                     // Advance current group only
                     cgit = std::next(cgit);
                 }
                 else
                 { // Last option is both are the same, nothing to do but advance both
-                    pgit = std::next(pgit);
+                    agit = std::next(agit);
                     cgit = std::next(cgit);
                 }
             }
-            pit = std::next(pit);
+            ait = std::next(ait);
             cit = std::next(cit);
         }
     }
 
-    previous_groups = std::move(currentGroups);
-    return !group_changes.empty();
+    active_memberships = std::move(currentMemberships);
 }

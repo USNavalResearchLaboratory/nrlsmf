@@ -5333,30 +5333,121 @@ bool SmfApp::OnIgmpQueryTimeout(ProtoTimer& theTimer)
 void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel, 
                                     ProtoChannel::Notification  notifyType)
 {
-    // igmp_controller has updates for group membership
-    // Get the membership updates from the igmp_controller and update the mcast_controller
-    // Returns an array of tuples, each defining a group, add/remove flag, and the interface index
-    for (const auto& u : igmp_controller.GetMembershipUpdates())
+    // igmp_controller has updates
+    igmp_controller.ProcessUpdates();
+    // Handle interface updates first, in case we are adding a new interface with an existing membership
+    if (igmp_controller.HasInterfaceUpdates())
     {
-        ProtoAddress group;
-        bool added;
-        std::uint32_t index;
-        std::tie(group, added, index) = u;
-        if (added)
+        std::map<std::string, std::vector<std::string>> commands; // The commands to run to update configuration
+
+        // Get the interface updates from the igmp_controller and update the interface and group configuration
+        // Returns a map of iff index to flag indicating added/removed (true/false)
+        for (const auto& u : igmp_controller.GetInterfaceUpdates())
         {
-            mcast_controller.AddManagedMembership(index, group);
-            auto iface = smf.GetInterface(index);
-            if (iface)
+            char hostIffName[IF_NAMESIZE];
+            unsigned int len = ProtoNet::GetInterfaceName(u.first, hostIffName, IF_NAMESIZE);
+            std::string hostIffStr(hostIffName, len);
+            if (len == 0)
             {
-                iface->AddManagedMembership(group);
+                PLOG(PL_ERROR, "SmfApp::OnIgmpMemebershipUpdate() Failed to find host interface name for index %u\n", u.first);
+                continue;
+            }
+
+            if (u.second)
+            {
+                // Set up it up as if configured on the command line with
+                //    nrlsmf add,manet,cf,eth0 add,eth0_push,push,eth0,<iface> add,<iface>_rpush,rpush,<iface>,eth0
+                // where the manet group was configured and we automatically added the push/rpush commands.
+                // There will be one push group per manet interface, and one rpush group per host interface
+
+                // Look for interface groups with Forwarding Mode == RELAY, these should be the manet groups
+                // all interfaces in those groups are considered manet interfaces.
+                auto& igl = smf.AccessInterfaceGroupList();
+                Smf::InterfaceGroupList::Iterator igl_it(igl);
+                Smf::InterfaceGroup* ifaceGroup;
+                std::vector<std::string> manetIfaces;
+                while (NULL != (ifaceGroup = igl_it.GetNextItem()))
+                {
+                    if (Smf::RELAY == ifaceGroup->GetForwardingMode())
+                    {
+                        auto& il = ifaceGroup->AccessInterfaceList();
+                        Smf::InterfaceList::Iterator il_it(il);
+                        Smf::Interface* iface;
+                        while (NULL != (iface = il_it.GetNextItem()))
+                        {
+                            char iffName[IF_NAMESIZE];
+                            len = ProtoNet::GetInterfaceName(iface->GetIndex(), iffName, IF_NAMESIZE);
+                            if (len == 0)
+                            {
+                                PLOG(PL_WARN, "SmfApp::OnIgmpMembershipUpdate() Failed to find manet interface name for index %u\n", iface->GetIndex());
+                                continue;
+                            }
+                            manetIfaces.emplace_back(iffName, len);
+                        }
+                    }
+                }
+
+                // Now we have the list of manet interfaces, so make the push and rpush commands to add the new host interface
+                // First, add the new host interface to each of the manet push groups
+                // Also set up the rpush group command for this host interface while looping the manet interfaces
+                std::ostringstream os;
+                os << "rpush," << hostIffStr;
+                auto& addCmds = commands["add"];
+                for (const auto& mi : manetIfaces)
+                {
+                    addCmds.emplace_back("push,"+mi+","+hostIffStr);
+                    os << "," << mi;
+                }
+
+                // Now add the command to add the rpush group for this host interface
+                addCmds.emplace_back(os.str());
+            }
+            else
+            {
+                // Just removing the interface should handle cleaning it from all groups and clearing any empty groups etc.
+                commands["remove"].emplace_back(hostIffStr);
             }
         }
-        else
+
+        // Now process each command to update the configuration
+        // Do the add commands first
+        for (const auto& c : commands["add"])
         {
-            mcast_controller.RemoveManagedMembership(index, group);
+            OnCommand("add", c.c_str());
+        }
+        // Now do the remove commands
+        for (const auto& c : commands["remove"])
+        {
+            OnCommand("remove", c.c_str());
+        }
+    }
+
+    // Process the memberships now that the interfaces/groups are ok
+    if (igmp_controller.HasMembershipUpdates())
+    {
+        // Get the membership updates from the igmp_controller and update the mcast_controller
+        // Returns an array of tuples, each defining a group, add/remove flag, and the interface index
+        for (const auto& u : igmp_controller.GetMembershipUpdates())
+        {
+            ProtoAddress group;
+            bool added;
+            std::uint32_t index;
+            std::tie(group, added, index) = u;
             auto iface = smf.GetInterface(index);
-            if (iface)
+            if (!iface)
             {
+                PLOG(PL_ERROR, "SmfApp::OnIgmpMembershipUpdate() Unable to update managed membership on interface, failed to find interface for index %u\n", index);
+                continue;
+            }
+
+            if (added)
+            {
+                mcast_controller.AddManagedMembership(index, group);
+                iface->AddManagedMembership(group);
+            }
+            else
+            {
+                mcast_controller.RemoveManagedMembership(index, group);
                 iface->RemoveManagedMembership(group);
             }
         }
