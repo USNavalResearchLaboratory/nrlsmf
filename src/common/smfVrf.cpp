@@ -260,10 +260,21 @@ void SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
           field++;
           switch (field) {
           case 1:
+            // Interfaces with multiple IP addresses configured will
+            // have multiple lines, make sure to skip the extra lines
+            // ex:
+            // eth0          up      default         192.168.30.1/24
+            // eth1          up      default         192.168.35.1/32
+            //                                       192.168.45.1/32
             if (lpart.find("/") == std::string::npos) {
               ifaceName = lpart;
             }
-            continue; // we only need the interface name for  now.
+            break;
+          case 2:
+            // Skip "down" interfaces
+            if (lpart == "down") {
+              ifaceName.clear();
+            }
             break;
           }
         }
