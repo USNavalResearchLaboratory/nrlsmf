@@ -1,6 +1,7 @@
 #include "smfVrf.h"
 #include "frrVty.h"
 #include "protoNet.h"
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <stdlib.h>  // for atoi()
@@ -63,18 +64,20 @@ bool SmfVRF::AddInterface(const char *iface) {
 
   bool SmfVRF::SetIfaceList(std::unordered_set<std::string> new_iface_list) {
     std::unordered_set<unsigned int> new_iface_index_list;
-    for (auto it = new_iface_list.begin(); it != new_iface_list.end(); ++it)
+    for (auto it = new_iface_list.begin(); it != new_iface_list.end();)
     {
       char *iface = (char *) (*it).c_str();
 
       unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(iface);
       if (0 == ifaceIndex) {
-        PLOG(PL_ERROR, "SmfVRF::AddInterface error: invalid interface \"%s\"\n",
+        PLOG(PL_ERROR, "SmfVRF::SetIfaceList error: invalid interface \"%s\"\n",
              iface);
-        new_iface_index_list.clear();
-        return false;
+        it = new_iface_list.erase(it);
       }
-      new_iface_index_list.insert(ifaceIndex);
+      else {
+         it=std::next(it);
+         new_iface_index_list.insert(ifaceIndex);
+      }
     }
 
     iface_list = new_iface_list;
@@ -256,7 +259,9 @@ void SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
           field++;
           switch (field) {
           case 1:
-            ifaceName = lpart;
+            if (lpart.find("/") == std::string::npos) {
+              ifaceName = lpart;
+            }
             continue; // we only need the interface name for  now.
             break;
           }
