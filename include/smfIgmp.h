@@ -29,7 +29,7 @@ class SmfIgmp : public ProtoChannel
 {
     using MembershipMap = std::map<std::uint32_t, std::set<ProtoAddress>>;
     using MembershipChangeArray = std::vector<std::tuple<ProtoAddress, bool, std::uint32_t>>;
-    using InterfacesMap = std::map<std::uint32_t, bool>;
+    using InterfacesMap = std::map<std::uint32_t, std::pair<std::string, bool>>;
 
     public:
         SmfIgmp(ProtoTimerMgr& timerMgr, Smf& _smf);
@@ -48,6 +48,8 @@ class SmfIgmp : public ProtoChannel
             {return !interface_changes.empty();}
         InterfacesMap GetInterfaceUpdates()
             {return std::move(interface_changes);}
+
+        std::vector<std::tuple<std::string, std::string>> NewManetInterface(const std::string& ifaceName) const;
 
     private:
         void DoUpdate(ProtoTimer& theTimer);

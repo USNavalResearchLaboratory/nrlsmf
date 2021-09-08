@@ -3656,6 +3656,23 @@ bool SmfApp::ParseInterfaceList(const char*         groupName,
             return false;
         }
         firstIface = false;
+        if (Smf::RELAY == mode)
+        {
+            // If new manet interfaces are added during runtime, then we need to process them in the IGMP controller
+            // so that the proper push/rpush groups can be configured automatically.
+            // This happens during start up as well, but since host interfaces are not initially detected at startup, then
+            // there will be no host interfaces and nothing will happen, so this will only have an effect when manet interfaces
+            // are added during runtime.
+            // This will return a set of commands to run to add the new push/rpush groups
+            std::vector<std::tuple<std::string, std::string>> cmds = igmp_controller.NewManetInterface(ifaceName);
+            for (const auto& c : cmds)
+            {
+                if (!OnCommand(std::get<0>(c).c_str(), std::get<1>(c).c_str()))
+                {
+                    PLOG(PL_ERROR, "SmfApp::ParseInterfaceList() Failed to do automatic host configuration for new manet interface \"%s\"\n", ifaceName);
+                }
+            }
+        }
     }
     return true;
 }  // end SmfApp::ParseInterfaceList()
@@ -5341,19 +5358,10 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
         std::map<std::string, std::vector<std::string>> commands; // The commands to run to update configuration
 
         // Get the interface updates from the igmp_controller and update the interface and group configuration
-        // Returns a map of iff index to flag indicating added/removed (true/false)
+        // Returns a map of iff index to pair with iface name and flag indicating added/removed (true/false)
         for (const auto& u : igmp_controller.GetInterfaceUpdates())
         {
-            char hostIffName[IF_NAMESIZE];
-            unsigned int len = ProtoNet::GetInterfaceName(u.first, hostIffName, IF_NAMESIZE);
-            std::string hostIffStr(hostIffName, len);
-            if (len == 0)
-            {
-                PLOG(PL_ERROR, "SmfApp::OnIgmpMemebershipUpdate() Failed to find host interface name for index %u\n", u.first);
-                continue;
-            }
-
-            if (u.second)
+            if (u.second.second)
             {
                 // Set up it up as if configured on the command line with
                 //    nrlsmf add,manet,cf,eth0 add,eth0_push,push,eth0,<iface> add,<iface>_rpush,rpush,<iface>,eth0
@@ -5376,7 +5384,7 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
                         while (NULL != (iface = il_it.GetNextItem()))
                         {
                             char iffName[IF_NAMESIZE];
-                            len = ProtoNet::GetInterfaceName(iface->GetIndex(), iffName, IF_NAMESIZE);
+                            unsigned int len = ProtoNet::GetInterfaceName(iface->GetIndex(), iffName, IF_NAMESIZE);
                             if (len == 0)
                             {
                                 PLOG(PL_WARN, "SmfApp::OnIgmpMembershipUpdate() Failed to find manet interface name for index %u\n", iface->GetIndex());
@@ -5391,11 +5399,11 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
                 // First, add the new host interface to each of the manet push groups
                 // Also set up the rpush group command for this host interface while looping the manet interfaces
                 std::ostringstream os;
-                os << "rpush," << hostIffStr;
+                os << "rpush," << u.second.first;
                 auto& addCmds = commands["add"];
                 for (const auto& mi : manetIfaces)
                 {
-                    addCmds.emplace_back("push,"+mi+","+hostIffStr);
+                    addCmds.emplace_back("push,"+mi+","+u.second.first);
                     os << "," << mi;
                 }
 
@@ -5405,7 +5413,7 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
             else
             {
                 // Just removing the interface should handle cleaning it from all groups and clearing any empty groups etc.
-                commands["remove"].emplace_back(hostIffStr);
+                commands["remove"].emplace_back(u.second.first);
             }
         }
 
@@ -5413,12 +5421,18 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
         // Do the add commands first
         for (const auto& c : commands["add"])
         {
-            OnCommand("add", c.c_str());
+            if (!OnCommand("add", c.c_str()))
+            {
+                PLOG(PL_ERROR, "SmfApp::OnIgmpMembershipUpdate() Unable to add automatic host configuration\n");
+            }
         }
         // Now do the remove commands
         for (const auto& c : commands["remove"])
         {
-            OnCommand("remove", c.c_str());
+            if (!OnCommand("remove", c.c_str()))
+            {
+                PLOG(PL_ERROR, "SmfApp::OnIgmpMembershipUpdate() Unable to remove automatic host configuration\n");
+            }
         }
     }
 

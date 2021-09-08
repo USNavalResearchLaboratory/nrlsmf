@@ -89,13 +89,28 @@ void SmfIgmp::ProcessUpdates()
     }
 }
 
+std::vector<std::tuple<std::string, std::string>> SmfIgmp::NewManetInterface(const std::string& ifaceName) const
+{
+    // Add a new push group with the new manet interface as the source, pushing to all the active host interfaces
+    // Also add the new manet interface to all the rpush groups for each active host interface
+    std::vector<std::tuple<std::string, std::string>> cmds;
+    std::ostringstream os;
+    os << "push," << ifaceName;
+    for (const auto& i : active_interfaces)
+    {
+        os << "," << i.second.first;
+        cmds.emplace_back(std::make_tuple("add", "rpush,"+i.second.first+","+ifaceName));
+    }
+    cmds.emplace_back(std::make_tuple("add", os.str()));
+    return cmds;
+}
+
 void SmfIgmp::DoUpdate(ProtoTimer& theTimer)
 {
     UpdateInterfaces();
     UpdateMemberships();
     if (!interface_changes.empty() || !membership_changes.empty())
-    {
-        // There were changes, send a signal on the pipe
+    { // There were changes, send a signal on the pipe
         char c;
         if (write(wpipe, &c, 1) == -1)
         {
@@ -150,7 +165,7 @@ void SmfIgmp::UpdateInterfaces()
     // First unmark all the current active interfaces so we can detect interfaces that get removed
     for (auto& i : active_interfaces)
     {
-        i.second = false;
+        i.second.second = false;
     }
 
     ProtoJson::Parser parser;
@@ -209,38 +224,56 @@ void SmfIgmp::UpdateInterfaces()
             }
 
             // This interface is up, so the rest of this information should be available and we should find at least one group
-            // First we need the index for this interface
+
+            // Get the name of the interface so we don't need to look it up if changing configuration during runtime
+            entry = obj->FindEntry("name");
+            if (!entry)
+            {
+                PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() Failed to parse Interface name from JSON output\n");
+                continue;
+            }
+            std::string ifaceName = static_cast<const ProtoJson::String*>(entry->GetValue())->GetText();
+            if (ifaceName.empty())
+            {
+                PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() Failed to parse Interface name from JSON output\n");
+                continue;
+            }
+
+            // Now we need the index to look up the interface objct
             entry = obj->FindEntry("index");
             if (!entry)
             {
                 PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() Failed to find interface index\n");
                 continue;
             }
-
             std::uint32_t iffidx = static_cast<const ProtoJson::Number*>(entry->GetValue())->GetInteger();
+
             auto iface = smf.GetInterface(iffidx);
             if (iface)
             {
                 iface->SetManaged(true);
             }
             else
-            {
-                interface_changes[iffidx] = true;
+            { // If not found, then it's a new managed interface so save the changes for later processing
+                interface_changes[iffidx].first = ifaceName;
+                interface_changes[iffidx].second = true;
             }
-            active_interfaces[iffidx] = true;
+            active_interfaces[iffidx].first = ifaceName;
+            active_interfaces[iffidx].second = true;
         }
     }
 
     // Now any interfaces not marked have been removed
     for (auto it = active_interfaces.begin(); it != active_interfaces.end();)
     {
-        if (!it->second)
+        if (!it->second.second)
         {
             auto iface = smf.GetInterface(it->first);
             if (iface)
             {
                 iface->SetManaged(false);
-                interface_changes[it->first] = false;
+                interface_changes[it->first].first = it->second.first;
+                interface_changes[it->first].second = false;
             }
             it = active_interfaces.erase(it);
         }
