@@ -1088,8 +1088,8 @@ const char* const SmfApp::CMD_LIST[] =
 
     "+rate",            "[<iface>,]<bitsPerSecond> : impose forwarding/transmit rate limit",
     "+queue",           "[<iface>,]<limit> : perform SMF packet queuing",
-    "+allow",           "{<filterSpec>  | all} : set filter for flows that nrlsmf elastic mcast is allowed to forward.",
-    "+deny",            "{<filterSpec>  | all} : set filter for flows that nrlsmf elastic mcast should ignore",
+    "+allow",           "{<vrfLeakSpec> | <filterSpec> | all} : set VRF route leak policy or filter for flows that nrlsmf elastic mcast is allowed to forward.",
+    "+deny",            "{<vrfLeakSpec> | <filterSpec> | all} : set VRF route leak policy or filter for flows that nrlsmf elastic mcast should ignore",
     "+unicast",         "{unicastPrefix | off} : allow unicast forwarding for a given prefix, or off (default = off)",
     "+delayoff",        "<double>    : number of microseconds delay before executing a relay off command (default = 0)",
     "+ihash",           "<algorithm> : to set ihash_only hash algorithm",
@@ -2125,11 +2125,44 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     }
     else if (!strncmp("allow", cmd, len))
     {
-        // syntax: "allow <addr1>[,<addr2>, ...] with "all" as a wildcard address
+        // syntax: "allow [vrf,<srcvrf>,<dstvrf>,]<addr1>[,<addr2>,...]" with "all" as a wildcard VRF and/or wildcard address
         bool result = false;
+        const char* srcvrf = NULL;
+        const char* dstvrf = NULL;
         ProtoTokenator tk(val, ',');
-        const char* text;
-        while (NULL != (text = tk.GetNextItem()))
+        const char* text = tk.GetNextItem();
+        if (text == NULL)
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(allow) missing arguments\n");
+            return false;
+        }
+
+        if (0 == strcmp("vrf", text))
+        { // This is a VRF route leak rule, so parse the source and dest VRF first
+            srcvrf = tk.GetNextItem(true);
+            if (srcvrf == NULL)
+            {
+                PLOG(PL_ERROR, "SmfApp::OnCommand(allow) invalid argument: %s\n", val);
+                return false;
+            }
+            dstvrf = tk.GetNextItem(true);
+            if (dstvrf == NULL)
+            {
+                PLOG(PL_ERROR, "SmfApp::OnCommand(allow) invalid argument: %s\n", val);
+                return false;
+            }
+            // If not a VRF policy, then we already advanced to the first addr argument, so we need to do that
+            // here as well
+            text = tk.GetNextItem();
+            if (text == NULL)
+            {
+                PLOG(PL_ERROR, "SmfApp::OnCommand(allow) invalid argument: %s\n", val);
+                return false;
+            }
+        }
+
+        // Now parse the rest as addresses
+        do
         {
             ProtoAddress dstAddr;
             if (0 != strcmp("all", text))
@@ -2137,23 +2170,78 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             else
                 result = true;
             if (!result) break;
-            ProtoFlow::Description flowDescription(dstAddr);
-            result = mcast_controller.SetPolicy(flowDescription, true);
-            if (!result) break;
+            if (srcvrf != NULL && dstvrf != NULL)
+            { // Add VRF route leak policy
+                SmfVRFPolicy* pol = smf.GetVRFPolicies()->AddPolicy(srcvrf, dstvrf);
+                pol->SetAllowed(true);
+                // If addr was "all", i.e. the wildcard match, then the addr is invalid and that
+                // is the same as setting the wildcard
+                pol->InsertGroup(dstAddr);
+            }
+            else
+            { // Add regular flow policy
+                ProtoFlow::Description flowDescription(dstAddr);
+                result = mcast_controller.SetPolicy(flowDescription, true);
+                if (!result) break;
+            }
+        } while (NULL != (text = tk.GetNextItem()));
+
+        if (srcvrf != NULL)
+        {
+            delete [] srcvrf;
+            srcvrf = NULL;
         }
-        if (!result)   
+        if (dstvrf != NULL)
+        {
+            delete [] dstvrf;
+            dstvrf = NULL;
+        }
+        if (!result)
         {
             PLOG(PL_ERROR, "SmfApp::OnCommand(allow) invalid argument: %s\n", val);
             return false;
-        }     
+        }
     }
     else if (!strncmp("deny", cmd, len))
     {
-        // syntax: "deny <addr1>[,<addr2>, ...] with "all" as a wildcard address
+        // syntax: "deny [vrf,<srcvrf>,<dstvrf>,]<addr1>[,<addr2>,...]" with "all" as a wildcard VRF and/or wildcard address
         bool result = false;
+        const char* srcvrf = NULL;
+        const char* dstvrf = NULL;
         ProtoTokenator tk(val, ',');
-        const char* text;
-        while (NULL != (text = tk.GetNextItem()))
+        const char* text = tk.GetNextItem();
+        if (text == NULL)
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(deny) missing arguments\n");
+            return false;
+        }
+
+        if (0 == strcmp("vrf", text))
+        { // This is a VRF route leak rule, so parse the source and dest VRF first
+            srcvrf = tk.GetNextItem(true);
+            if (srcvrf == NULL)
+            {
+                PLOG(PL_ERROR, "SmfApp::OnCommand(deny) invalid argument: %s\n", val);
+                return false;
+            }
+            dstvrf = tk.GetNextItem(true);
+            if (dstvrf == NULL)
+            {
+                PLOG(PL_ERROR, "SmfApp::OnCommand(deny) invalid argument: %s\n", val);
+                return false;
+            }
+            // If not a VRF policy, then we already advanced to the first addr argument, so we need to do that
+            // here as well
+            text = tk.GetNextItem();
+            if (text == NULL)
+            {
+                PLOG(PL_ERROR, "SmfApp::OnCommand(deny) invalid argument: %s\n", val);
+                return false;
+            }
+        }
+
+        // Now parse the rest as addresses
+        do
         {
             ProtoAddress dstAddr;
             if (0 != strcmp("all", text))
@@ -2161,15 +2249,37 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             else
                 result = true;
             if (!result) break;
-            ProtoFlow::Description flowDescription(dstAddr);
-            result = mcast_controller.SetPolicy(flowDescription, false);
-            if (!result) break;
-        }
-        if (!result)   
+            if (srcvrf != NULL && dstvrf != NULL)
+            { // Add VRF route leak policy
+                SmfVRFPolicy* pol = smf.GetVRFPolicies()->AddPolicy(srcvrf, dstvrf);
+                pol->SetAllowed(false);
+                // If addr was "all", i.e. the wildcard match, then the addr is invalid and that
+                // is the same as setting the wildcard
+                pol->InsertGroup(dstAddr);
+            }
+            else
+            { // Add regular flow policy
+                ProtoFlow::Description flowDescription(dstAddr);
+                result = mcast_controller.SetPolicy(flowDescription, false);
+                if (!result) break;
+            }
+        } while (NULL != (text = tk.GetNextItem()));
+
+        if (srcvrf != NULL)
         {
-            PLOG(PL_ERROR, "SmfApp::OnCommand(allow) invalid argument: %s\n", val);
+            delete [] srcvrf;
+            srcvrf = NULL;
+        }
+        if (dstvrf != NULL)
+        {
+            delete [] dstvrf;
+            dstvrf = NULL;
+        }
+        if (!result)
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(deny) invalid argument: %s\n", val);
             return false;
-        }     
+        }
     }
 #endif // ELASTIC_MAST
     else if (!strncmp("filterDups", cmd, len))

@@ -12,9 +12,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <string>
-#include <unordered_set>
-#include <set>
 #if defined(ELASTIC_MCAST) || defined(ADAPTIVE_ROUTING)
 #include "mcastFib.h"
 #ifdef ADAPTIVE_ROUTING
@@ -147,6 +144,9 @@ class Smf
 
         SmfVRFList* GetVRFs()
           {return &vrf_list;}
+
+        SmfVRFPolicies* GetVRFPolicies()
+          {return &vrf_policies;}
 
         // We derive from "ProtoQueue::Item here so we can keep multiple lists of 
         // "Interfaces" indexed by their "ifIndex", "ifName", etc
@@ -322,15 +322,15 @@ class Smf
                 bool GetElasticMulticast() const
                     {return elastic_mcast;}
                 void SetManaged(bool state)
-                    {managed = state; if (!managed) managed_memberships.clear();}
+                    {managed = state; if (!managed) managed_memberships.Destroy();}
                 bool IsManaged() const
                     {return managed;}
                 void AddManagedMembership(const ProtoAddress& grpAddr)
-                    {managed_memberships.emplace(grpAddr);}
+                    {managed_memberships.Insert(grpAddr);}
                 void RemoveManagedMembership(const ProtoAddress& grpAddr)
-                    {managed_memberships.erase(grpAddr);}
+                    {managed_memberships.Remove(grpAddr);}
                 bool HasActiveMembership(const ProtoAddress& grpAddr) const
-                    {return managed_memberships.count(grpAddr) > 0;}
+                    {return managed_memberships.Contains(grpAddr);}
 #endif // ELASTIC_MCAST
                 
                 // This is for adding an opaque "decorator" extension to the interface
@@ -457,7 +457,7 @@ class Smf
                 UINT16                                local_adv_id;
                 bool                                  elastic_mcast;
                 bool                                  managed;
-                std::set<ProtoAddress>                managed_memberships; // List of groups with active receivers
+                ProtoAddressList                      managed_memberships; // List of groups with active receivers
 #endif // ELASTIC_MCAST
                                
                 unsigned int                          sent_count;  // count of outbound (sent) packets for iface
@@ -867,6 +867,7 @@ class Smf
         unsigned int        asym_count;
         unsigned int        fwd_count;
         SmfVRFList          vrf_list;
+        SmfVRFPolicies      vrf_policies;
         bool                with_FRR;             // running along side FRR
         
 };  // end class Smf

@@ -7,11 +7,9 @@
 #include <string>
 #include <stdlib.h>  // for atoi()
 
-SmfVRF::SmfVRF(UINT32 vid):
+SmfVRF::SmfVRF(UINT32 vid) :
     ProtoQueue::Item(),
-    vrf_id(vid)
-{
-}
+    vrf_id(vid) {}
 
 SmfVRF::SmfVRF(UINT32 vid, const char *new_name):
     ProtoQueue::Item(),
@@ -28,57 +26,60 @@ void SmfVRF::SetName(const char* new_name)
 
 bool SmfVRF::IsMemberInterface(const char *iface_name)
 {
-  if (iface_list.find(iface_name) != iface_list.end())
-    return true;
-  else
-    return false;
+    if (iface_list.find(iface_name) != iface_list.end())
+        return true;
+    else
+        return false;
 }
 
 bool SmfVRF::IsMemberInterface(unsigned int iface_index)
 {
-  if (iface_index_list.find(iface_index) != iface_index_list.end())
-    return true;
-  else
-    return false;
+    if (iface_index_list.find(iface_index) != iface_index_list.end())
+        return true;
+    else
+        return false;
 }
 
-bool SmfVRF::AddInterface(const char *iface) {
-  // iface_list.
-  if (iface_list.find(iface) != iface_list.end())
-  {
-    //  The interface is already present
-    return false;
-  }
-  else
-  {
-    unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(iface);
-    if (0 == ifaceIndex) {
-      PLOG(PL_ERROR, "SmfVRF::AddInterface error: invalid interface \"%s\"\n",
-           iface);
-      return false;
+bool SmfVRF::AddInterface(const char *iface) 
+{
+    // iface_list.
+    if (iface_list.find(iface) != iface_list.end())
+    {
+        //  The interface is already present
+        return false;
     }
-    iface_list.insert(iface);
-    iface_index_list.insert(ifaceIndex);
-    return true;
-  }
+    else
+    {
+        unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(iface);
+        if (0 == ifaceIndex) 
+        {
+            PLOG(PL_ERROR, "SmfVRF::AddInterface error: invalid interface \"%s\"\n", iface);
+            return false;
+        }
+        iface_list.insert(iface);
+        iface_index_list.insert(ifaceIndex);
+        return true;
+    }
 }
 
-  bool SmfVRF::SetIfaceList(std::unordered_set<std::string> new_iface_list) {
+bool SmfVRF::SetIfaceList(std::unordered_set<std::string> new_iface_list) 
+{
     std::unordered_set<unsigned int> new_iface_index_list;
     for (auto it = new_iface_list.begin(); it != new_iface_list.end();)
     {
-      char *iface = (char *) (*it).c_str();
+        char *iface = (char *) (*it).c_str();
 
-      unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(iface);
-      if (0 == ifaceIndex) {
-        PLOG(PL_ERROR, "SmfVRF::SetIfaceList error: invalid interface \"%s\"\n",
-             iface);
-        it = new_iface_list.erase(it);
-      }
-      else {
-         it=std::next(it);
-         new_iface_index_list.insert(ifaceIndex);
-      }
+        unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(iface);
+        if (0 == ifaceIndex) 
+        {
+            PLOG(PL_ERROR, "SmfVRF::SetIfaceList error: invalid interface \"%s\"\n", iface);
+            it = new_iface_list.erase(it);
+        }
+        else 
+        {
+            it=std::next(it);
+            new_iface_index_list.insert(ifaceIndex);
+        }
     }
 
     iface_list = new_iface_list;
@@ -107,15 +108,20 @@ SmfVRFList::~SmfVRFList()
 
 void SmfVRFList::SmfVRFList::EnableFRRUpdates(bool enable)
 {
-  if (enable) {
-    if (!update_timer.IsActive()) {
-      timer_mgr.ActivateTimer(update_timer);
+    if (enable)
+    {
+        if (!update_timer.IsActive()) 
+        {
+            timer_mgr.ActivateTimer(update_timer);
+        }
+    } 
+    else 
+    {
+        if (update_timer.IsActive()) 
+        {
+            timer_mgr.DeactivateTimer(update_timer);
+        }
     }
-  } else {
-    if (update_timer.IsActive()) {
-      timer_mgr.DeactivateTimer(update_timer);
-    }
-  }
 }
 void SmfVRFList::DoUpdate(ProtoTimer& theTimer)
 {
@@ -136,7 +142,7 @@ SmfVRF* SmfVRFList::AddVRF(const char *vrf_name, UINT32 vrf_id, int table_id)
                 vrf_id = vrf_id_pool++;
             }
         }
-        else  if ( (0 == strcmp(VRF_DEFAULT_NAME, vrf_name)) && ( VRF_DEFAULT != vrf_id))
+        else if ( (0 == strcmp(VRF_DEFAULT_NAME, vrf_name)) && ( VRF_DEFAULT != vrf_id))
         {
             // make sure default vrf name and id are synced
             vrf_id = VRF_DEFAULT;
@@ -179,37 +185,40 @@ void SmfVRFList::QueryFRRVRFs()
     std::istringstream iss(ret.first);
     std::string line;
     int totalVRFs = 0;
-    while (std::getline(iss, line)) {
-      std::string vrfName, vrfId, vrfTable;
-      std::istringstream liness(line);
-      std::string lpart;
-      int field = 0;
-      while (std::getline(liness, lpart, ' ')) {
-        if (!lpart.empty()) // Ignore extra white space between fields
+    while (std::getline(iss, line)) 
+    {
+        std::string vrfName, vrfId, vrfTable;
+        std::istringstream liness(line);
+        std::string lpart;
+        int field = 0;
+        while (std::getline(liness, lpart, ' ')) 
         {
-          field++;
-          // get the second, forth, and 6th words corresponding to vrf name, id,
-          // and table
-          switch (field) {
-          case 2:
-            vrfName = lpart;
-            break;
-          case 4:
-            vrfId = lpart;
-            break;
-          case 6:
-            vrfTable = lpart;
-            break;
-          }
+            if (!lpart.empty()) // Ignore extra white space between fields
+            {
+                field++;
+                // get the second, forth, and 6th words corresponding to vrf name, id,
+                // and table
+                switch (field) 
+                {
+                    case 2:
+                        vrfName = lpart;
+                        break;
+                    case 4:
+                        vrfId = lpart;
+                        break;
+                    case 6:
+                        vrfTable = lpart;
+                        break;
+                }
+            }
         }
-      }
 
-      if(!vrfName.empty() && !vrfId.empty() && !vrfTable.empty())
-      {
-          AddVRF(vrfName.c_str(), atoi(vrfId.c_str()), atoi(vrfTable.c_str()));
-          totalVRFs++;
-          QueryFRRVRFInterface(vrfName);
-      }
+        if(!vrfName.empty() && !vrfId.empty() && !vrfTable.empty())
+        {
+            AddVRF(vrfName.c_str(), atoi(vrfId.c_str()), atoi(vrfTable.c_str()));
+            totalVRFs++;
+            QueryFRRVRFInterface(vrfName);
+        }
 
     }
 }
@@ -244,47 +253,52 @@ void SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
     std::unordered_set<std::string> iface_list;
     int totalIfaces = 0;
     int skip2lines = 2;
-    while (std::getline(iss, line)) {
-      if (0 != skip2lines) // skip the first two header lines
-      {
-        skip2lines--;
-        continue;
-      }
-      std::string ifaceName;
-      std::istringstream liness(line);
-      std::string lpart;
-      int field = 0;
-      while (std::getline(liness, lpart, ' ')) {
-        if (!lpart.empty()) // Ignore extra white space between fields
+    while (std::getline(iss, line)) 
+    {
+        if (0 != skip2lines) // skip the first two header lines
         {
-          field++;
-          switch (field) {
-          case 1:
-            // Interfaces with multiple IP addresses configured will
-            // have multiple lines, make sure to skip the extra lines
-            // ex:
-            // eth0          up      default         192.168.30.1/24
-            // eth1          up      default         192.168.35.1/32
-            //                                       192.168.45.1/32
-            if (lpart.find("/") == std::string::npos) {
-              ifaceName = lpart;
-            }
-            break;
-          case 2:
-            // Skip "down" interfaces
-            if (lpart == "down") {
-              ifaceName.clear();
-            }
-            break;
-          }
+            skip2lines--;
+            continue;
         }
-      }
+        std::string ifaceName;
+        std::istringstream liness(line);
+        std::string lpart;
+        int field = 0;
+        while (std::getline(liness, lpart, ' ')) 
+        {
+            if (!lpart.empty()) // Ignore extra white space between fields
+            {
+                field++;
+                switch (field) 
+                {
+                    case 1:
+                        // Interfaces with multiple IP addresses configured will
+                        // have multiple lines, make sure to skip the extra lines
+                        // ex:
+                        // eth0          up      default         192.168.30.1/24
+                        // eth1          up      default         192.168.35.1/32
+                        //                                       192.168.45.1/32
+                        if (lpart.find("/") == std::string::npos) 
+                        {
+                            ifaceName = lpart;
+                        }
+                        break;
+                    case 2:
+                        // Skip "down" interfaces
+                        if (lpart == "down") 
+                        {
+                            ifaceName.clear();
+                        }
+                        break;
+                }
+            }
+        }
 
-      if (!ifaceName.empty())
-      {
-        totalIfaces++;
-       iface_list.insert(ifaceName);
-      }
+        if (!ifaceName.empty())
+        {
+            totalIfaces++;
+            iface_list.insert(ifaceName);
+        }
     }
 
     if (iface_list != vrf->GetIfaceList() )
@@ -296,7 +310,6 @@ void SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
 
 SmfVRF* SmfVRFList::GetVRFByName(const char* vrf_name)
 {
-
     SmfVRFList::Iterator vrfIterator(*this);
     SmfVRF* vrf;
     while (NULL != (vrf = vrfIterator.GetNextItem()))
@@ -304,7 +317,7 @@ SmfVRF* SmfVRFList::GetVRFByName(const char* vrf_name)
         if (0 == strcmp(vrf_name, vrf->GetName()))
             return vrf;
     }
-  return NULL;
+    return NULL;
 }
 
 SmfVRF* SmfVRFList::GetVRFbyIfaceIndex(unsigned int iface_index)
@@ -318,6 +331,7 @@ SmfVRF* SmfVRFList::GetVRFbyIfaceIndex(unsigned int iface_index)
     }
     return nullptr;
 }
+
 void SmfVRFList::DumpVRFs()
 {
     SmfVRFList::Iterator vrfIterator(*this);
@@ -338,4 +352,40 @@ void SmfVRFList::DumpVRFs()
 void SmfVRFList::DeleteVRF(SmfVRF &vrf)
 {
 
+}
+
+SmfVRFPolicy* SmfVRFPolicies::AddPolicy(const std::string& srcvrf, const std::string& dstvrf)
+{
+    if (srcvrf == "all")
+    {
+        return &(dstpolicies[dstvrf]);
+    }
+    if (dstvrf == "all")
+    {
+        return &(srcpolicies[srcvrf]);
+    }
+    return &(policies[srcvrf+":"+dstvrf]);
+}
+
+SmfVRFPolicy* SmfVRFPolicies:: FindPolicy(const std::string& srcvrf, const std::string& dstvrf)
+{ 
+    auto it = policies.find(srcvrf+":"+dstvrf);
+    if (it != policies.end())
+    {
+        return &(it->second);
+    }
+    // No specific policy, check for wildcard dest
+    auto sit = srcpolicies.find(srcvrf);
+    if (sit != srcpolicies.end())
+    {
+        return &(sit->second);
+    }
+    // No specific or wildcard dest policy, check for wildcard src
+    auto dit = dstpolicies.find(dstvrf);
+    if (dit != dstpolicies.end())
+    {
+        return &(dit->second);
+    }
+    // No matching policy at all
+    return NULL;
 }

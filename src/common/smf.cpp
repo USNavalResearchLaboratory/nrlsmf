@@ -383,7 +383,7 @@ Smf::Smf(ProtoTimerMgr& timerMgr)
    update_age_max(DEFAULT_AGE_MAX), current_update_time(0),
    selector_list_len(0), neighbor_list_len(0),
    recv_count(0), mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0),
-   vrf_list(timerMgr), with_FRR(false)
+   vrf_list(timerMgr), vrf_policies(), with_FRR(false)
 {
     delay_relay_off_timer.SetInterval(delay_time);
     delay_relay_off_timer.SetListener(this,&Smf::OnDelayRelayOffTimeout);
@@ -2136,9 +2136,24 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
         {
             if (!vrf->IsMemberInterface(dstIface.GetIndex()))
             {
-                    //PLOG(PL_DEBUG, "Smf::ProcessPacket(): Interface %u does't belong to VRF %s\n",
-                    //dstIface.GetIndex(), vrf->GetName());
-                    continue;;
+                // Check for a route leaking policy that will allow this packet to be forwarded to a different VRF
+                bool leak = false;
+                SmfVRF* dstvrf = vrf_list.GetVRFbyIfaceIndex(dstIface.GetIndex());
+                if (NULL != dstvrf)
+                {
+                    SmfVRFPolicy* pol = vrf_policies.FindPolicy(vrf->GetName(), dstvrf->GetName());
+                    if (NULL != pol && // Found a policy
+                        // Is an allow list that contains the group, so leak it
+                        ((pol->IsAllowed() && pol->containsGroup(dstIp)) ||
+                        // Or is a deny list that does not contain the group, so leak it
+                         (pol->IsDenied() && !pol->containsGroup(dstIp))))
+                    {
+                        leak = true;
+                    }
+                }
+                //PLOG(PL_DEBUG, "Smf::ProcessPacket(): Interface %u does't belong to VRF %s\n", dstIface.GetIndex(), vrf->GetName());
+                if (!leak) continue;
+                PLOG(PL_MAX, "Smf::ProcessPacket(): VRF route leaking policy matched\n");
             }
         }
 
