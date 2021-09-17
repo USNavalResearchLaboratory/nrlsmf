@@ -38,6 +38,7 @@ bool SmfIgmp::Open(bool withFRR)
 
     if (withFRR)
     { // Using FRR, so active the timer to check FRR
+        DoUpdate(update_timer);
         if (!update_timer.IsActive())
         {
             timer_mgr.ActivateTimer(update_timer);
@@ -89,7 +90,7 @@ void SmfIgmp::ProcessUpdates()
     }
 }
 
-std::vector<std::tuple<std::string, std::string>> SmfIgmp::NewManetInterface(const std::string& ifaceName) const
+std::vector<std::tuple<std::string, std::string>> SmfIgmp::NewNetworkInterface(const std::string& ifaceName) const
 {
     // Add a new push group with the new manet interface as the source, pushing to all the active host interfaces
     // Also add the new manet interface to all the rpush groups for each active host interface

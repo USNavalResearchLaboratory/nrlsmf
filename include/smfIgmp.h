@@ -49,7 +49,7 @@ class SmfIgmp : public ProtoChannel
         InterfacesMap GetInterfaceUpdates()
             {return std::move(interface_changes);}
 
-        std::vector<std::tuple<std::string, std::string>> NewManetInterface(const std::string& ifaceName) const;
+        std::vector<std::tuple<std::string, std::string>> NewNetworkInterface(const std::string& ifaceName) const;
 
     private:
         void DoUpdate(ProtoTimer& theTimer);

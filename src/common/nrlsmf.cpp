@@ -3768,20 +3768,22 @@ bool SmfApp::ParseInterfaceList(const char*         groupName,
         firstIface = false;
         if (Smf::RELAY == mode)
         {
-            // If new manet interfaces are added during runtime, then we need to process them in the IGMP controller
+#ifdef ELASTIC_MCAST
+            // If new network interfaces are added during runtime, then we need to process them in the IGMP controller
             // so that the proper push/rpush groups can be configured automatically.
             // This happens during start up as well, but since host interfaces are not initially detected at startup, then
-            // there will be no host interfaces and nothing will happen, so this will only have an effect when manet interfaces
+            // there will be no host interfaces and nothing will happen, so this will only have an effect when network interfaces
             // are added during runtime.
             // This will return a set of commands to run to add the new push/rpush groups
-            std::vector<std::tuple<std::string, std::string>> cmds = igmp_controller.NewManetInterface(ifaceName);
+            std::vector<std::tuple<std::string, std::string>> cmds = igmp_controller.NewNetworkInterface(ifaceName);
             for (const auto& c : cmds)
             {
                 if (!OnCommand(std::get<0>(c).c_str(), std::get<1>(c).c_str()))
                 {
-                    PLOG(PL_ERROR, "SmfApp::ParseInterfaceList() Failed to do automatic host configuration for new manet interface \"%s\"\n", ifaceName);
+                    PLOG(PL_ERROR, "SmfApp::ParseInterfaceList() Failed to do automatic host configuration for new network interface \"%s\"\n", ifaceName);
                 }
             }
+#endif // ELASTIC_MCAST
         }
     }
     return true;
@@ -5474,16 +5476,16 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
             if (u.second.second)
             {
                 // Set up it up as if configured on the command line with
-                //    nrlsmf add,manet,cf,eth0 add,eth0_push,push,eth0,<iface> add,<iface>_rpush,rpush,<iface>,eth0
-                // where the manet group was configured and we automatically added the push/rpush commands.
-                // There will be one push group per manet interface, and one rpush group per host interface
+                //    nrlsmf add,network,cf,eth0 add,eth0_push,push,eth0,<iface> add,<iface>_rpush,rpush,<iface>,eth0
+                // where the network group was configured and we automatically added the push/rpush commands.
+                // There will be one push group per network interface, and one rpush group per host interface
 
-                // Look for interface groups with Forwarding Mode == RELAY, these should be the manet groups
-                // all interfaces in those groups are considered manet interfaces.
+                // Look for interface groups with Forwarding Mode == RELAY, these should be the network groups
+                // all interfaces in those groups are considered network interfaces.
                 auto& igl = smf.AccessInterfaceGroupList();
                 Smf::InterfaceGroupList::Iterator igl_it(igl);
                 Smf::InterfaceGroup* ifaceGroup;
-                std::vector<std::string> manetIfaces;
+                std::vector<std::string> networkIfaces;
                 while (NULL != (ifaceGroup = igl_it.GetNextItem()))
                 {
                     if (Smf::RELAY == ifaceGroup->GetForwardingMode())
@@ -5497,28 +5499,29 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
                             unsigned int len = ProtoNet::GetInterfaceName(iface->GetIndex(), iffName, IF_NAMESIZE);
                             if (len == 0)
                             {
-                                PLOG(PL_WARN, "SmfApp::OnIgmpMembershipUpdate() Failed to find manet interface name for index %u\n", iface->GetIndex());
+                                PLOG(PL_WARN, "SmfApp::OnIgmpMembershipUpdate() Failed to find network interface name for index %u\n", iface->GetIndex());
                                 continue;
                             }
-                            manetIfaces.emplace_back(iffName, len);
+                            networkIfaces.emplace_back(iffName, len);
                         }
                     }
                 }
 
-                // Now we have the list of manet interfaces, so make the push and rpush commands to add the new host interface
+                // Now we have the list of network interfaces, so make the push and rpush commands to add the new host interface
                 // First, add the new host interface to each of the manet push groups
-                // Also set up the rpush group command for this host interface while looping the manet interfaces
+                // Also set up the rpush group command for this host interface while looping the network interfaces
                 std::ostringstream os;
                 os << "rpush," << u.second.first;
                 auto& addCmds = commands["add"];
-                for (const auto& mi : manetIfaces)
+                for (const auto& ni : networkIfaces)
                 {
-                    addCmds.emplace_back("push,"+mi+","+u.second.first);
-                    os << "," << mi;
+                    addCmds.emplace_back("push,"+ni+","+u.second.first);
+                    os << "," << ni;
                 }
-
                 // Now add the command to add the rpush group for this host interface
                 addCmds.emplace_back(os.str());
+                // We also want to add the new host interface to the merge group for the host interfaces
+                addCmds.emplace_back("hostifaces,merge,"+u.second.first);
             }
             else
             {
