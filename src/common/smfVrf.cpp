@@ -354,17 +354,38 @@ void SmfVRFList::DeleteVRF(SmfVRF &vrf)
 
 }
 
+SmfVRFPolicies::SmfVRFPolicies() :
+     policies(),
+     dstpolicies(),
+     srcpolicies(),
+     wildcardpolicies()
+{
+    
+}
+
+SmfVRFPolicies::~SmfVRFPolicies()
+{
+
+}
+
 SmfVRFPolicy* SmfVRFPolicies::AddPolicy(const std::string& srcvrf, const std::string& dstvrf)
 {
+    if (srcvrf == "all" && dstvrf == "all")
+    {
+        return &wildcardpolicies;
+    }
     if (srcvrf == "all")
     {
-        return &(dstpolicies[dstvrf]);
+        auto it = dstpolicies.emplace(dstvrf, SmfVRFPolicy{});
+        return &(it.first->second);
     }
     if (dstvrf == "all")
     {
-        return &(srcpolicies[srcvrf]);
+        auto it = srcpolicies.emplace(srcvrf, SmfVRFPolicy{});
+        return &(it.first->second);
     }
-    return &(policies[srcvrf+":"+dstvrf]);
+    auto it = policies.emplace(srcvrf+":"+dstvrf, SmfVRFPolicy{});
+    return &(it.first->second);
 }
 
 SmfVRFPolicy* SmfVRFPolicies:: FindPolicy(const std::string& srcvrf, const std::string& dstvrf)
@@ -386,6 +407,49 @@ SmfVRFPolicy* SmfVRFPolicies:: FindPolicy(const std::string& srcvrf, const std::
     {
         return &(dit->second);
     }
-    // No matching policy at all
-    return NULL;
+    return &wildcardpolicies;
+}
+
+void SmfVRFPolicies::DumpPolicies()
+{
+    PLOG(PL_DEBUG, "-------- VRF Route Leaking Policies -------\n");
+    PLOG(PL_DEBUG, "  all:all %s %s\n", 
+        wildcardpolicies.IsAllowed() ? "ALLOW" : "DENY", 
+        wildcardpolicies.HasWildcard() ? "all" : GetGroupList(wildcardpolicies.GetGroups()).c_str());
+    for (auto& p : dstpolicies)
+    {
+        PLOG(PL_DEBUG, "  all:%s %s %s\n", 
+            p.first.c_str(), 
+            p.second.IsAllowed() ? "ALLOW" : "DENY", 
+            p.second.HasWildcard() ? "all" : GetGroupList(p.second.GetGroups()).c_str());
+    }
+    for (auto& p : srcpolicies)
+    {
+        PLOG(PL_DEBUG, "  %s:all %s %s\n", 
+            p.first.c_str(), 
+            p.second.IsAllowed() ? "ALLOW" : "DENY", 
+            p.second.HasWildcard() ? "all" : GetGroupList(p.second.GetGroups()).c_str());
+    }
+    for (auto& p : policies)
+    {
+        PLOG(PL_DEBUG, "  %s %s %s\n", 
+            p.first.c_str(), 
+            p.second.IsAllowed() ? "ALLOW" : "DENY", 
+            p.second.HasWildcard() ? "all" : GetGroupList(p.second.GetGroups()).c_str());
+    }
+    PLOG(PL_DEBUG, "------ END VRF Route Leaking Policies ------\n");
+}
+
+std::string SmfVRFPolicies::GetGroupList(ProtoAddressList& groups)
+{
+    std::ostringstream os;
+    bool first = true;
+    ProtoAddressList::Iterator iter(groups);
+    ProtoAddress grp;
+    while (iter.GetNextAddress(grp))
+    {
+        os << (!first ? "," : "") << grp.GetHostString();
+        first = false;
+    }
+    return os.str();
 }

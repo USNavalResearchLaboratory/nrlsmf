@@ -119,6 +119,9 @@ class SmfVRFPolicy
             {if(grp.IsValid()) groups.Remove(grp); else wildcard = false;}
 
     private:
+        friend class SmfVRFPolicies;
+        ProtoAddressList& GetGroups() { return groups; }
+        bool HasWildcard() const { return wildcard; }
         ProtoAddressList groups;
         bool allow;
         bool wildcard; // If set, then all groups are matched
@@ -127,13 +130,19 @@ class SmfVRFPolicy
 class SmfVRFPolicies
 {
     public:
+        SmfVRFPolicies();
+        ~SmfVRFPolicies();
         SmfVRFPolicy* AddPolicy(const std::string& srcvrf, const std::string& dstvrf);
         SmfVRFPolicy* FindPolicy(const std::string& srcvrf, const std::string& dstvrf);
+        void DumpPolicies();
 
     private:
+        std::string GetGroupList(ProtoAddressList& groups);
         std::unordered_map<std::string, SmfVRFPolicy> policies;
         // Policies with a wildcard source VRF
         std::unordered_map<std::string, SmfVRFPolicy> dstpolicies;
         // Policies with a wildcard dest VRF
         std::unordered_map<std::string, SmfVRFPolicy> srcpolicies;
+        // Policies with both a wildcard src and dst VRF
+        SmfVRFPolicy wildcardpolicies;
 };
