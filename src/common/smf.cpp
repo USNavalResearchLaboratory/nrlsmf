@@ -2134,6 +2134,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
         // same VRF, if it doesn't, stop processing
         if (NULL != vrf)
         {
+            PLOG(PL_DETAIL, "Smf::ProcessPacket(): SRC VRF=\"%s\"\n", vrf->GetName());
             if (!vrf->IsMemberInterface(dstIface.GetIndex()))
             {
                 // Check for a route leaking policy that will allow this packet to be forwarded to a different VRF
@@ -2141,7 +2142,9 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 SmfVRF* dstvrf = vrf_list.GetVRFbyIfaceIndex(dstIface.GetIndex());
                 if (NULL != dstvrf)
                 {
+                    PLOG(PL_DETAIL, "Smf::ProcessPacket(): DST VRF=\"%s\"\n", dstvrf->GetName());
                     SmfVRFPolicy* pol = vrf_policies.FindPolicy(vrf->GetName(), dstvrf->GetName());
+                    PLOG(PL_DETAIL, "Found Policy? %u\n", pol?1:0);
                     if (NULL != pol && // Found a policy
                         // Is an allow list that contains the group, so leak it
                         ((pol->IsAllowed() && pol->containsGroup(dstIp)) ||
@@ -2151,8 +2154,11 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                         leak = true;
                     }
                 }
-                //PLOG(PL_DEBUG, "Smf::ProcessPacket(): Interface %u does't belong to VRF %s\n", dstIface.GetIndex(), vrf->GetName());
-                if (!leak) continue;
+                //PLOG(PL_DETAIL, "Smf::ProcessPacket(): Interface %u does't belong to VRF %s\n", dstIface.GetIndex(), vrf->GetName());
+                if (!leak) {
+                    PLOG(PL_DETAIL, "Smf::ProcessPacket(): No VRF leak policy, Not forwarding packet to %d\n",dstIface.GetIndex());
+                    continue;
+                }
                 PLOG(PL_MAX, "Smf::ProcessPacket(): VRF route leaking policy matched\n");
             }
         }

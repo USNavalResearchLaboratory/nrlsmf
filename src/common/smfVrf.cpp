@@ -91,9 +91,10 @@ bool SmfVRF::SetIfaceList(std::unordered_set<std::string> new_iface_list)
 SmfVRFList::SmfVRFList(ProtoTimerMgr& timerMgr) :
     ProtoIndexedQueueTemplate<SmfVRF>(),
     timer_mgr(timerMgr),
-    update_timer()
+    update_timer(),
+    policies(NULL)
 {
-    update_timer.SetInterval(15.0);
+    update_timer.SetInterval(5.0);
     update_timer.SetRepeat(-1);
     update_timer.SetListener(this, &SmfVRFList::DoUpdate);
 }
@@ -110,6 +111,7 @@ void SmfVRFList::SmfVRFList::EnableFRRUpdates(bool enable)
 {
     if (enable)
     {
+        QueryFRRVRFs();
         if (!update_timer.IsActive()) 
         {
             timer_mgr.ActivateTimer(update_timer);
@@ -167,14 +169,16 @@ SmfVRF* SmfVRFList::AddVRF(const char *vrf_name, UINT32 vrf_id, int table_id)
 void SmfVRFList::QueryFRRVRFs()
 {
     std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::Zebra, {"show vrf"});
+    bool dirty = false;
     if (ret.second != 0)
     {
         // TODO: command failed
         return;
     }
 
+    // There is always a default VRF mapped to table 254
     AddVRF("default", 0, 254);
-    QueryFRRVRFInterface("default");
+    dirty = QueryFRRVRFInterface("default");
     //ret.first; // The string response to parse through
     PLOG(PL_DETAIL,"SmfVRFList::QueryFRRVRFs VRFs from FRR:\n%s\n", ret.first.c_str());
 
@@ -217,27 +221,35 @@ void SmfVRFList::QueryFRRVRFs()
         {
             AddVRF(vrfName.c_str(), atoi(vrfId.c_str()), atoi(vrfTable.c_str()));
             totalVRFs++;
-            QueryFRRVRFInterface(vrfName);
+            if (QueryFRRVRFInterface(vrfName))
+            dirty = true;
         }
 
     }
+
+    if (dirty)
+    {
+        DumpVRFs();
+        if (policies)
+            policies->DumpPolicies();
+    }
 }
 
-void SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
+bool SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
 {
     SmfVRF * vrf = GetVRFByName(vrf_name.c_str());
 
     if (NULL == vrf)
     {
         PLOG(PL_ERROR,"SmfVRFList::QueryFRRVRFInterface:  No such VRF: %s\n", vrf_name.c_str());
-        return;
+        return false;
     }
     std::string cmd = "show interface vrf " + vrf_name + " brief";
     std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::Zebra, {cmd});
     if (ret.second != 0)
     {
         // TODO: command failed
-        return;
+        return false;
     }
     //ret.first; // The string response to parse through
     PLOG(PL_DETAIL,"SmfVRFList::QueryFRRVRFInterface: VRF FRR %s interface list:\n%s\n", vrf_name.c_str(), ret.first.c_str());
@@ -305,7 +317,9 @@ void SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
     {
         // we got some updates, reset the iface list.
         vrf->SetIfaceList(iface_list);
+        return true;
     }
+    return false;
 }
 
 SmfVRF* SmfVRFList::GetVRFByName(const char* vrf_name)

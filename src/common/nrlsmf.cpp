@@ -1228,9 +1228,8 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
         return false;
     }
 
+    smf.GetVRFs()->SetPolicies(smf.GetVRFPolicies());
     smf.GetVRFs()->EnableFRRUpdates(smf.withFRR());
-    smf.GetVRFs()->DumpVRFs();
-    smf.GetVRFPolicies()->DumpPolicies();
 
     // Check to see if any ifaces were configured
     // (or if outbound resequencing is set up)

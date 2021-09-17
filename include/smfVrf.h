@@ -57,6 +57,7 @@ class SmfVRF : public ProtoQueue::Item
         std::unordered_set<unsigned int> iface_index_list;
 };// end class SmfVRF
 
+class SmfVRFPolicies;
 class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF> 
 {
     public:
@@ -81,14 +82,17 @@ class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF>
         SmfVRF *GetVRFByName(const char *vrf_name);
         void QueryFRRVRFs();
         void EnableFRRUpdates(bool enable);
-        void QueryFRRVRFInterface(std::string vrf_name);
+        bool QueryFRRVRFInterface(std::string vrf_name);
         SmfVRF *GetVRF(UINT32 vrf_id) const { return FindVRF(vrf_id); }
         SmfVRF *GetVRFbyIfaceIndex(unsigned int iface_index);
         void DoUpdate(ProtoTimer& theTimer);
+        void SetPolicies(SmfVRFPolicies* pols)
+            {policies = pols;}
 
     private:
         ProtoTimerMgr& timer_mgr;
         ProtoTimer update_timer;
+        SmfVRFPolicies * policies;
         const char *GetKey(const Item &item) const 
             {return static_cast<const SmfVRF &>(item).GetKey();}
         unsigned int GetKeysize(const Item &item) const 
