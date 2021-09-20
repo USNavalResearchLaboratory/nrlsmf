@@ -40,7 +40,7 @@ bool SmfVRF::IsMemberInterface(unsigned int iface_index)
         return false;
 }
 
-bool SmfVRF::AddInterface(const char *iface) 
+bool SmfVRF::AddInterface(const char *iface)
 {
     // iface_list.
     if (iface_list.find(iface) != iface_list.end())
@@ -51,7 +51,7 @@ bool SmfVRF::AddInterface(const char *iface)
     else
     {
         unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(iface);
-        if (0 == ifaceIndex) 
+        if (0 == ifaceIndex)
         {
             PLOG(PL_ERROR, "SmfVRF::AddInterface error: invalid interface \"%s\"\n", iface);
             return false;
@@ -62,7 +62,7 @@ bool SmfVRF::AddInterface(const char *iface)
     }
 }
 
-bool SmfVRF::SetIfaceList(std::unordered_set<std::string> new_iface_list) 
+bool SmfVRF::SetIfaceList(std::unordered_set<std::string> new_iface_list)
 {
     std::unordered_set<unsigned int> new_iface_index_list;
     for (auto it = new_iface_list.begin(); it != new_iface_list.end();)
@@ -70,12 +70,12 @@ bool SmfVRF::SetIfaceList(std::unordered_set<std::string> new_iface_list)
         char *iface = (char *) (*it).c_str();
 
         unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(iface);
-        if (0 == ifaceIndex) 
+        if (0 == ifaceIndex)
         {
             PLOG(PL_ERROR, "SmfVRF::SetIfaceList error: invalid interface \"%s\"\n", iface);
             it = new_iface_list.erase(it);
         }
-        else 
+        else
         {
             it=std::next(it);
             new_iface_index_list.insert(ifaceIndex);
@@ -112,14 +112,14 @@ void SmfVRFList::SmfVRFList::EnableFRRUpdates(bool enable)
     if (enable)
     {
         QueryFRRVRFs();
-        if (!update_timer.IsActive()) 
+        if (!update_timer.IsActive())
         {
             timer_mgr.ActivateTimer(update_timer);
         }
-    } 
-    else 
+    }
+    else
     {
-        if (update_timer.IsActive()) 
+        if (update_timer.IsActive())
         {
             timer_mgr.DeactivateTimer(update_timer);
         }
@@ -189,20 +189,20 @@ void SmfVRFList::QueryFRRVRFs()
     std::istringstream iss(ret.first);
     std::string line;
     int totalVRFs = 0;
-    while (std::getline(iss, line)) 
+    while (std::getline(iss, line))
     {
         std::string vrfName, vrfId, vrfTable;
         std::istringstream liness(line);
         std::string lpart;
         int field = 0;
-        while (std::getline(liness, lpart, ' ')) 
+        while (std::getline(liness, lpart, ' '))
         {
             if (!lpart.empty()) // Ignore extra white space between fields
             {
                 field++;
                 // get the second, forth, and 6th words corresponding to vrf name, id,
                 // and table
-                switch (field) 
+                switch (field)
                 {
                     case 2:
                         vrfName = lpart;
@@ -265,7 +265,7 @@ bool SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
     std::unordered_set<std::string> iface_list;
     int totalIfaces = 0;
     int skip2lines = 2;
-    while (std::getline(iss, line)) 
+    while (std::getline(iss, line))
     {
         if (0 != skip2lines) // skip the first two header lines
         {
@@ -276,12 +276,12 @@ bool SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
         std::istringstream liness(line);
         std::string lpart;
         int field = 0;
-        while (std::getline(liness, lpart, ' ')) 
+        while (std::getline(liness, lpart, ' '))
         {
             if (!lpart.empty()) // Ignore extra white space between fields
             {
                 field++;
-                switch (field) 
+                switch (field)
                 {
                     case 1:
                         // Interfaces with multiple IP addresses configured will
@@ -290,14 +290,14 @@ bool SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
                         // eth0          up      default         192.168.30.1/24
                         // eth1          up      default         192.168.35.1/32
                         //                                       192.168.45.1/32
-                        if (lpart.find("/") == std::string::npos) 
+                        if (lpart.find("/") == std::string::npos)
                         {
                             ifaceName = lpart;
                         }
                         break;
                     case 2:
                         // Skip "down" interfaces
-                        if (lpart == "down") 
+                        if (lpart == "down")
                         {
                             ifaceName.clear();
                         }
@@ -374,7 +374,7 @@ SmfVRFPolicies::SmfVRFPolicies() :
      srcpolicies(),
      wildcardpolicies()
 {
-    
+
 }
 
 SmfVRFPolicies::~SmfVRFPolicies()
@@ -403,7 +403,7 @@ SmfVRFPolicy* SmfVRFPolicies::AddPolicy(const std::string& srcvrf, const std::st
 }
 
 SmfVRFPolicy* SmfVRFPolicies:: FindPolicy(const std::string& srcvrf, const std::string& dstvrf)
-{ 
+{
     auto it = policies.find(srcvrf+":"+dstvrf);
     if (it != policies.end())
     {
@@ -427,28 +427,28 @@ SmfVRFPolicy* SmfVRFPolicies:: FindPolicy(const std::string& srcvrf, const std::
 void SmfVRFPolicies::DumpPolicies()
 {
     PLOG(PL_DEBUG, "-------- VRF Route Leaking Policies -------\n");
-    PLOG(PL_DEBUG, "  all:all %s %s\n", 
-        wildcardpolicies.IsAllowed() ? "ALLOW" : "DENY", 
+    PLOG(PL_DEBUG, "  all:all %s %s\n",
+        wildcardpolicies.IsAllowed() ? "ALLOW" : "DENY",
         wildcardpolicies.HasWildcard() ? "all" : GetGroupList(wildcardpolicies.GetGroups()).c_str());
     for (auto& p : dstpolicies)
     {
-        PLOG(PL_DEBUG, "  all:%s %s %s\n", 
-            p.first.c_str(), 
-            p.second.IsAllowed() ? "ALLOW" : "DENY", 
+        PLOG(PL_DEBUG, "  all:%s %s %s\n",
+            p.first.c_str(),
+            p.second.IsAllowed() ? "ALLOW" : "DENY",
             p.second.HasWildcard() ? "all" : GetGroupList(p.second.GetGroups()).c_str());
     }
     for (auto& p : srcpolicies)
     {
-        PLOG(PL_DEBUG, "  %s:all %s %s\n", 
-            p.first.c_str(), 
-            p.second.IsAllowed() ? "ALLOW" : "DENY", 
+        PLOG(PL_DEBUG, "  %s:all %s %s\n",
+            p.first.c_str(),
+            p.second.IsAllowed() ? "ALLOW" : "DENY",
             p.second.HasWildcard() ? "all" : GetGroupList(p.second.GetGroups()).c_str());
     }
     for (auto& p : policies)
     {
-        PLOG(PL_DEBUG, "  %s %s %s\n", 
-            p.first.c_str(), 
-            p.second.IsAllowed() ? "ALLOW" : "DENY", 
+        PLOG(PL_DEBUG, "  %s %s %s\n",
+            p.first.c_str(),
+            p.second.IsAllowed() ? "ALLOW" : "DENY",
             p.second.HasWildcard() ? "all" : GetGroupList(p.second.GetGroups()).c_str());
     }
     PLOG(PL_DEBUG, "------ END VRF Route Leaking Policies ------\n");

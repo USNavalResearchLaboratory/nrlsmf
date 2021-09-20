@@ -10,7 +10,7 @@
 #define VRF_DEFAULT_NAME "default"
 #define VRF_UKKNOWN UINT32_MAX
 
-class SmfVRF : public ProtoQueue::Item 
+class SmfVRF : public ProtoQueue::Item
 {
     public:
         SmfVRF(UINT32 vid);
@@ -18,9 +18,9 @@ class SmfVRF : public ProtoQueue::Item
         ~SmfVRF()
             {iface_list.clear(); iface_index_list.clear();}
 
-        void SetID(UINT32 vid) 
+        void SetID(UINT32 vid)
             {vrf_id = vid;}
-        UINT32 GetID() 
+        UINT32 GetID()
           {return vrf_id;}
 
         void SetTableID(UINT32 tid)
@@ -58,19 +58,19 @@ class SmfVRF : public ProtoQueue::Item
 };// end class SmfVRF
 
 class SmfVRFPolicies;
-class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF> 
+class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF>
 {
     public:
         SmfVRFList(ProtoTimerMgr& timerMgr);
         ~SmfVRFList();
 
-        SmfVRF *FindVRF(UINT32 vid) const 
+        SmfVRF *FindVRF(UINT32 vid) const
           {return Find((const char *)&vid, 8 * sizeof(UINT32));}
 
-        class Iterator : public ProtoIndexedQueueTemplate<SmfVRF>::Iterator 
+        class Iterator : public ProtoIndexedQueueTemplate<SmfVRF>::Iterator
         {
             public:
-                Iterator(SmfVRFList &vrfList) 
+                Iterator(SmfVRFList &vrfList)
                     : ProtoIndexedQueueTemplate<SmfVRF>::Iterator(vrfList) {}
               SmfVRF *GetNextVRF()
                   {return ProtoIndexedQueueTemplate<SmfVRF>::Iterator::GetNextItem();}
@@ -93,16 +93,16 @@ class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF>
         ProtoTimerMgr& timer_mgr;
         ProtoTimer update_timer;
         SmfVRFPolicies * policies;
-        const char *GetKey(const Item &item) const 
+        const char *GetKey(const Item &item) const
             {return static_cast<const SmfVRF &>(item).GetKey();}
-        unsigned int GetKeysize(const Item &item) const 
+        unsigned int GetKeysize(const Item &item) const
             {return static_cast<const SmfVRF &>(item).GetKeysize();}
 };// end class SmfVRFList
 
 class SmfVRFPolicy
 {
     public:
-        SmfVRFPolicy(bool _allow = true) 
+        SmfVRFPolicy(bool _allow = true)
             : allow(_allow),
               wildcard(false) {}
         ~SmfVRFPolicy() {}
