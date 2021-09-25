@@ -171,7 +171,7 @@ class SmfApp : public ProtoApp
                           ProtoSocket::Event theEvent);
 
         bool OnIgmpQueryTimeout(ProtoTimer& theTimer);
-        void OnIgmpMembershipUpdate(ProtoChannel&               theChannel, 
+        void OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
                                     ProtoChannel::Notification  notifyType);
 
         void DisplayGroups();
@@ -426,7 +426,7 @@ class SmfApp : public ProtoApp
 #ifdef WIN32
 		char			            if_friendly_name[MAX_ADAPTER_NAME_LENGTH];
 #endif
-        char                        config_path[PATH_MAX + 1];  
+        char                        config_path[PATH_MAX + 1];
 
 }; // end class SmfApp
 
@@ -979,9 +979,9 @@ SmfApp::SmfApp()
    elastic_mcast(false),
    adaptive_routing(false),
    filter_duplicates(true),
-   iface_monitor(NULL), 
+   iface_monitor(NULL),
    control_pipe(ProtoPipe::MESSAGE),
-   server_pipe(ProtoPipe::MESSAGE), 
+   server_pipe(ProtoPipe::MESSAGE),
    tap_pipe(ProtoPipe::MESSAGE), tap_active(false)
 {
     control_pipe.SetNotifier(&GetSocketNotifier());
@@ -1002,7 +1002,7 @@ SmfApp::SmfApp()
     smf.SetController(&smart_controller);
     smf.SetOutputMechanism(this);
 #endif // ADAPTIVE_ROUTING
-        
+
     config_path[0] = config_path[PATH_MAX] = '\0';
 }
 
@@ -1305,7 +1305,7 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
     // Similar to IGMP wired LAN operation, non-router (i.e. host-only)
     // nodes should only reply to one querying router when multiple routers
     // are detected (generally the router w/ lowest ID or something)
-    
+
     // This code is disabled for the moment
     /*if (elastic_mcast)
     {
@@ -1336,7 +1336,7 @@ void SmfApp::OnShutdown()
 {
     if ('\0' != config_path[0])
         SaveConfig(config_path);
-    
+
     if (NULL != iface_monitor)
     {
         if (iface_monitor->IsOpen()) iface_monitor->Close();
@@ -1351,12 +1351,12 @@ void SmfApp::OnShutdown()
     Smf::Interface* iface;
     while (NULL != (iface = iterator.GetNextItem()))
     {
-       
+
         InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->RemoveExtension());
         ProtoVif* vif = (NULL != mech) ? mech->GetProtoVif() : NULL;
         if (NULL != vif)
         {
-            // If the associated "proto_cap" has no addresses, assume they were stolen 
+            // If the associated "proto_cap" has no addresses, assume they were stolen
             // and reclaim them from the proto_vif (and restore routes)
             ProtoRouteMgr* rtMgr = NULL;
             ProtoRouteTable rtTable;   // used to cache stolen routes from vif for restoration to cap
@@ -1368,7 +1368,7 @@ void SmfApp::OnShutdown()
                 unsigned int capIndex = cap.GetInterfaceIndex();
                 ProtoAddressList addrList;
                 ProtoNet::GetInterfaceAddressList(capIndex, ProtoAddress::IPv4, addrList);
-#ifdef HAVE_IPV6 
+#ifdef HAVE_IPV6
                 ProtoNet::GetInterfaceAddressList(capIndex, ProtoAddress::IPv6, addrList);
 #endif // HAVE_IPV6
                 // Weed out link local addrs
@@ -1401,15 +1401,15 @@ void SmfApp::OnShutdown()
                                     rtMgr->DeleteRoute(*entry);
                                     if (entry->IsDefault())
                                     {
-                                        rtTable.SetRoute(entry->GetDestination(), entry->GetPrefixSize(), 
+                                        rtTable.SetRoute(entry->GetDestination(), entry->GetPrefixSize(),
                                                          entry->GetGateway(), entry->GetInterfaceIndex(),
                                                          entry->GetMetric());
-                                    }          
+                                    }
                                     else
                                     {
                                         tmpTable.RemoveEntry(*entry);
                                         rtTable.InsertEntry(*entry);
-                                    }              
+                                    }
                                 }
                             }
                         }
@@ -3075,15 +3075,15 @@ bool SmfApp::ProcessInterfaceConfig(ProtoJson::Object& ifaceConfig)
         PLOG(PL_ERROR, "SmfApp::ProcessInterfaceConfig() error: missing 'name' attribute\n");
         return false;
     }
-    
+
     bool shadow = ifaceConfig.GetBoolean("shadow");         // for vif device interfaces only
     bool blockIGMP = ifaceConfig.GetBoolean("blockIGMP");   // for vif device interfaces only
-    
+
     // Fetch the index to determine if it is an existing interface
     unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(ifaceName);
-    
+
     ProtoJson::Array* addrArray = ifaceConfig.GetArray("addresses");
-    unsigned int addrCount = (NULL != addrArray) ? addrArray->GetLength() : 0;    
+    unsigned int addrCount = (NULL != addrArray) ? addrArray->GetLength() : 0;
     if (0 == ifaceIndex)
     {
         const char* device = ifaceConfig.GetString("device");
@@ -3100,7 +3100,7 @@ bool SmfApp::ProcessInterfaceConfig(ProtoJson::Object& ifaceConfig)
             PLOG(PL_ERROR, "SmfApp::ProcessInterfaceConfig() error: unable to add vif device '%s'\n", device);
             return false;
         }
-    }   
+    }
     else
     {
         Smf::Interface* iface = GetInterface(ifaceName, ifaceIndex);
@@ -3110,9 +3110,9 @@ bool SmfApp::ProcessInterfaceConfig(ProtoJson::Object& ifaceConfig)
             return false;
         }
     }
-    
+
     // TBD - handle case when vif already exists?
-    
+
     for (unsigned int i = 0; i < addrCount; i++)
     {
         const char* item = addrArray->GetString(i);
@@ -3166,12 +3166,12 @@ bool SmfApp::ProcessInterfaceConfig(ProtoJson::Object& ifaceConfig)
     ASSERT(NULL != iface);
     // Save device interface IPv4 addresses for possible IPIP encapsulation use
     ProtoNet::GetInterfaceAddressList(ifaceName, ProtoAddress::IPv4, iface->AccessAddressList());
-    iface->UpdateIpAddress();   
-    
+    iface->UpdateIpAddress();
+
     // Note "layered" attribute is optional (i.e., default "layered=false" in absence)
     iface->SetLayered(ifaceConfig.GetBoolean("layered"));
     iface->SetReliable(ifaceConfig.GetBoolean("reliable"));
-    
+
     return true;
 }  // end SmfApp::ProcessInterfaceConfig()
 
@@ -3241,7 +3241,7 @@ bool SmfApp::ProcessGroupConfig(ProtoJson::Object& groupConfig)
             return false;
         }
     }
-    
+
     // TBD - implement these differently so they don't depend on the command-line interface
     if (groupConfig.GetBoolean("elastic"))
         OnCommand("elastic", groupName);
@@ -3249,7 +3249,7 @@ bool SmfApp::ProcessGroupConfig(ProtoJson::Object& groupConfig)
         OnCommand("unicast", groupName);
     if (groupConfig.GetBoolean("etx"))
         OnCommand("etx", groupName);
-    
+
     return true;
 }  // end SmfApp::ProcessGroupConfig()
 
@@ -3304,7 +3304,7 @@ bool SmfApp::SaveConfig(const char* configPath)
             }  // end if (NULL != elem)
         }  // end if (NULL != vif)
         if (!config.AddInterface(ifaceName, addrList, (NULL != vif) ? deviceName : NULL,
-                                 iface->IsReliable(), iface->IsLayered(), 
+                                 iface->IsReliable(), iface->IsLayered(),
                                  mech->IsShadowing(), mech->BlockIGMP()))
         {
             PLOG(PL_ERROR, "SmfApp::SaveConfig() error: unable to add interface item\n");
@@ -3316,7 +3316,7 @@ bool SmfApp::SaveConfig(const char* configPath)
     Smf::InterfaceGroup* group;
     while (NULL != (group = grouperator.GetNextItem()))
     {
-        if (!config.AddInterfaceGroup(group->GetName(), group->GetRelayType(), group->AccessInterfaceList(), 
+        if (!config.AddInterfaceGroup(group->GetName(), group->GetRelayType(), group->AccessInterfaceList(),
                                       group->IsElastic(), group->GetElasticUnicast(), group->UseETX()))
         {
             PLOG(PL_ERROR, "SmfApp::SaveConfig() error: unable to add interface item\n");
@@ -4998,14 +4998,14 @@ bool SmfApp::TransferAddresses(unsigned int vifIndex, unsigned ifaceIndex)
                     rtMgr->DeleteRoute(*entry);
                     if (entry->IsDefault())
                     {
-                        rtTable.SetRoute(entry->GetDestination(), entry->GetPrefixSize(), 
+                        rtTable.SetRoute(entry->GetDestination(), entry->GetPrefixSize(),
                                          entry->GetGateway(), ifIndex, entry->GetMetric());
-                    }          
+                    }
                     else
                     {
                         tmpTable.RemoveEntry(*entry);
                         rtTable.InsertEntry(*entry);
-                    }              
+                    }
                 }
             }
         }
@@ -5459,7 +5459,7 @@ bool SmfApp::OnIgmpQueryTimeout(ProtoTimer& theTimer)
     return true;
 }  // end SmfApp::OnIgmpQueryTimeout()
 
-void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel, 
+void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
                                     ProtoChannel::Notification  notifyType)
 {
     // igmp_controller has updates
@@ -5721,7 +5721,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
         if (elasticMulticast || elasticUnicast)
         {
             ProtoPktIP ipPkt;
-            bool isValidIP = (ProtoPktETH::IP == ethPkt.GetType()) && 
+            bool isValidIP = (ProtoPktETH::IP == ethPkt.GetType()) &&
                              ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), ethPkt.AccessPayload(), ethPkt.GetPayloadMax());
             UINT8 trafficClass = 0;
             if (isValidIP)
@@ -5764,17 +5764,17 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                     ip6Pkt.GetDstAddr(dst);
                     isUnicast = dst.IsUnicast();
                     trafficClass = ip6Pkt.GetTrafficClass();
-                }   
+                }
                 if (elasticUnicast && isUnicast)
                 {
-                    // For elastic unicast, we need to change the ETH 
+                    // For elastic unicast, we need to change the ETH
                     // destination  address since ARP is disabled, etc
                     // TBD - support ARP interception instead? (i.e. do our own ARP cache)
                     // TBD - do this _after_ smf.ProcessPacket() is called???
                     char addrBuffer[6];
                     memset(addrBuffer, 0XFF, 6);
                     ProtoAddress bcastAddr;
-                    bcastAddr.SetRawHostAddress(ProtoAddress::ETH, addrBuffer, 6);        
+                    bcastAddr.SetRawHostAddress(ProtoAddress::ETH, addrBuffer, 6);
                     ethPkt.SetDstAddr(bcastAddr);
                 }
                 // Use Smf::ProcessPacket() to decide if packet should be sent instead of default packet transmission behavior
@@ -5818,7 +5818,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
         }
 #endif // ELASTIC_MCAST
         // Note even it ELASTIC_MCAST or ADAPTIVE_ROUTING, non-IP packets need to be sent
-        // The IP-IP encapsulation code here should be moved elsewhere 
+        // The IP-IP encapsulation code here should be moved elsewhere
         //  (e.g., within ForwardFrame() on a per-interface basis
         if (!packetHandled)
         {
@@ -6453,7 +6453,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
             // TBD - Do not write duplicate packets up to kernel
             if (!isDuplicate || !filter_duplicates)
             {
-                
+
                 // This "hack" (if uncommented) blocks ICMP messages from being written up to the virtual
                 // interface, because the "device" PCAP interface already sends them up to the kernel,
                 // (Even though IP is disabled on that physical interface!)
@@ -6468,14 +6468,14 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
             }
         }
     }
-    
+
     if (isUnicast && !smf.GetUnicastEnabled() && !smf.GetAdaptiveRouting())
     {
         // Don't process unicast unless enabled
         return true;
     }
-    
-#ifdef ELASTIC_MCAST   
+
+#ifdef ELASTIC_MCAST
     for (int i = 0; i < dstCount; i++)
     {
         // TBD - perhaps we should have a more efficient way to dereference the dstIface ???
@@ -7232,4 +7232,3 @@ bool SmfApp::SetupIPv6Detour(int hookFlags)
 }  // end SmfApp::SetupIPv6Detour()
 #endif  // HAVE_IPV6
 #endif // _PROTO_DETOUR
-

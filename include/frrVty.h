@@ -27,28 +27,43 @@ namespace FRR
     // Sends the command to the protopipe socket, parses out the response from the frr daemon
     static std::pair<std::string, std::int16_t> DoVtyCommand(ProtoPipe& sock, const std::string& cmd)
     {
-        std::pair<std::string, std::int8_t> ret = {"", -1};
         unsigned int sz = cmd.size() + 1;
         if (!sock.Send(cmd.c_str(), sz) || sz != (cmd.size() + 1))
         {
-            return ret;
+            return std::make_pair("", -1);
         }
 
-        char buf[2048];
-        sz = 2048;
-        if (!sock.Recv(buf, sz))
+        std::pair<std::string, std::int8_t> ret = {"", -1};
+        // Make sure we have allocated at least 16K to help make sure we don't have to reallocate while receiving the reply
+        if (ret.first.capacity() < 16536)
         {
-            return ret;
+            ret.first.reserve(16536);
         }
 
-        // A valid response will have a minimum of 4 bytes, and must end with 3 null charactors and the return code
-        if (sz >= 4 && buf[sz-4] == 0 && buf[sz-3] == 0 && buf[sz-2] == 0)
+        // Continue receiving until we get the end of reply signal, 3 null bytes + 1 return code byte
+        while (true)
         {
-            if (sz > 4)
+            char buf[2048];
+            sz = 2048;
+            if (!sock.Recv(buf, sz))
             {
-                ret.first.assign(buf, sz - 4);
+                return std::make_pair("", -1);
             }
-            ret.second = buf[sz-1];
+
+            if (sz > 0)
+            {
+                // Check for the end of the response signal
+                if (sz >= 4 && buf[sz-4] == 0 && buf[sz-3] == 0 && buf[sz-2] == 0)
+                {
+                    ret.first.append(buf, sz-4); // Don't copy the null bytes or return code
+                    ret.second = buf[sz-1];
+                    break;
+                }
+                else
+                {
+                    ret.first.append(buf, sz);
+                }
+            }
         }
         return ret;
     }

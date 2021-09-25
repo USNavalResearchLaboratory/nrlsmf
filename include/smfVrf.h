@@ -4,6 +4,7 @@
 #include "protoAddress.h"
 #include <unordered_set>
 #include <unordered_map>
+#include <string>
 
 #define VRF_NAME_SIZE 36
 #define VRF_DEFAULT 0
