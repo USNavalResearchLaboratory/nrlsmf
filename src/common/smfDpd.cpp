@@ -576,8 +576,12 @@ bool SmfDpdWindow::Flow::IsDuplicate(UINT32 seq)
             }
             else if (delta < (INT32)window_past_max)
             {
-                // It's "very old", so assume it's a duplicate (but no reset)
-                return true;   
+                // It's "very old".
+                // Newer behavior - assume it's not a duplicate and reset
+                // (this presumes our window is big enough to catch old duplicates)
+                // Our old behavior was to assume very old packets were duplicates
+                bitmask.Clear();
+                return false;   
             } 
             else
             {
