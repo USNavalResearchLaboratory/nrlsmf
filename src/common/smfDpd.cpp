@@ -581,6 +581,7 @@ bool SmfDpdWindow::Flow::IsDuplicate(UINT32 seq)
                 // (this presumes our window is big enough to catch old duplicates)
                 // Our old behavior was to assume very old packets were duplicates
                 bitmask.Clear();
+                bitmask.Set(seq);
                 return false;   
             } 
             else
