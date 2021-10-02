@@ -178,7 +178,7 @@ class SmfDpd
 class SmfDpdTable : public SmfDpd
 {
     public:
-        SmfDpdTable();
+        SmfDpdTable(unsigned int pktSizeMax);
         ~SmfDpdTable();
         
         enum {MAX_ID_BITS = (3*128)};
@@ -207,13 +207,14 @@ class SmfDpdTable : public SmfDpd
                 ~PacketIdTable();
                 
                 void Append(PacketIdEntry& entry, unsigned int currentTime);
+                PacketIdEntry* RemoveHead();
                 bool IsDuplicate(const char* pktId, unsigned int pktIdSize) const
                     {return (NULL != id_tree.Find(pktId, pktIdSize));}
                 
                 // If "itemPool" is NULL, then stale entries are deleted
                 void Prune(unsigned int             currentTime, 
                            unsigned int             ageMax,
-                           ProtoTree::ItemPool**  poolArray);
+                           ProtoTree::ItemPool**    poolArray);
                 
                 void EmptyToPool(ProtoTree::ItemPool** poolArray);
                 
@@ -266,7 +267,7 @@ class SmfDpdTable : public SmfDpd
         class Flow : public SmfFlow
         {
             public:
-                Flow();
+                Flow(unsigned int pktCountMax);  
                 ~Flow();
                 
                 bool Init(const char*   flowId,
@@ -286,13 +287,15 @@ class SmfDpdTable : public SmfDpd
                 bool IsDuplicate(unsigned int           currentTime,
                                  const char*            pktId,
                                  unsigned int           pktIdSize,  // in bits
-                                 ProtoTree::ItemPool* itemPool = NULL);
+                                 ProtoTree::ItemPool*   itemPool = NULL);
                 
                 bool IsEmpty() const
                     {return pkt_id_table.IsEmpty();}
                 
             private:
                 PacketIdTable   pkt_id_table;
+                unsigned int    pkt_count;
+                unsigned int    pkt_count_max;  // zero means unlimited
             
         };  // end class SmfDpdTable::Flow
         
@@ -300,6 +303,8 @@ class SmfDpdTable : public SmfDpd
         void Reset();
     
         SmfFlow::List           flow_list;
+        
+        unsigned int            pkt_count_max;  // per-flow table size limit (zero is unlimited)
         
         ProtoTree::ItemPool*    entry_pools[MAX_ID_BYTES+1]; 
                 

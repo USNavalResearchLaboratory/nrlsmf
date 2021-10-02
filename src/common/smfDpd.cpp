@@ -154,7 +154,8 @@ SmfDpd::~SmfDpd()
 }
 
 
-SmfDpdTable::SmfDpdTable()
+SmfDpdTable::SmfDpdTable(unsigned int pktCountMax)
+    : pkt_count_max(pktCountMax)
 {
     memset(entry_pools, 0, (MAX_ID_BYTES+1)*sizeof(ProtoTree::ItemPool*));
 }
@@ -246,7 +247,7 @@ bool SmfDpdTable::IsDuplicate(unsigned int   currentTime,
     if (NULL == flow)
     {
         // (TBD) should we keep a pool of Flows?
-        if (NULL == (flow = new Flow))
+        if (NULL == (flow = new Flow(pkt_count_max)))
         {
             PLOG(PL_ERROR, "SmfDpdTable::IsDuplicate() new Flow error: %s\n", GetErrorString());
             return true;  // on failure, don't forward   
@@ -264,7 +265,8 @@ bool SmfDpdTable::IsDuplicate(unsigned int   currentTime,
     
 }  // end SmfDpdTable::IsDuplicate()
 
-SmfDpdTable::Flow::Flow()
+SmfDpdTable::Flow::Flow(unsigned int pktCountMax)
+    : pkt_count(0), pkt_count_max(pktCountMax)
 {
 }
 
@@ -294,9 +296,30 @@ bool SmfDpdTable::Flow::IsDuplicate(unsigned int            currentTime,
     }
     else
     {
-        PacketIdEntry* entry = (NULL != itemPool) ? 
-                                    static_cast<PacketIdEntry*>(itemPool->Get()) : 
-                                    NULL;
+        PacketIdEntry* entry;
+        if ((pkt_count_max > 0) && (pkt_count >= pkt_count_max))
+        {
+            // This while loop may not be needed
+            while (pkt_count > pkt_count_max)
+            {
+                entry = pkt_id_table.RemoveHead();
+                if (NULL != itemPool)
+                    itemPool->Put(*entry);
+                else
+                    delete entry;
+                pkt_count--;
+            }
+            entry = pkt_id_table.RemoveHead();
+            pkt_count--;
+        }
+        else
+        {
+            // Get an entry from the itemPool if availbe
+            entry = (NULL != itemPool) ? 
+                        static_cast<PacketIdEntry*>(itemPool->Get()) : 
+                        NULL;
+        }
+        
         if (NULL == entry)
         {
             entry = new PacketIdEntry();
@@ -319,6 +342,7 @@ bool SmfDpdTable::Flow::IsDuplicate(unsigned int            currentTime,
             entry->SetPktId(pktId, pktIdSize >> 3);
         }
         pkt_id_table.Append(*entry, currentTime);
+        pkt_count++;
         return false;   
     }
 }  // end SmfDpdTable::Flow::IsDuplicate()
@@ -386,6 +410,18 @@ void SmfDpdTable::PacketIdTable::Append(PacketIdEntry& entry, unsigned int curre
     }
     id_tree.Insert(entry);
 }  // end SmfDpdTable::PacketIdTable::Append()
+
+SmfDpdTable::PacketIdEntry* SmfDpdTable::PacketIdTable::RemoveHead()
+{
+    if (NULL != head)
+    {
+        PacketIdEntry* entry = head;
+        head = entry->GetNext();
+        id_tree.Remove(*entry);
+        return entry;
+    }
+    return NULL;
+}  // end SmfDpdTable::PacketIdTable::RemoveHead()
 
 void SmfDpdTable::PacketIdTable::Prune(unsigned int           currentTime, 
                                        unsigned int           ageMax,
@@ -516,7 +552,10 @@ bool SmfDpdWindow::Flow::IsDuplicate(UINT32 seq)
             // It's a "new" packet 
             INT32 bitmaskSize = bitmask.GetSize();
             if (delta < bitmaskSize) // "slide" the window as needed
-                bitmask.UnsetBits(lastSet - bitmaskSize + 1, delta);
+            {
+                UINT32 index = (lastSet - bitmaskSize + 1) & rangeMask;
+                bitmask.UnsetBits(index, delta);
+            }
             else  // It's beyond of our window range, so reset window
                 bitmask.Clear();
             bitmask.Set(seq);

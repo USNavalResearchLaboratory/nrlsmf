@@ -97,7 +97,7 @@ bool Smf::Interface::Init(bool useWindow)
     }
     else
     {
-        dup_detector = static_cast<SmfDpd*>(new SmfDpdTable);
+        dup_detector = static_cast<SmfDpd*>(new SmfDpdTable(1024));
     }
     if (NULL == dup_detector)
     {
@@ -374,7 +374,8 @@ Smf::Smf(ProtoTimerMgr& timerMgr)
    delay_time(0),
    update_age_max(DEFAULT_AGE_MAX), current_update_time(0),
    selector_list_len(0), neighbor_list_len(0),
-   recv_count(0), mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0)
+   recv_count(0), mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0),
+   hash_stash(1024)
 {
     delay_relay_off_timer.SetInterval(delay_time);
     delay_relay_off_timer.SetListener(this,&Smf::OnDelayRelayOffTimeout);
