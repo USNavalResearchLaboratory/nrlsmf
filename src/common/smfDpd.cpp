@@ -575,7 +575,10 @@ bool SmfDpdWindow::Flow::IsDuplicate(UINT32 seq)
             // It's a "new" packet
             INT32 bitmaskSize = bitmask.GetSize();
             if (delta < bitmaskSize) // "slide" the window as needed
-                bitmask.UnsetBits(lastSet - bitmaskSize + 1, delta);
+            {
+                UINT32 index = (lastSet - bitmaskSize + 1) & rangeMask;
+                bitmask.UnsetBits(index, delta);
+            }
             else  // It's beyond of our window range, so reset window
                 bitmask.Clear();
             bitmask.Set(seq);
