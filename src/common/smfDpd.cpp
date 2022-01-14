@@ -31,7 +31,6 @@
 */
 
 #include "smfDpd.h"
-#include "protoDebug.h"
 #include <stdlib.h>  // for rand()
 
 
@@ -564,20 +563,19 @@ bool SmfDpdWindow::Flow::IsDuplicate(UINT32 seq)
     {
         // What region does this "seq" fall into
         // with respect to our "window" ?
-        //INT32 rangeSign = (INT32)bitmask.GetRangeSign();
-        //INT32 rangeMask = (INT32)bitmask.GetRangeMask();
-        INT32 delta = (INT32) (seq) - (INT32)lastSet;
-        /*delta = ((0 == (delta & rangeSign)) ?
-         *               (delta & rangeMask) :
-         *               (((delta != rangeSign) || (seq < lastSet)) ?
-         *                   (delta | ~rangeMask) : delta));
-         */
+        INT32 rangeSign = (INT32)bitmask.GetRangeSign();
+        INT32 rangeMask = (INT32)bitmask.GetRangeMask();
+        INT32 delta = seq - lastSet;
+        delta = ((0 == (delta & rangeSign)) ? 
+                        (delta & rangeMask) :
+                        (((delta != rangeSign) || (seq < lastSet)) ? 
+                            (delta | ~rangeMask) : delta));
         if (delta > 0)
         {
             // It's a "new" packet
             INT32 bitmaskSize = bitmask.GetSize();
-            if ((delta < bitmaskSize) && ( (INT32)lastSet - bitmaskSize) >= 0) // "slide" the window as needed
-                bitmask.UnsetBits((INT32)lastSet - bitmaskSize + 1, delta);
+            if (delta < bitmaskSize) // "slide" the window as needed
+                bitmask.UnsetBits(lastSet - bitmaskSize + 1, delta);
             else  // It's beyond of our window range, so reset window
                 bitmask.Clear();
             bitmask.Set(seq);
