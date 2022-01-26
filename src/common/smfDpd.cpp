@@ -309,6 +309,8 @@ bool SmfDpdTable::Flow::IsDuplicate(unsigned int            currentTime,
                     {
                         PLOG(PL_WARN, "SmfDpdTable::Flow::IsDuplicate() new itemPool error: %s\n", GetErrorString());
                         delete oldEntry;
+                        pkt_count--;
+                        continue;
                     }
                     itemPoolArray[oldEntry->GetPktIdLength()] = itemPool;
                 }
