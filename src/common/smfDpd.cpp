@@ -445,6 +445,16 @@ void SmfDpdTable::PacketIdTable::Prune(unsigned int           currentTime,
             if (NULL != poolArray)
             {
                 ProtoTree::ItemPool* itemPool = poolArray[staleEntry->GetPktIdLength()];
+                if (NULL == itemPool)
+                {
+                    if (NULL == (itemPool = new ProtoTree::ItemPool()))
+                    {
+                        PLOG(PL_WARN, "SmfDpdTable::PacketIdTable::Prune() new itemPool error: %s\n", GetErrorString());
+                        delete staleEntry;
+                        continue;
+                    }
+                    poolArray[staleEntry->GetPktIdLength()] = itemPool;
+                }
                 itemPool->Put(*staleEntry);
             }
             else
