@@ -566,9 +566,9 @@ bool SmfDpdWindow::Flow::IsDuplicate(UINT32 seq)
         INT32 rangeSign = (INT32)bitmask.GetRangeSign();
         INT32 rangeMask = (INT32)bitmask.GetRangeMask();
         INT32 delta = seq - lastSet;
-        delta = ((0 == (delta & rangeSign)) ? 
+        delta = ((0 == (delta & rangeSign)) ?
                         (delta & rangeMask) :
-                        (((delta != rangeSign) || (seq < lastSet)) ? 
+                        (((delta != rangeSign) || (seq < lastSet)) ?
                             (delta | ~rangeMask) : delta));
         if (delta > 0)
         {
