@@ -287,7 +287,7 @@ class SmfDpdTable : public SmfDpd
                 bool IsDuplicate(unsigned int           currentTime,
                                  const char*            pktId,
                                  unsigned int           pktIdSize,  // in bits
-                                 ProtoTree::ItemPool*   itemPool = NULL);
+                                 ProtoTree::ItemPool**  itemPoolArray);
                 
                 bool IsEmpty() const
                     {return pkt_id_table.IsEmpty();}

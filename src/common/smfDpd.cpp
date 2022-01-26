@@ -231,17 +231,6 @@ bool SmfDpdTable::IsDuplicate(unsigned int   currentTime,
         return true;
     }
     
-    ProtoTree::ItemPool* itemPool = entry_pools[pktIdBytes];
-    if (NULL == itemPool)
-    {
-        if (NULL == (itemPool = new ProtoTree::ItemPool()))
-        {
-            PLOG(PL_ERROR, "SmfDpdTable::IsDuplicate() new itemPool error: %s\n", GetErrorString());
-            return true;
-        }
-        entry_pools[pktIdBytes] = itemPool;
-    }
-    
     // 1) Find the "flow" w/ matching "flowId" or create a new one
     Flow* flow = static_cast<Flow*>(flow_list.Find(flowId, flowIdSize));
     if (NULL == flow)
@@ -261,7 +250,7 @@ bool SmfDpdTable::IsDuplicate(unsigned int   currentTime,
     }
     
     // 2) Given "flow", check for duplications
-    return flow->IsDuplicate(currentTime, pktId, pktIdSize, itemPool);
+    return flow->IsDuplicate(currentTime, pktId, pktIdSize, entry_pools); 
     
 }  // end SmfDpdTable::IsDuplicate()
 
@@ -288,7 +277,7 @@ bool SmfDpdTable::Flow::Init(const char*    flowId,
 bool SmfDpdTable::Flow::IsDuplicate(unsigned int            currentTime,
                                     const char*             pktId,
                                     unsigned int            pktIdSize,
-                                    ProtoTree::ItemPool*    itemPool)
+                                    ProtoTree::ItemPool**   itemPoolArray)
 {
     if (pkt_id_table.IsDuplicate(pktId, pktIdSize))
     {
@@ -296,30 +285,45 @@ bool SmfDpdTable::Flow::IsDuplicate(unsigned int            currentTime,
     }
     else
     {
-        PacketIdEntry* entry;
+        PacketIdEntry* entry = NULL;
+        unsigned int pktIdLength = pktIdSize >> 3;
         if ((pkt_count_max > 0) && (pkt_count >= pkt_count_max))
         {
-            // This while loop may not be needed
-            while (pkt_count > pkt_count_max)
+            // Maximum per-flow table size has been reached, so remove oldest table entry
+            // This while loop may not be needed (i.e., may only ever need to call RemoveHead() once
+            while (pkt_count >= pkt_count_max)
             {
-                entry = pkt_id_table.RemoveHead();
-                if (NULL != itemPool)
-                    itemPool->Put(*entry);
-                else
-                    delete entry;
+                PacketIdEntry* oldEntry = pkt_id_table.RemoveHead();
+                if ((NULL == entry) && (oldEntry->GetPktIdLength() == pktIdLength))
+                {
+                    // old entry has matching pktIdLength, so save "entry" for reuse below
+                    entry = oldEntry;
+                    pkt_count--;
+                    continue;
+                }
+                // Extraneous or non-matching old entry, so return to appropriate item pool (or delete)
+                ProtoTree::ItemPool* itemPool = itemPoolArray[entry->GetPktIdLength()];
+                if (NULL == itemPool)
+                {
+                    if (NULL == (itemPool = new ProtoTree::ItemPool()))
+                    {
+                        PLOG(PL_WARN, "SmfDpdTable::Flow::IsDuplicate() new itemPool error: %s\n", GetErrorString());
+                        delete oldEntry;
+                    }
+                    itemPoolArray[entry->GetPktIdLength()] = itemPool;
+                }
+                itemPool->Put(*entry);
                 pkt_count--;
             }
-            entry = pkt_id_table.RemoveHead();
-            pkt_count--;
         }
         else
         {
-            // Get an entry from the itemPool if availbe
+            // Get an entry from the itemPool if available
+            ProtoTree::ItemPool* itemPool = itemPoolArray[pktIdLength];
             entry = (NULL != itemPool) ? 
                         static_cast<PacketIdEntry*>(itemPool->Get()) : 
                         NULL;
         }
-        
         if (NULL == entry)
         {
             entry = new PacketIdEntry();
@@ -329,17 +333,18 @@ bool SmfDpdTable::Flow::IsDuplicate(unsigned int            currentTime,
                         GetErrorString());
                 return true;  // on failure, don't forward
             }
-            if (!entry->SetPktId(pktId, pktIdSize >> 3))
+            if (!entry->SetPktId(pktId, pktIdLength))
             {
                 PLOG(PL_ERROR, "SmfDpdTable::Flow::IsDuplicate() new PacketIdEntry::SetPktId error: %s\n",
                         GetErrorString());
+                delete entry;
                 return true;  // on failure, don't forward
             }
         }
         else
         {
-            // "itemPool" is assumed to be for the given "pktIdSize"
-            entry->SetPktId(pktId, pktIdSize >> 3);
+            // Re-used entry, so "pkt_id" buffer already allocated for the given "pktIdLength"
+            entry->SetPktId(pktId, pktIdLength);
         }
         pkt_id_table.Append(*entry, currentTime);
         pkt_count++;
