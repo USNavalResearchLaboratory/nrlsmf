@@ -302,7 +302,7 @@ bool SmfDpdTable::Flow::IsDuplicate(unsigned int            currentTime,
                     continue;
                 }
                 // Extraneous or non-matching old entry, so return to appropriate item pool (or delete)
-                ProtoTree::ItemPool* itemPool = itemPoolArray[entry->GetPktIdLength()];
+                ProtoTree::ItemPool* itemPool = itemPoolArray[oldEntry->GetPktIdLength()];
                 if (NULL == itemPool)
                 {
                     if (NULL == (itemPool = new ProtoTree::ItemPool()))
@@ -310,9 +310,9 @@ bool SmfDpdTable::Flow::IsDuplicate(unsigned int            currentTime,
                         PLOG(PL_WARN, "SmfDpdTable::Flow::IsDuplicate() new itemPool error: %s\n", GetErrorString());
                         delete oldEntry;
                     }
-                    itemPoolArray[entry->GetPktIdLength()] = itemPool;
+                    itemPoolArray[oldEntry->GetPktIdLength()] = itemPool;
                 }
-                itemPool->Put(*entry);
+                itemPool->Put(*oldEntry);
                 pkt_count--;
             }
         }
