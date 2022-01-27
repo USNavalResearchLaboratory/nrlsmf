@@ -1,32 +1,32 @@
 /*********************************************************************
  *
  * AUTHORIZATION TO USE AND DISTRIBUTE
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that: 
+ * modification, are permitted provided that:
  *
- * (1) source code distributions retain this paragraph in its entirety, 
- *  
+ * (1) source code distributions retain this paragraph in its entirety,
+ *
  * (2) distributions including binary code include this paragraph in
- *     its entirety in the documentation or other materials provided 
- *     with the distribution, and 
+ *     its entirety in the documentation or other materials provided
+ *     with the distribution, and
  *
- * (3) all advertising materials mentioning features or use of this 
+ * (3) all advertising materials mentioning features or use of this
  *     software display the following acknowledgment:
- * 
+ *
  *  The name of NRL, the name(s) of NRL  employee(s), or any entity
  *  of the United States Government may not be used to endorse or
- *  promote  products derived from this software, nor does the 
+ *  promote  products derived from this software, nor does the
  *  inclusion of the NRL written and developed software  directly or
  *  indirectly suggest NRL or United States  Government endorsement
  *  of this product.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR
  * IMPLIED WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED
  * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
  * Revision history
  * Date  Author Details
- * 01/07/05 William Chao init version 
+ * 01/07/05 William Chao init version
  * 01/07/05 Justin Dean init version
 */
 
@@ -40,7 +40,7 @@ SmfFlow::SmfFlow()
 }
 
 SmfFlow::~SmfFlow()
-{   
+{
     Destroy();
 }
 
@@ -164,7 +164,7 @@ SmfDpdTable::~SmfDpdTable()
 {
     Destroy();
 }
-        
+
 
 void SmfDpdTable::Reset()
 {
@@ -182,9 +182,9 @@ void SmfDpdTable::Reset()
 void SmfDpdTable::Destroy()
 {
     // iterate thru all flows in flow lists, remove and delete any entries
-    // and then destroy the pools 
+    // and then destroy the pools
     Reset();
-    
+
     for (int i = 1; i <= MAX_ID_BYTES; i++)
     {
         if (NULL != entry_pools[i])
@@ -194,7 +194,7 @@ void SmfDpdTable::Destroy()
             entry_pools[i] = NULL;
         }
     }
-    
+
 }  // end SmfDpdTable::Destroy()
 
 void SmfDpdTable::Prune(unsigned int currentTime, unsigned int ageMax)
@@ -216,21 +216,21 @@ bool SmfDpdTable::IsDuplicate(unsigned int   currentTime,
                               const char*    flowId,
                               unsigned int   flowIdSize,   // in bits
                               const char*    pktId,
-                              unsigned int   pktIdSize)    // in bits  
+                              unsigned int   pktIdSize)    // in bits
 {
     unsigned int pktIdBytes = pktIdSize >> 3;
     if (0 != (pktIdSize & 0x07))
     {
         PLOG(PL_ERROR, "SmfDpdTable::IsDuplicate() error: pktIdSize not multiple of 8\n");
-        return true;   
+        return true;
     }
-    
+
     if (pktIdBytes > MAX_ID_BYTES)
     {
         PLOG(PL_ERROR, "SmfDpdTable::IsDuplicate() error: oversized pktId\n");
         return true;
     }
-    
+
     // 1) Find the "flow" w/ matching "flowId" or create a new one
     Flow* flow = static_cast<Flow*>(flow_list.Find(flowId, flowIdSize));
     if (NULL == flow)
@@ -239,19 +239,19 @@ bool SmfDpdTable::IsDuplicate(unsigned int   currentTime,
         if (NULL == (flow = new Flow(pkt_count_max)))
         {
             PLOG(PL_ERROR, "SmfDpdTable::IsDuplicate() new Flow error: %s\n", GetErrorString());
-            return true;  // on failure, don't forward   
+            return true;  // on failure, don't forward
         }
         if (!flow->Init(flowId, flowIdSize))
         {
             PLOG(PL_ERROR, "SmfDpdTable::IsDuplicate() flow initialization error.\n");
             return false; // on failure, don't forward
-        }   
-        flow_list.Append(*flow);     
+        }
+        flow_list.Append(*flow);
     }
-    
+
     // 2) Given "flow", check for duplications
-    return flow->IsDuplicate(currentTime, pktId, pktIdSize, entry_pools); 
-    
+    return flow->IsDuplicate(currentTime, pktId, pktIdSize, entry_pools);
+
 }  // end SmfDpdTable::IsDuplicate()
 
 SmfDpdTable::Flow::Flow(unsigned int pktCountMax)
@@ -269,7 +269,7 @@ bool SmfDpdTable::Flow::Init(const char*    flowId,
     if (!SmfFlow::Init(flowId, flowIdSize))
     {
         PLOG(PL_ERROR, "SmfDpdTable::Flow::Init() SmfFlow initialization error\n");
-        return false; 
+        return false;
     }
     return true;
 }  // end SmfDpdTable::Flow::Init()
@@ -322,8 +322,8 @@ bool SmfDpdTable::Flow::IsDuplicate(unsigned int            currentTime,
         {
             // Get an entry from the itemPool if available
             ProtoTree::ItemPool* itemPool = itemPoolArray[pktIdLength];
-            entry = (NULL != itemPool) ? 
-                        static_cast<PacketIdEntry*>(itemPool->Get()) : 
+            entry = (NULL != itemPool) ?
+                        static_cast<PacketIdEntry*>(itemPool->Get()) :
                         NULL;
         }
         if (NULL == entry)
@@ -350,7 +350,7 @@ bool SmfDpdTable::Flow::IsDuplicate(unsigned int            currentTime,
         }
         pkt_id_table.Append(*entry, currentTime);
         pkt_count++;
-        return false;   
+        return false;
     }
 }  // end SmfDpdTable::Flow::IsDuplicate()
 
@@ -361,7 +361,7 @@ SmfDpdTable::PacketIdEntry::PacketIdEntry()
 
 SmfDpdTable::PacketIdEntry::~PacketIdEntry()
 {
-    if (NULL != pkt_id) 
+    if (NULL != pkt_id)
     {
         delete[] pkt_id;
         pkt_id = NULL;
@@ -399,7 +399,7 @@ SmfDpdTable::PacketIdTable::~PacketIdTable()
         PacketIdEntry* entry = nextEntry;
         nextEntry = nextEntry->GetNext();
         delete entry;
-    }   
+    }
 }
 
 void SmfDpdTable::PacketIdTable::Append(PacketIdEntry& entry, unsigned int currentTime)
@@ -410,7 +410,7 @@ void SmfDpdTable::PacketIdTable::Append(PacketIdEntry& entry, unsigned int curre
     {
         tail->Append(&entry);
         tail = &entry;
-    }   
+    }
     else
     {
         head = tail = &entry;
@@ -430,7 +430,7 @@ SmfDpdTable::PacketIdEntry* SmfDpdTable::PacketIdTable::RemoveHead()
     return NULL;
 }  // end SmfDpdTable::PacketIdTable::RemoveHead()
 
-void SmfDpdTable::PacketIdTable::Prune(unsigned int           currentTime, 
+void SmfDpdTable::PacketIdTable::Prune(unsigned int           currentTime,
                                        unsigned int           ageMax,
                                        ProtoTree::ItemPool**  poolArray)
 {
@@ -479,8 +479,18 @@ void SmfDpdTable::PacketIdTable::EmptyToPool(ProtoTree::ItemPool** poolArray)
         PacketIdEntry* entry = next;
         next = next->GetNext();
         id_tree.Remove(*entry);
-        ASSERT(NULL != poolArray[entry->GetPktIdLength()]);
-        poolArray[entry->GetPktIdLength()]->Put(*entry); 
+        ProtoTree::ItemPool* itemPool = poolArray[entry->GetPktIdLength()];
+        if (NULL == itemPool)
+        {
+            if (NULL == (itemPool = new ProtoTree::ItemPool()))
+            {
+                PLOG(PL_WARN, "SmfDpdTable::PacketIdTable::EmptyToPool() new itemPool error: %s\n", GetErrorString());
+                delete entry;
+                continue;
+            }
+            poolArray[entry->GetPktIdLength()] = itemPool;
+        }
+        itemPool->Put(*entry);
     }
     head = tail = NULL;
 }  // end SmfDpdTable::PacketIdTable::EmptyToPool()
@@ -508,9 +518,9 @@ bool SmfDpdWindow::Flow::Init(const char*         flowId,
     if (!SmfFlow::Init(flowId, flowIdSize))
     {
         PLOG(PL_ERROR, "SmfDpdWindow::Flow::Init() SmfFlow initialization error\n");
-        return false; 
+        return false;
     }
-    
+
     // Make sure all parameters are valid
     if ((seqNumSize < 8) || (seqNumSize > 32))
     {
@@ -518,14 +528,14 @@ bool SmfDpdWindow::Flow::Init(const char*         flowId,
         Destroy();
         return false;
 	}
-       
+
     if (windowSize > ((UINT32)0x01 << (seqNumSize - 1)))
     {
         PLOG(PL_ERROR, "SmfDpdWindow::Flow::Init() error: invalid windowSize\n");
         Destroy();
         return false;
     }
-    
+
     if ((windowPastMax < windowSize) ||
         (windowPastMax > ((UINT32)0x01 << (seqNumSize - 1))))
     {
@@ -533,8 +543,8 @@ bool SmfDpdWindow::Flow::Init(const char*         flowId,
         Destroy();
         return false;
     }
-    
-    // Note seqRangeMask == sequence value max 
+
+    // Note seqRangeMask == sequence value max
     UINT32 seqRangeMask = 0xffffffff >> (32 - seqNumSize);
     if (!bitmask.Init(windowSize, seqRangeMask))
     {
@@ -542,15 +552,15 @@ bool SmfDpdWindow::Flow::Init(const char*         flowId,
         Destroy();
         return false;
     }
-    
+
     window_past_max = windowPastMax;
-    
+
     return true;
-    
+
 }  // end SmfDpdWindow::Flow::Init()
 
 bool SmfDpdWindow::Flow::IsDuplicate(UINT32 seq)
-{    
+{
     // Get the "lastSet" sequence (our current window "middle")
     UINT32 lastSet;
     if (bitmask.GetLastSet(lastSet))
@@ -560,13 +570,13 @@ bool SmfDpdWindow::Flow::IsDuplicate(UINT32 seq)
         INT32 rangeSign = (INT32)bitmask.GetRangeSign();
         INT32 rangeMask = (INT32)bitmask.GetRangeMask();
         INT32 delta = seq - lastSet;
-        delta = ((0 == (delta & rangeSign)) ? 
+        delta = ((0 == (delta & rangeSign)) ?
                         (delta & rangeMask) :
-                        (((delta != rangeSign) || (seq < lastSet)) ? 
+                        (((delta != rangeSign) || (seq < lastSet)) ?
                             (delta | ~rangeMask) : delta));
         if (delta > 0)
         {
-            // It's a "new" packet 
+            // It's a "new" packet
             INT32 bitmaskSize = bitmask.GetSize();
             if (delta < bitmaskSize) // "slide" the window as needed
             {
@@ -599,8 +609,8 @@ bool SmfDpdWindow::Flow::IsDuplicate(UINT32 seq)
                 // Our old behavior was to assume very old packets were duplicates
                 bitmask.Clear();
                 bitmask.Set(seq);
-                return false;   
-            } 
+                return false;
+            }
             else
             {
                 // It's so very "ancient", we reset our window to it
@@ -613,15 +623,15 @@ bool SmfDpdWindow::Flow::IsDuplicate(UINT32 seq)
         else
         {
             // It's a duplicate repeat of our lastSet
-            return true;   
+            return true;
         }
     }
     else
     {
-        // This is the first packet received  
+        // This is the first packet received
         bitmask.Set(seq);
-        return false;  // not a duplicate 
-    }    
+        return false;  // not a duplicate
+    }
 }  // end SmfDpdWindow::Flow::IsDuplicate()
 
 
@@ -665,9 +675,9 @@ bool SmfDpdWindow::IsDuplicate(unsigned int   currentTime,
     UINT32 pktIdValue = 0;
     memcpy(((char*)&pktIdValue) + (4 - pktIdValueLen), pktId, pktIdValueLen);
     pktIdValue = ntohl(pktIdValue);
-    
-    Flow* theFlow = static_cast<Flow*>(flow_list.Find(flowId, flowIdSize)); 
-    if (NULL == theFlow) 
+
+    Flow* theFlow = static_cast<Flow*>(flow_list.Find(flowId, flowIdSize));
+    if (NULL == theFlow)
     {
         // (TBD) We should have a max number of entries in tree
         theFlow = new Flow();
@@ -678,10 +688,10 @@ bool SmfDpdWindow::IsDuplicate(unsigned int   currentTime,
             return true;  // returns true to be safe (but breaks forwarding)
         }
         // (TBD) set window_size_past properly
-        if (!theFlow->Init(flowId, 
-                           flowIdSize, 
-                           pktIdSize, 
-                           window_size, 
+        if (!theFlow->Init(flowId,
+                           flowIdSize,
+                           pktIdSize,
+                           window_size,
                            window_past_max))
         {
             PLOG(PL_ERROR,"SmfDpdWindow::IsDuplicate() SmfSlidingWindow::Flow::Init() error\n");
@@ -694,8 +704,8 @@ bool SmfDpdWindow::IsDuplicate(unsigned int   currentTime,
         flow_list.Append(*theFlow);
         theFlow->IsDuplicate(pktIdValue);
         return false;
-    }  
-    else 
+    }
+    else
     {
         // This check is for robustness, one could hope/assume that pktIdSize wouldn't change
         UINT32 pktIdMask = 0xffffffff >> (32 - pktIdSize);
@@ -713,8 +723,8 @@ bool SmfDpdWindow::IsDuplicate(unsigned int   currentTime,
             // "Bubble up" fresh flow to head of list
             theFlow->SetUpdateTime(currentTime);
             flow_list.MoveToTail(*theFlow);
-            return false;    
-        }    
+            return false;
+        }
     }
 }  // end SmfDpdWindow::IsDuplicate()
 
@@ -754,12 +764,12 @@ bool SmfSequenceMgr::Init(UINT8 numSeqBits)
 {
     seq_mask = 0xffffffff;
     if (numSeqBits < 32)
-        seq_mask >>= (32 - numSeqBits);   
-    return true; 
+        seq_mask >>= (32 - numSeqBits);
+    return true;
 }  // end SmfSequenceMgr::Init()
 
 
-UINT32 SmfSequenceMgr::GetSequence(const ProtoAddress* dstAddr, 
+UINT32 SmfSequenceMgr::GetSequence(const ProtoAddress* dstAddr,
                                    const ProtoAddress* srcAddr) const
 {
     char addrKey[32];  // big enough for up IPv6 src::dst concatenation
@@ -791,11 +801,11 @@ UINT32 SmfSequenceMgr::GetSequence(const ProtoAddress* dstAddr,
         PLOG(PL_ERROR, "SmfSequenceMgr::GetSequence() error: unknown flow!\n");
         return 0;
     }
-        
+
 }  // end SmfSequenceMgr::GetSequence()
 
 UINT32 SmfSequenceMgr::IncrementSequence(unsigned int        updateTime,
-                                         const ProtoAddress* dstAddr, 
+                                         const ProtoAddress* dstAddr,
                                          const ProtoAddress* srcAddr)
 {
     char addrKey[32];  // big enough for up IPv6 src::dst concatenation
