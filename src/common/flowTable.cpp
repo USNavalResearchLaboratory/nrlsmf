@@ -4,7 +4,7 @@ FlowDescription::FlowDescription(const ProtoAddress&  dst,            // invalid
                                  const ProtoAddress&  src,            // invalid src addr means any src
                                  UINT8                trafficClass,   // 0x03 is "null" trafficClass (only ECN bits set)
                                  ProtoPktIP::Protocol protocol,       // 255 is "null" protocol
-                                 unsigned int         ifaceIndex)     // 0 is "null" interface index 
+                                 unsigned int         ifaceIndex)     // 0 is "null" interface index
 {
     // flow_key:  dlen [+ dst + dmask] + slen [+ src + smask] + class + protocol + index
     UINT8 dstLen, dstMaskLen, srcLen, srcMaskLen;
@@ -20,7 +20,7 @@ FlowDescription::FlowDescription(const ProtoAddress&  dst,            // invalid
     {
         dstPtr = NULL;
         dstLen = 0;
-        dstMaskLen = 0; 
+        dstMaskLen = 0;
     }
     if (src.IsValid())
     {
@@ -35,7 +35,7 @@ FlowDescription::FlowDescription(const ProtoAddress&  dst,            // invalid
         srcMaskLen = 0;
     }
     SetKey(dstPtr, dstLen, dstMaskLen, srcPtr, srcLen, srcMaskLen, trafficClass, protocol, ifaceIndex);
-}  
+}
 
 FlowDescription::~FlowDescription()
 {
@@ -71,8 +71,8 @@ void FlowDescription::Print(FILE* filePtr) const
         ProtoAddress addr;
         GetSrcAddr(addr);
         fprintf(filePtr, "%s", addr.GetHostString());
-        if (GetSrcMaskLength() != GetSrcLength() << 3) 
-            fprintf(filePtr, "{%d}", GetSrcMaskLength());      
+        if (GetSrcMaskLength() != GetSrcLength() << 3)
+            fprintf(filePtr, "{%d}", GetSrcMaskLength());
         if (0 != addr.GetPort())
             fprintf(filePtr, "/%hu", addr.GetPort());
     }
@@ -86,8 +86,8 @@ void FlowDescription::Print(FILE* filePtr) const
         ProtoAddress addr;
         GetDstAddr(addr);
         fprintf(filePtr, "->%s", addr.GetHostString());
-        if (GetDstMaskLength() != GetDstLength() << 3) 
-            fprintf(filePtr, "{%d}", GetDstMaskLength());      
+        if (GetDstMaskLength() != GetDstLength() << 3)
+            fprintf(filePtr, "{%d}", GetDstMaskLength());
         if (0 != addr.GetPort())
             fprintf(filePtr, "/%hu", addr.GetPort());
     }
@@ -110,10 +110,10 @@ void FlowDescription::Print(FILE* filePtr) const
         fprintf(filePtr, ",%d", GetInterfaceIndex());
 }  // end FlowDescription::Print()
 
-void FlowDescription::SetKey(const char*             dstAddr, 
+void FlowDescription::SetKey(const char*             dstAddr,
                              UINT8                   dstLen,  // bytes
                              UINT8                   dstMask, // bits
-                             const char*             srcAddr, 
+                             const char*             srcAddr,
                              UINT8                   srcLen,  // bytes
                              UINT8                   srcMask, // bits
                              UINT8                   trafficClass,
@@ -134,7 +134,7 @@ void FlowDescription::SetKey(const char*             dstAddr,
     flow_key[offset++] = dstLen;
     prefix_size = 0;
     bool extendPrefix = true;
-    if (0 != dstLen) 
+    if (0 != dstLen)
     {
         memcpy(flow_key+offset, dstAddr, dstLen);
         offset += dstLen;
@@ -201,13 +201,13 @@ void FlowDescription::InitFromDescription(const FlowDescription& description, in
         flow_key[keylen++] = dstLen;
         prefix_size = 0;
         bool extendPrefix = true;
-        if (0 != dstLen) 
+        if (0 != dstLen)
         {
             memcpy(flow_key+keylen, description.GetDstPtr(), dstLen);
             keylen += dstLen;
             UINT8 dstMask = description.GetDstMaskLength();
             flow_key[keylen++] = dstMask;
-            prefix_size = 8 + dstMask;  // dstLen + dstAddr 
+            prefix_size = 8 + dstMask;  // dstLen + dstAddr
             if (dstMask == (dstLen << 3))
                 prefix_size += 8;  // dstMask field
             else
@@ -470,7 +470,7 @@ void FlowTable::MaskLengthList::Insert(UINT16 value)
         memmove(mask_list+1, mask_list, list_length);
         mask_list[0] = value;
         list_length += 1;
-    } 
+    }
     else if (value < mask_list[list_length - 1])
     {
         mask_list[list_length] = value;
@@ -512,14 +512,14 @@ void FlowTable::MaskLengthList::Insert(UINT16 value)
             list_length += 1;
         }
         // else value already in list
-    }     
+    }
 }  // end FlowTable::MaskLengthList::Insert()
 
 void FlowTable::MaskLengthList::Remove(UINT16 value)
 {
     if ((0 == list_length) || (value > mask_list[0]) || (value < mask_list[list_length-1]))
         return;  // value out of list range
-    
+
     if (ref_count[value] > 1)
     {
         ref_count[value] -= 1;
@@ -554,7 +554,7 @@ void FlowTable::MaskLengthList::Remove(UINT16 value)
             // Found it directly via binary search
             memmove(mask_list+index, mask_list+index+1, list_length-index-1);
             list_length -= 1;
-            return;  
+            return;
         }
         x = mask_list[index];
     }
@@ -571,15 +571,15 @@ void FlowTable::MaskLengthList::Remove(UINT16 value)
     // else not in list
 }  // end FlowTable::MaskLengthList::Remove()
 
-FlowTable::Entry::Entry(const ProtoAddress&  dst, 
-                        const ProtoAddress&  src, 
+FlowTable::Entry::Entry(const ProtoAddress&  dst,
+                        const ProtoAddress&  src,
                         UINT8                trafficClass,
                         ProtoPktIP::Protocol theProtocol,
                         unsigned int         ifaceIndex)
   : flow_description(dst, src, trafficClass, theProtocol, ifaceIndex)
 {
 }
-                
+
 FlowTable::Entry::Entry(const FlowDescription& flowDescription, int flags)
 {
     flow_description.InitFromDescription(flowDescription, flags);
@@ -608,9 +608,9 @@ void FlowTable::Iterator::Reset(const FlowDescription* description, int flags, b
     src_mask_size = 0;
     if (NULL != description)
     {
-        
+
         const char* prefix = description->GetKey();
-        unsigned int prefixSize = 0;  
+        unsigned int prefixSize = 0;
         bool extendPrefix = true;
         UINT8 dstLen = description->GetDstLength();
         UINT8 srcLen = description->GetSrcLength();
@@ -629,7 +629,7 @@ void FlowTable::Iterator::Reset(const FlowDescription* description, int flags, b
             prefix = NULL;
         }
         if ((0 != srcLen) && (0 != (FlowDescription::FLAG_SRC & flags)))
-        {       
+        {
             src_mask_size = description->GetSrcMaskLength();
             if (extendPrefix)
             {
@@ -667,7 +667,7 @@ void FlowTable::Iterator::Reset(const FlowDescription* description, int flags, b
         }
         iface_index = (0 != (FlowDescription::FLAG_INDEX & flags)) ? description->GetInterfaceIndex() : 0;
         if (extendPrefix && (0 != iface_index))
-            prefixSize += sizeof(unsigned int) << 3;  
+            prefixSize += sizeof(unsigned int) << 3;
         prefix_mask_size = prefixSize;
         // Save prefix key for iterator resets as needed.
         UINT8 prefixBytes = (UINT8)((prefixSize + 0x07) >> 3);
@@ -681,7 +681,7 @@ void FlowTable::Iterator::Reset(const FlowDescription* description, int flags, b
             current_mask_size = next_mask_size;
             next_mask_size = mask_iterator.GetNextMaskSize();
         }
-        if (prefix_mask_size < current_mask_size) 
+        if (prefix_mask_size < current_mask_size)
             current_mask_size = prefix_mask_size;
         table_iterator.Reset(false, prefix, prefixSize);
     }
@@ -699,7 +699,7 @@ void FlowTable::Iterator::Reset(const FlowDescription* description, int flags, b
 
 FlowTable::Entry* FlowTable::Iterator::GetNextEntry()
 {
-    Entry* entry;
+    Entry* entry = nullptr;
     while (current_mask_size >= 0)
     {
         while (NULL != (entry = table_iterator.GetNextEntry()))
@@ -709,11 +709,11 @@ FlowTable::Entry* FlowTable::Iterator::GetNextEntry()
                 // This conditional makes sure the longest matching prefix matches are
                 // returned first by the iterator.  The "current_mask_size" can be
                 // queried by the user of the iterator to know when the returned matches
-                // descend to a short matching prefix length.  The second part of the 
+                // descend to a short matching prefix length.  The second part of the
                 // conditional here ensures matching entries are returned only once
                 // upon the secondary, etc. iterations at different prefix mask lengths
                 // according to the "mask_list" of table being iterated.
-                
+
                 if ((entry->GetPrefixSize() < current_mask_size) ||
                     (((entry->GetPrefixSize() > current_mask_size) || !bi_match) && (current_mask_size < prefix_mask_size)))
                 {
@@ -765,9 +765,9 @@ FlowTable::Entry* FlowTable::Iterator::FindBestMatch(const FlowDescription& flow
     // This uses prefix iteration over our FlowDescription tuple to find the best match
     // (The EntryIterator returns longest destination prefix matches first and
     //  thus we can end the search early when the iterator "current mask len"
-    //  decrements below where a candidate match has already been found.  The 
+    //  decrements below where a candidate match has already been found.  The
     // "deepSearch" option is provided to bypass this early break if desired
-    //  E.g., when best match to source address is desired when there are 
+    //  E.g., when best match to source address is desired when there are
     //  entries of different destination mask lengths).
     // Note that the "trafficClass" and "protocol" elements have low weighting
     // as compared to address/prefix matching. And "trafficClass" trumps "protocol".
