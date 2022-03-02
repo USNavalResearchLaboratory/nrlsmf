@@ -255,7 +255,7 @@ bool SmfDpdTable::IsDuplicate(unsigned int   currentTime,
 }  // end SmfDpdTable::IsDuplicate()
 
 SmfDpdTable::Flow::Flow(unsigned int pktCountMax)
-    : pkt_count(0), pkt_count_max(pktCountMax)
+    : pkt_count_max(pktCountMax)
 {
 }
 
@@ -287,45 +287,11 @@ bool SmfDpdTable::Flow::IsDuplicate(unsigned int            currentTime,
     {
         PacketIdEntry* entry = NULL;
         unsigned int pktIdLength = pktIdSize >> 3;
-        if ((pkt_count_max > 0) && (pkt_count >= pkt_count_max))
-        {
-            // Maximum per-flow table size has been reached, so remove oldest table entry
-            // This while loop may not be needed (i.e., may only ever need to call RemoveHead() once
-            while (pkt_count >= pkt_count_max)
-            {
-                PacketIdEntry* oldEntry = pkt_id_table.RemoveHead();
-                if ((NULL == entry) && (oldEntry->GetPktIdLength() == pktIdLength))
-                {
-                    // old entry has matching pktIdLength, so save "entry" for reuse below
-                    entry = oldEntry;
-                    pkt_count--;
-                    continue;
-                }
-                // Extraneous or non-matching old entry, so return to appropriate item pool (or delete)
-                ProtoTree::ItemPool* itemPool = itemPoolArray[oldEntry->GetPktIdLength()];
-                if (NULL == itemPool)
-                {
-                    if (NULL == (itemPool = new ProtoTree::ItemPool()))
-                    {
-                        PLOG(PL_WARN, "SmfDpdTable::Flow::IsDuplicate() new itemPool error: %s\n", GetErrorString());
-                        delete oldEntry;
-                        pkt_count--;
-                        continue;
-                    }
-                    itemPoolArray[oldEntry->GetPktIdLength()] = itemPool;
-                }
-                itemPool->Put(*oldEntry);
-                pkt_count--;
-            }
-        }
-        else
-        {
-            // Get an entry from the itemPool if available
-            ProtoTree::ItemPool* itemPool = itemPoolArray[pktIdLength];
-            entry = (NULL != itemPool) ?
-                        static_cast<PacketIdEntry*>(itemPool->Get()) :
-                        NULL;
-        }
+        pkt_id_table.PruneSize(pkt_count_max, itemPoolArray);
+        ProtoTree::ItemPool* itemPool = itemPoolArray[pktIdLength];
+        entry = (NULL != itemPool) ?
+                    static_cast<PacketIdEntry*>(itemPool->Get()) :
+                    NULL;
         if (NULL == entry)
         {
             entry = new PacketIdEntry();
@@ -349,7 +315,6 @@ bool SmfDpdTable::Flow::IsDuplicate(unsigned int            currentTime,
             entry->SetPktId(pktId, pktIdLength);
         }
         pkt_id_table.Append(*entry, currentTime);
-        pkt_count++;
         return false;
     }
 }  // end SmfDpdTable::Flow::IsDuplicate()
@@ -386,7 +351,7 @@ bool SmfDpdTable::PacketIdEntry::SetPktId(const char* pktId, UINT8 pktIdLength)
 
 
 SmfDpdTable::PacketIdTable::PacketIdTable()
- : head(NULL), tail(NULL)
+ : head(NULL), tail(NULL), pkt_count(0)
 {
 }
 
@@ -400,6 +365,7 @@ SmfDpdTable::PacketIdTable::~PacketIdTable()
         nextEntry = nextEntry->GetNext();
         delete entry;
     }
+    pkt_count = 0;
 }
 
 void SmfDpdTable::PacketIdTable::Append(PacketIdEntry& entry, unsigned int currentTime)
@@ -416,6 +382,7 @@ void SmfDpdTable::PacketIdTable::Append(PacketIdEntry& entry, unsigned int curre
         head = tail = &entry;
     }
     id_tree.Insert(entry);
+    ++pkt_count;
 }  // end SmfDpdTable::PacketIdTable::Append()
 
 SmfDpdTable::PacketIdEntry* SmfDpdTable::PacketIdTable::RemoveHead()
@@ -425,6 +392,7 @@ SmfDpdTable::PacketIdEntry* SmfDpdTable::PacketIdTable::RemoveHead()
         PacketIdEntry* entry = head;
         head = entry->GetNext();
         id_tree.Remove(*entry);
+        --pkt_count;
         return entry;
     }
     return NULL;
@@ -442,6 +410,7 @@ void SmfDpdTable::PacketIdTable::Prune(unsigned int           currentTime,
             PacketIdEntry* staleEntry = next;
             next = next->GetNext();
             id_tree.Remove(*staleEntry);
+            --pkt_count;
             if (NULL != poolArray)
             {
                 ProtoTree::ItemPool* itemPool = poolArray[staleEntry->GetPktIdLength()];
@@ -471,6 +440,32 @@ void SmfDpdTable::PacketIdTable::Prune(unsigned int           currentTime,
     head = tail = NULL;  // everything was removed
 }  // end SmfDpdTable::PacketIdTable::Prune()
 
+void SmfDpdTable::PacketIdTable::PruneSize(unsigned int sizeMax, ProtoTree::ItemPool** poolArray)
+{
+    if ((sizeMax > 0) && (pkt_count >= sizeMax))
+    {
+        // Maximum per-flow table size has been reached, so remove oldest table entry
+        // This while loop may not be needed (i.e., may only ever need to call RemoveHead() once
+        while (pkt_count >= sizeMax)
+        {
+            PacketIdEntry* oldEntry = RemoveHead();
+            // return to appropriate item pool (or delete)
+            ProtoTree::ItemPool* itemPool = poolArray[oldEntry->GetPktIdLength()];
+            if (NULL == itemPool)
+            {
+                if (NULL == (itemPool = new ProtoTree::ItemPool()))
+                {
+                    PLOG(PL_WARN, "SmfDpdTable::Flow::PruneSize() new itemPool error: %s\n", GetErrorString());
+                    delete oldEntry;
+                    continue;
+                }
+                poolArray[oldEntry->GetPktIdLength()] = itemPool;
+            }
+            itemPool->Put(*oldEntry);
+        }
+    }
+} // end SmfDpdTable::PacketIdTable::PruneSize()
+
 void SmfDpdTable::PacketIdTable::EmptyToPool(ProtoTree::ItemPool** poolArray)
 {
     PacketIdEntry* next = head;
@@ -493,6 +488,7 @@ void SmfDpdTable::PacketIdTable::EmptyToPool(ProtoTree::ItemPool** poolArray)
         itemPool->Put(*entry);
     }
     head = tail = NULL;
+    pkt_count = 0;
 }  // end SmfDpdTable::PacketIdTable::EmptyToPool()
 
 
