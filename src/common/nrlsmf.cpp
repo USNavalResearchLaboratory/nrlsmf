@@ -5,6 +5,9 @@
 #include "smfConfig.h"
 #include "smfDupTree.h"
 
+// maximum allowed packet size including MAC, IP, etc. headers
+#define FRAME_SIZE_MAX 4096
+
 #if defined(ELASTIC_MCAST) || defined(ADAPTIVE_ROUTING)
 #include "mcastFib.h"
 #ifdef ADAPTIVE_ROUTING
@@ -368,7 +371,7 @@ class SmfApp : public ProtoApp
 
 }; // end class SmfApp
 
-const unsigned int SmfApp::BUFFER_MAX = 4096 + (256 *sizeof(UINT32));
+const unsigned int SmfApp::BUFFER_MAX = FRAME_SIZE_MAX + 2 + (256 *sizeof(UINT32));
 
 SmfApp::InterfaceMechanism::InterfaceMechanism()
  : proto_cap(NULL), proto_vif(NULL)
@@ -581,7 +584,7 @@ bool SmfApp::OnTxTimeout(ProtoTimer& theTimer)
     {
         // Try to pull a packet from vif to keep real-time schedule
         vif->SetBlocking(false);  // make sure non-blocking so we can safely peek
-        const int BUFFER_MAX = 4096;
+        const int BUFFER_MAX = FRAME_SIZE_MAX + 2;
         UINT32 alignedBuffer[BUFFER_MAX/sizeof(UINT32)];
         // offset by 2-bytes so IP content is 32-bit aligned
         UINT16* ethBuffer = ((UINT16*)alignedBuffer) + 1;
@@ -4501,7 +4504,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 		        if((*bufPtr == 0x08 && *(bufPtr+1) == 0x00) && smf.GetUnicastEnabled())
                 {
                     // IPv4 Unicast forwarding is enabled
-		            const unsigned int ETHER_BYTES_MAX = 4096;
+		            const unsigned int ETHER_BYTES_MAX = FRAME_SIZE_MAX;
 		            const unsigned int IP_BYTES_MAX = (ETHER_BYTES_MAX - 16);
 		            const unsigned int UDP_BYTES_MAX = (IP_BYTES_MAX - 20);
 		            bufPtr = (UINT8*)(buffer + msgHdrLen); // Points to the Ethernet header (reserves space for 'tap' msgHdr
@@ -4764,7 +4767,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
     Smf::Interface* iface = reinterpret_cast<Smf::Interface*>((void*)vif.GetUserData());
     // TBD - We could pre-size and align the "ethBuffer" here to allow
     // for possible forwarding IP encapsulation
-    const int BUFFER_MAX = 4096;
+    const int BUFFER_MAX = FRAME_SIZE_MAX + 2;
     bool packetHandled = false;
     UINT32 alignedBuffer[BUFFER_MAX/sizeof(UINT32)];
     // offset by 2-bytes so IP content is 32-bit aligned
