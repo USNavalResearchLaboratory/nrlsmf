@@ -1280,7 +1280,7 @@ class ElasticMulticastController
                     unsigned int                    ifaceIndex,         
                     const ProtoAddress&             relayAddr,          
                     unsigned int                    pktCount,           
-                    unsigned int                    pktInterval,        
+                    unsigned int                    updateInterval,        
                     bool                            ackingStatus,
                     bool                            activateAdvertisements);   
 

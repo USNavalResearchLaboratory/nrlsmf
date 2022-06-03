@@ -2775,7 +2775,7 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
                                         unsigned int                   ifaceIndex,  // inbound interface index (unused) 
                                         const ProtoAddress&            relayAddr,   // upstream relay addr              
                                         unsigned int                   pktCount,                                        
-                                        unsigned int                   pktInterval,                                     
+                                        unsigned int                   updateInterval,                                     
                                         bool                           oldAckingStatus,
                                         bool                           activateAdvertisements)                                 
 {
@@ -2802,15 +2802,23 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
         if (membership->FlagIsSet(MulticastFIB::Membership::ELASTIC))
         {
             unsigned int totalPktCount = membership->IncrementIdleCount(pktCount);
-            if (totalPktCount >= membership->GetIdleCountThreshold())
+            // set the idle threshold to the pps for the flow
+            // updateInterval is microseconds
+            unsigned int idleThreshold = pktCount * 1000000 / updateInterval ;
+
+            if (idleThreshold < membership->GetIdleCountThreshold())
+                idleThreshold = membership->GetIdleCountThreshold();
+
+            PLOG(PL_DETAIL, " totalPktCount:%u threshold:%u\n", totalPktCount, idleThreshold);
+
+            if (totalPktCount >= idleThreshold)
             {
                 // We haven't gotten an ACK recently enough for this membership/interface
                 if (GetDebugLevel() >= PL_DEBUG)
                 {
                     PLOG(PL_DEBUG, "ElasticMulticastController::Update(): ELASTIC membership idle for flow ");
                     flowDescription.Print();
-                    PLOG(PL_ALWAYS, " totalCount:%u threshold:%u\n", totalPktCount,
-                            membership->GetIdleCount());
+                    PLOG(PL_ALWAYS, " totalPktCount:%u threshold:%u\n", totalPktCount, idleThreshold);
                 }
                 DeactivateMembership(*membership, MulticastFIB::Membership::ELASTIC);
                 mcast_forwarder->SetForwardingStatus(flowDescription, 
