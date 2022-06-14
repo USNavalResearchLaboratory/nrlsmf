@@ -2804,10 +2804,18 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
             unsigned int totalPktCount = membership->IncrementIdleCount(pktCount);
             // set the idle threshold to the pps for the flow
             // updateInterval is microseconds
-            unsigned int idleThreshold = pktCount * 1000000 / updateInterval ;
+            unsigned int idleThreshold;
 
-            if (idleThreshold < membership->GetIdleCountThreshold())
+            if ((updateInterval <= 0) || (updateInterval > MulticastFIB::TICK_AGE_MAX))
+            {
                 idleThreshold = membership->GetIdleCountThreshold();
+            }
+            else
+            {
+                idleThreshold = pktCount * 1000000 / updateInterval;
+                if (idleThreshold < membership->GetIdleCountThreshold())
+                    idleThreshold = membership->GetIdleCountThreshold();
+            }
 
             PLOG(PL_DETAIL, " totalPktCount:%u threshold:%u\n", totalPktCount, idleThreshold);
 
