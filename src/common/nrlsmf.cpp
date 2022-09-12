@@ -4834,11 +4834,13 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                             // These packets should not be packets that have already gone through processPacket()
                             unsigned int dstIfIndices[IF_COUNT_MAX];
                             ProtoAddress srcMacAddr;
-                            // Grab the source MAC address
+                            ProtoAddress dstMacAddr;
+                            // Grab the source and destination MAC addresses
                             ethPkt.GetSrcAddr(srcMacAddr);
+                            ethPkt.GetDstAddr(dstMacAddr);
                             // Call to process packet with outbound = true;
                             // This skips the packet reception part of process packet, adds the SRR header, and forwards.
-                            int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, *iface, dstIfIndices, IF_COUNT_MAX,ethPkt, true);
+                            int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, dstMacAddr, *iface, dstIfIndices, IF_COUNT_MAX,ethPkt, true);
                             // We set this bool to true here to make sure that later attempts to inform code below this was sent
                             packetHandled = true;
                             // If process packet decides to send the packet...
@@ -4951,10 +4953,12 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                 }
                 // Use Smf::ProcessPacket() to decide if packet should be sent instead of default packet transmission behavior
                 unsigned int dstIfIndices[IF_COUNT_MAX];
-                // Grab the source MAC address
+                // Grab the source and destinaiton MAC addresses
                 ProtoAddress srcMacAddr;
                 ethPkt.GetSrcAddr(srcMacAddr);
-                int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, *iface, dstIfIndices, IF_COUNT_MAX, ethPkt, true);
+                ProtoAddress dstMacAddr;
+                ethPkt.GetDstAddr(dstMacAddr);
+                int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, dstMacAddr, *iface, dstIfIndices, IF_COUNT_MAX, ethPkt, true);
                 for (int i = 0; i < dstCount; i++)
                 {
                     // TBD - perhaps we should have a more efficient way to dereference the dstIface ???
@@ -5443,7 +5447,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
     ProtoPktIP ipPkt(ipBuffer, IP_BYTES_MAX);
     bool result = false;
     ProtoAddress srcMacAddr;
-
+    
         // Here is where the SMF forwarding process is done
     unsigned int srcIfIndex = srcIface.GetIndex();
     unsigned int dstIfIndices[IF_COUNT_MAX];
@@ -5464,6 +5468,8 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
     {
         return false;
     }
+    ProtoAddress dstMacAddr;
+    ethPkt.GetDstAddr(dstMacAddr);
 #ifdef ELASTIC_MCAST
     UINT8 trafficClass = 0;
 #endif // ELASTIC_MCAST
@@ -5527,7 +5533,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
         }
 
         //PLOG(PL_DEBUG, "SmfApp::HandleInboundPacket(): Calling Process Packet \n" );
-        dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt, false, &isDuplicate);
+        dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, dstMacAddr, srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt, false, &isDuplicate);
         PLOG(PL_DETAIL, "SmfApp::HandleInboundPacket(): Called ProcessPacket, return value  = %d \n", dstCount);
         if (dstCount < 0) result = false;
         if (srcIface.IsEncapsulating() && (4 == ipPkt.GetVersion()))

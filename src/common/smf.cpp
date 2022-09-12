@@ -1055,6 +1055,7 @@ Smf::DpdType Smf::ResequenceIPv6(ProtoPktIPv6&   ipv6Pkt,     // input/output
 // (the "dstIfArray" is populated with the list of indices for those interfaces)
 int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the packet (may be modified)
                        const ProtoAddress& srcMac,         // input - source MAC addr of packet
+                       const ProtoAddress& dstMac,         // input - destination MAC addr of packet
                        Interface&          srcIface,       // input - Smf::Interface on which packet arrived
                        unsigned int        dstIfArray[],   // output - list of interface indices to which packet should be forwarded
                        unsigned int        dstIfArraySize, // input - size of "dstIfArray[]" passed in
@@ -1163,6 +1164,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                     ElasticAck elasticAck(elasticMsg);
                                     ProtoAddress upstreamAddr;
                                     UINT8 upstreamCount = elasticAck.GetUpstreamListLength();
+                                    bool needDstCheck = true;
                                     for (UINT8 i = 0; i < upstreamCount; i++)
                                     {
                                         if (elasticAck.GetUpstreamAddr(i, upstreamAddr))
@@ -1171,10 +1173,22 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                             if (0 != upstreamIndex)
                                             {
                                                 mcast_controller->HandleAck(elasticAck, upstreamIndex, srcIp);
+                                                needDstCheck = false;
                                             }
                                             // else not for me
                                         }
                                     }
+                                    if (needDstCheck)
+                                    {
+                                        // This is a "backup" check to see if this ACK was destined to
+                                        // a local MAC address (needed when ARP mediation is in play)
+                                        unsigned int upstreamIndex = GetInterfaceIndex(dstMac);
+                                        if (0 != upstreamIndex)
+                                        {
+                                            mcast_controller->HandleAck(elasticAck, upstreamIndex, srcIp);
+                                        }
+                                    }
+                                    
                                     break;
                                 }
                                 case ElasticMsg::ADV:

@@ -626,8 +626,8 @@ class Smf
         // Notes:
         // 1) This decrements the ttl/hopLimit of the "ipPkt"
         // 2)
-        int ProcessPacket(ProtoPktIP& ipPkt, const ProtoAddress& srcMac, Interface& srcIface,
-                          unsigned int dstIfArray[], unsigned int dstIfArraySize, 
+        int ProcessPacket(ProtoPktIP& ipPkt, const ProtoAddress& srcMac, const ProtoAddress& dstMac, 
+                          Interface& srcIface, unsigned int dstIfArray[], unsigned int dstIfArraySize, 
                           ProtoPktETH& ethPkt, bool outbound = false, bool* recvDup = NULL);
 		unsigned int GetInterfaceList(Interface& srcIface, unsigned int dstIfArray[], int dstIfArrayLength);
         void SetRelayEnabled(bool state);
