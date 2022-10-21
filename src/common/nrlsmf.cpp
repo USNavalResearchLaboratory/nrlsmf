@@ -5909,6 +5909,7 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
 
         unsigned int numBytes = IP_BYTES_MAX;
 	    ProtoAddress srcMacAddr;
+	    ProtoAddress dstMacAddr;
         unsigned int ifIndex;
         // TBD - should this be a "while" loop for efficiency?
         if (detour.Recv((char*)ipBuffer, numBytes, &direction, &srcMacAddr, &ifIndex))
@@ -5985,7 +5986,7 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
                             {
 				                // Finally, process packet before forwarding it to the TAP interface given ipPkt, srcMacAddr, and srcIfIndex
 			                    unsigned int dstIfIndices[IF_COUNT_MAX];
-				                int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, *srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt);
+				                int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, dstMacAddr, *srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt);
                                 // To save on byte copying, we left space at the beginning of our "alignedBuffer"
                                 // for the "smfPkt" message header in case it is needed.
 				                if(dstCount == -1) dstCount = 0;
@@ -5996,7 +5997,7 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
                             {
 			                    // Handle unicast packets for when a tap interface is not defined
 			                    unsigned int dstIfIndices[IF_COUNT_MAX];
-				                unsigned int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, *srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt);
+				                unsigned int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, dstMacAddr, *srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt);
 				                if(dstCount == (unsigned int)-1) dstCount = 0;
                                 //ProtoPktETH ethPkt((UINT32*)ethBuffer, ETHER_BYTES_MAX);
 				                ProtoAddress dstMacAddr;
@@ -6080,7 +6081,7 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
 
                         // Finally, process packet for possible forwarding given ipPkt, srcMacAddr, and srcIfIndex
                         unsigned int dstIfIndices[IF_COUNT_MAX];
-                        int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, *srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt);
+                        int dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, dstMacAddr, *srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt);
                         if ((dstCount > 0) || (tap_active && (-1 == dstCount)))
                         {
                             if (tap_active || !firewall_forward)
