@@ -10,7 +10,7 @@
         Path(const ProtoAddress& addr, Path * p);
         void printPath();
         const ProtoAddress getAddress(){return addr;}
-        Path * getNextPath(){return nextPath;}
+        Path* getNextPath() {return nextPath;}
 
     private:
         ProtoAddress addr;

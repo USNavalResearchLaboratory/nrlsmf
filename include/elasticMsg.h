@@ -83,7 +83,7 @@ class ElasticMsg : public ProtoPkt
     protected:
         enum
         {
-            OFFSET_TYPE = 0,  // one byte, UINT7 offset
+            OFFSET_TYPE = 0,  // one byte, UINT8 offset
             OFFSET_LENGTH = OFFSET_TYPE+1
         };
                 
@@ -259,9 +259,7 @@ class ElasticAck : public ElasticMsg
 // C        : traffic class valid (1 bit)
 // R        : metric flag present (1 bit)
 
-
-// TBD - Use portion of METRIC field for TTL ... TTL needs to be decremented
-// as ADV propagates ....
+// TBD - Create TLV format for flow/path metrics
 
 // Note an EM-ADV messsage is very similar to an EM-ACK message since it
 // also contains a flow description as a dominant portion of its content.
@@ -342,8 +340,7 @@ class ElasticAdv : public ElasticMsg
         bool SetMetric(double value);
         bool SetAdvAddr(const ProtoAddress& addr);
         bool SetAdvAddr(AddressType addrType, const char* addrPtr, unsigned int addrLen);
-        
-        
+               
         // simple linear encoding of ETX metric (with provision for 0.0 value, otherwise 1.0 minimum)
         static const double METRIC_MAX;  // 8192.0 for now
         static UINT16 EncodeMetric(double value);
