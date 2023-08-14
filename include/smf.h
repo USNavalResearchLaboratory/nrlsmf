@@ -231,6 +231,13 @@ class Smf
                 bool IsLayered() const
                     {return is_layered;}
                
+                // Set to "true" to send igmp joins for the groups we want to receive on this interface
+                // This would typically be a layered interface as well.
+                void SetIgmpProxy(bool state)
+                    {is_igmp_proxy = state;}
+                bool IsIgmpProxy() const
+                    {return is_igmp_proxy;}
+
                 // These enable/disable reliable forwarding for the interface
                 void SetReliable(bool state)
                 {
@@ -440,6 +447,7 @@ class Smf
                 bool                                  resequence;                                                               
                 bool                                  is_tunnel;     // _not_ GRE tunnel, but indicates nrlsmf IPIP encapsulation                                                          
                 bool                                  is_layered;                                                               
+                bool                                  is_igmp_proxy;
                 bool                                  is_reliable;  
                 bool                                  use_etx; 
                 UINT16                                ump_sequence;                                                             

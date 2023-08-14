@@ -66,7 +66,8 @@ Smf::Interface::Extension::~Extension()
 
 Smf::Interface::Interface(unsigned int ifIndex)
  : if_index(ifIndex), resequence(false), is_tunnel(false),
-   is_layered(false), is_reliable(false), use_etx(false),
+   is_layered(false), is_igmp_proxy(false), is_reliable(false), use_etx(false),
+  
    ump_sequence(0), ip_encapsulate(false), dup_detector(NULL),
    unicast_group_count(0),
 #ifdef ELASTIC_MCAST

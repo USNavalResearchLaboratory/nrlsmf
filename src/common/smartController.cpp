@@ -75,6 +75,7 @@ bool SmartController::AddManagedMembership(unsigned int ifaceIndex, const ProtoA
 // The external input mechanism passes these in
 // (Right this only handles "outbound" (locally generated) IGMP messages.
 //  In the future, full router IGMP queries, timeouts, etc will be supported)
+// TODO: jafar, check IGMP
 void SmartController::HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAddress& srcIp, unsigned int ifaceIndex, bool inbound)
 {
     if (inbound) return;  // only pay attention to outbound (locally generated) IGMP messages for an interface

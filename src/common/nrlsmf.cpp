@@ -1068,6 +1068,7 @@ const char* const SmfApp::CMD_LIST[] =
     "+smpr",            "<ifaceList>  : S_MPR relay among all iface's listed",
     "+ecds",            "<ifaceList>  : E_CDS relay among all iface's listed",
     "+layered",         "<ifaceList>  : mark interface(s) as \"layered\", where it has its own underlying multicast distribution mechanism",
+    "+igmpProxy",       "<ifaceList>  : mark interface(s) to send igmp joins for the groups we are interested to receive",
     "+reliable",        "<ifaceList>  : experimental reliable hop-by-hop forwarding option (adds UMP option to IPv4 packets)",
     "+encapsulate",     "<ifaceList>  : use IPIP encapsulation for outbound unicast packets on listed smf \"device\" interfaces",
     "+etx",             "<ifaceList>  : enable ETX-based Elastic Mcast relay selection without requiring 'reliable' mode",
@@ -2724,6 +2725,22 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             iface->SetLayered(true);
         }
     }
+    else if (!strncmp("igmpProxy", cmd, len))
+    {
+        ProtoTokenator tk(val, ',');
+        const char* ifaceName;
+        while (NULL != (ifaceName = tk.GetNextItem()))
+        {
+            unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(ifaceName);
+            Smf::Interface*iface = smf.GetInterface(ifaceIndex);
+            if (NULL == iface)
+            {
+                PLOG(PL_ERROR, "OnCommand(igmpProxy) error: invalid interface \"%s\"\n", ifaceName);
+                return false;
+            }
+            iface->SetIgmpProxy(true);
+        }
+    }
 #ifdef _PROTO_DETOUR
     else if (!strncmp("resequence", cmd, len))
     {
@@ -3170,6 +3187,8 @@ bool SmfApp::ProcessInterfaceConfig(ProtoJson::Object& ifaceConfig)
 
     // Note "layered" attribute is optional (i.e., default "layered=false" in absence)
     iface->SetLayered(ifaceConfig.GetBoolean("layered"));
+    // igmpProxy is optional, default to false
+    iface->SetIgmpProxy(ifaceConfig.GetBoolean("igmpProxy"));
     iface->SetReliable(ifaceConfig.GetBoolean("reliable"));
 
     return true;
@@ -3304,7 +3323,7 @@ bool SmfApp::SaveConfig(const char* configPath)
             }  // end if (NULL != elem)
         }  // end if (NULL != vif)
         if (!config.AddInterface(ifaceName, addrList, (NULL != vif) ? deviceName : NULL,
-                                 iface->IsReliable(), iface->IsLayered(),
+                                 iface->IsReliable(), iface->IsLayered(), iface->IsIgmpProxy(),
                                  mech->IsShadowing(), mech->BlockIGMP()))
         {
             PLOG(PL_ERROR, "SmfApp::SaveConfig() error: unable to add interface item\n");
