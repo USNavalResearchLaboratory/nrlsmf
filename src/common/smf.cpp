@@ -2286,7 +2286,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 #endif // ADAPTIVE_ROUTING
 
 #ifdef ELASTIC_MCAST
-        if (IsOwnAddress(dstIp))
+        if (!dstIp.IsMulticast() && IsOwnAddress(dstIp))
         {
             // Don't forward unicast packets destined to self
             ifaceForward = false;

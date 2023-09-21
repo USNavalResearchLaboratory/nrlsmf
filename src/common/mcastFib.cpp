@@ -2300,6 +2300,40 @@ bool ElasticMulticastController::AddManagedMembership(const ProtoFlow::Descripti
         return false;
     }
     membership->SetDefaultForwardingStatus(default_forwarding_status);
+
+    //FIXME: this only works with elastic
+    auto smf=reinterpret_cast<Smf*>(mcast_forwarder);
+    auto& il = smf->AccessInterfaceList();
+    Smf::InterfaceList::Iterator il_it(il);
+    Smf::Interface* iface;
+    while (NULL != (iface = il_it.GetNextItem()))
+    {
+        if (iface->IsIgmpProxy())
+        {
+            char ifaceName[64];
+            ifaceName[63] = '\0';
+            if (!ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, 63))
+            {
+                PLOG(PL_ERROR, "ElasticMulticastController::AddManagedMembership() error: unable to retrieve interface for index %d\n", iface->GetIndex());
+            }
+            else
+            {
+                std::string cmd ("ip address add ");
+                cmd += groupAddr.GetHostString();
+                cmd += "/32 dev ";
+                cmd += ifaceName;
+                cmd +=" autojoin 2>/dev/null";
+                PLOG(PL_DEBUG, "ElasticMulticastController::AddManagedMembership(: add igmp proxy for group %s on interface %s\n",
+                    groupAddr.GetHostString(), ifaceName  );
+                int rc = system(cmd.c_str());
+                if ((0 != rc) && ( 2 != rc) && (512 != rc) ){
+                    PLOG(PL_ERROR, "ElasticMulticastController::AddManagedMembership() error (%i): can't add igmp proxy for group %s on interface %s\ncmd=%s\n",
+                        rc, groupAddr.GetHostString(), ifaceName, cmd.c_str());
+                }
+            }
+        }
+    }
+
     if (GetDebugLevel() >= PL_DEBUG)
     {
         PLOG(PL_DEBUG, "ElasticMulticastController::AddManagedMembership() membership added or refreshed: ");
@@ -2350,6 +2384,39 @@ bool ElasticMulticastController::RemoveManagedMembership(const ProtoFlow::Descri
     {
         mcast_forwarder->SetAckingStatus(flowDescription, false);
         mcast_forwarder->SetForwardingStatus(flowDescription, ifaceIndex, default_forwarding_status, false, false);
+        //FIXME: this only works with elastic
+        auto smf=reinterpret_cast<Smf*>(mcast_forwarder);
+        auto& il = smf->AccessInterfaceList();
+        Smf::InterfaceList::Iterator il_it(il);
+        Smf::Interface* iface;
+        while (NULL != (iface = il_it.GetNextItem()))
+        {
+        if (iface->IsIgmpProxy())
+        {
+            char ifaceName[64];
+            ifaceName[63] = '\0';
+            if (!ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, 63))
+            {
+                PLOG(PL_ERROR, "ElasticMulticastController::RemoveManagedMembership() error: unable to retrieve interface name for index %d\n", iface->GetIndex());
+            }
+            else
+            {
+                std::string cmd ("ip address del ");
+                cmd += groupAddr.GetHostString();
+                cmd += "/32 dev ";
+                cmd += ifaceName;
+                cmd +=" autojoin 2>/dev/null";
+                PLOG(PL_DEBUG, "ElasticMulticastController::RemoveManagedMembership(): del igmp proxy for group %s on interface %s\n",
+                    groupAddr.GetHostString(), ifaceName);
+                int rc = system(cmd.c_str());
+                if ((0 != rc) && ( 2 != rc) && (512 != rc)) {
+                    PLOG(PL_ERROR, "ElasticMulticastController::RemoveManagedMembership() error(%i): can't remove igmp proxy for group %s on interface %s\ncmd=%s\n",
+                        rc, groupAddr.GetHostString(),  ifaceName), cmd.c_str();
+                }
+            }
+        }
+        }
+
     }
     return match;
 }  // end ElasticMulticastController::RemoveManagedMembership()
