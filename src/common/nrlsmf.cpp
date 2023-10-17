@@ -1896,6 +1896,8 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             char ifaceName[64];
             ifaceName[63] = '\0';
             iface->SetElasticMulticast(true);
+            if (iface->GetIndex() == 0)
+                continue;
             if (!ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, 63))
             {
                 PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: unable to retrieve interface name\n");
@@ -3865,13 +3867,13 @@ bool SmfApp::ParseInterfaceName(Smf::InterfaceGroup& ifaceGroup, const char* ifa
         if (NULL == iface)
         {
             PLOG(PL_ERROR, "SmfApp::ParseInterfaceName() error: unable to add new Smf::Interface\n");
-            return false;
+            // return false;
         }
         if (!AddInterfaceToGroup(ifaceGroup, *iface, isSourceIface))
         {
             PLOG(PL_ERROR, "SmfApp::ParseInterfaceName() error: unable to add interface \"%s\" to group \"%s\"\n",
                             ifaceName, ifaceGroup.GetName());
-            return false;
+            // return false;
         }
         PLOG(PL_DEBUG, "SmfApp::ParseInterfaceName() added SMF %sinterface \"%s\" to %sgroup \"%s\"\n",
                 isSourceIface ? "source " : "", ifaceName, ifaceGroup.IsTemplateGroup() ? "template " : "", ifaceGroup.GetName());
@@ -3887,8 +3889,8 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
         ifIndex = ProtoNet::GetInterfaceIndex(ifName);
     if (0 == ifIndex)
     {
-        PLOG(PL_ERROR, "SmfApp::GetInterface() error: invalid iface name \"%s\"\n", ifName);
-        return NULL;
+        PLOG(PL_ERROR, "SmfApp::GetInterface() warning: iface does not exist: \"%s\"\n", ifName);
+        // return NULL;
     }
     Smf::Interface* iface = smf.GetInterface(ifIndex);
     if (NULL != iface) return iface;
@@ -3896,7 +3898,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
     // TBD - Check if the interface is up here???
     if (NULL == iface)
     {
-        if (NULL == (iface = smf.AddInterface(ifIndex)))
+        if (NULL == (iface = smf.AddInterface(ifIndex, ifName)))
         {
             PLOG(PL_ERROR, "SmfApp::GetInterface(): new Smf::Interface error: %s\n", GetErrorString());
             return NULL;
@@ -3904,40 +3906,46 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
         // Set interface to default queuing limit until overridden
         iface->SetQueueLimit(smf_queue_limit);
         // Add the MAC (ETH) addr for this iface to our SMF local addr list
-        ProtoAddress ifAddr;
-        if (!ProtoSocket::GetInterfaceAddress(ifName, ProtoAddress::ETH, ifAddr))
+
+        if (0 == ifIndex)
+            return iface;
+        else
         {
-            PLOG(PL_ERROR, "SmfApp::GetInterface() error: unable to get ETH addr for iface:%s\n", ifName);
-            smf.RemoveInterface(ifIndex);
-            return NULL;
-        }
-        if (!smf.AddOwnAddress(ifAddr, ifIndex))
-        {
-            PLOG(PL_ERROR, "SmfApp::GetInterface() error: unable to add ETH addr to local addr list.\n");
-            smf.RemoveInterface(ifIndex);
-            return NULL;
-        }
-        iface->SetInterfaceAddress(ifAddr);
-        // Iterate over and add IP addresses for this interface to our SMF local addr list
-        ProtoAddressList addrList;
-        if (!ProtoNet::GetInterfaceAddressList(ifIndex, ProtoAddress::IPv4, addrList))
-            PLOG(PL_WARN, "SmfApp::GetInterface() error: couldn't retrieve IPv4 address for iface: %s\n", ifName);
-        // Save device interface IPv4 addresses for possible IPIP encapsulation use
-        iface->AccessAddressList().AddList(addrList);
-        iface->UpdateIpAddress();
-        if (!ProtoNet::GetInterfaceAddressList(ifIndex, ProtoAddress::IPv6, addrList))
-            PLOG(PL_WARN, "SmfApp::GetInterface() error: couldn't retrieve IPv6 address for iface: %s\n", ifName);
-        if (addrList.IsEmpty())
-        {
-            PLOG(PL_WARN, "SmfApp::GetInterface() warning: no IP addresses found for iface: %s\n", ifName);
-        }
-        ProtoAddressList::Iterator iterator(addrList);
-        ProtoAddress addr;
-        while (iterator.GetNextAddress(addr))
-        {
-            // TBD - check result here?
-            smf.AddOwnAddress(addr, ifIndex);
-        }
+            ProtoAddress ifAddr;
+            if (!ProtoSocket::GetInterfaceAddress(ifName, ProtoAddress::ETH, ifAddr))
+            {
+                PLOG(PL_ERROR, "SmfApp::GetInterface() error: unable to get ETH addr for iface:%s\n", ifName);
+                smf.RemoveInterface(ifIndex);
+                return NULL;
+            }
+            if (!smf.AddOwnAddress(ifAddr, ifIndex))
+            {
+                PLOG(PL_ERROR, "SmfApp::GetInterface() error: unable to add ETH addr to local addr list.\n");
+                smf.RemoveInterface(ifIndex);
+                return NULL;
+            }
+            iface->SetInterfaceAddress(ifAddr);
+            // Iterate over and add IP addresses for this interface to our SMF local addr list
+            ProtoAddressList addrList;
+            if (!ProtoNet::GetInterfaceAddressList(ifIndex, ProtoAddress::IPv4, addrList))
+                PLOG(PL_WARN, "SmfApp::GetInterface() error: couldn't retrieve IPv4 address for iface: %s\n", ifName);
+            // Save device interface IPv4 addresses for possible IPIP encapsulation use
+            iface->AccessAddressList().AddList(addrList);
+            iface->UpdateIpAddress();
+            if (!ProtoNet::GetInterfaceAddressList(ifIndex, ProtoAddress::IPv6, addrList))
+                PLOG(PL_WARN, "SmfApp::GetInterface() error: couldn't retrieve IPv6 address for iface: %s\n", ifName);
+            if (addrList.IsEmpty())
+            {
+                PLOG(PL_WARN, "SmfApp::GetInterface() warning: no IP addresses found for iface: %s\n", ifName);
+            }
+            ProtoAddressList::Iterator iterator(addrList);
+            ProtoAddress addr;
+            while (iterator.GetNextAddress(addr))
+            {
+                // TBD - check result here?
+                smf.AddOwnAddress(addr, ifIndex);
+            }
+        } // end if (0 != ifIndex)
     }  // end if (NULL == iface)
 
     // Do we already have a "ProtoCap" and/or "ProtoDetour" (as appropriate) for this ifaceIndex?
@@ -4381,7 +4389,7 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
     // needed to force the interface into promiscuous mode so that
     // "firewallCapture" has a chance to get packets of interest.
     ifacerator.Reset();
-    while (NULL != (iface = ifacerator.GetNextInterface()))
+    while (NULL != (iface = ifacerator.GetNextInterface()) && (iface->GetIndex() != 0))
     {
         if (iface->HasAssociates()) // it's an input interface
         {
@@ -4893,7 +4901,7 @@ Smf::Interface* SmfApp::CreateDevice(const char* vifName)
         return NULL;
     }
     // 3) Now directly add the device  as an Smf::Interface
-    iface = smf.AddInterface(vifIndex);
+    iface = smf.AddInterface(vifIndex, vifName);
     if (NULL == iface)
     {
         PLOG(PL_ERROR, "SmfApp::CreateDevice() error: unable to add SMF interface\n");

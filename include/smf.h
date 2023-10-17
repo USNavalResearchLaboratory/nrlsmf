@@ -153,7 +153,7 @@ class Smf
         class Interface : public ProtoQueue::Item
         {
             public:
-                Interface(unsigned int ifIndex);
+                Interface(unsigned int ifIndex, const char *ifName);
                 ~Interface();
                 
                 bool Init(bool useWindow);// = false);  // (TBD) add parameters for DPD window, etc
@@ -162,6 +162,9 @@ class Smf
                 unsigned int GetIndex() const
                     {return if_index;}
                 
+                const char * GetNameStr()
+                    {return if_name.c_str();}
+
                 // These is the hardware MAC address (if GRE this will also be GRE tunnel local addr)
                 void SetInterfaceAddress(const ProtoAddress& ifAddr)
                     {if_addr = ifAddr;}
@@ -444,6 +447,7 @@ class Smf
                 ProtoAddressList                      addr_list;     // list of IP addresses of the interface    
                 ProtoAddress                          tunnel_local_addr;  // valid when Smf::Interface is GRE endpoint            
                 ProtoAddress                          ip_addr;       // used as source addr for nrlsmf IPIP encapsulation              
+                std::string                           if_name;
                 bool                                  resequence;                                                               
                 bool                                  is_tunnel;     // _not_ GRE tunnel, but indicates nrlsmf IPIP encapsulation                                                          
                 bool                                  is_layered;                                                               
@@ -502,8 +506,8 @@ class Smf
                 unsigned int GetKeysize(const Item& item) const
                     {return static_cast<const Interface&>(item).GetKeysize();}
         };  // end class Smf::InterfaceList
-        
-        Interface* AddInterface(unsigned int ifIndex);
+
+        Interface *AddInterface(unsigned int ifIndex, const char *ifName);
         Interface* GetInterface(unsigned int ifIndex)
             {return iface_list.FindInterface(ifIndex);}
         InterfaceList& AccessInterfaceList()

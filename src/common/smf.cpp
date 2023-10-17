@@ -64,8 +64,8 @@ Smf::Interface::Extension::~Extension()
 {
 }
 
-Smf::Interface::Interface(unsigned int ifIndex)
- : if_index(ifIndex), resequence(false), is_tunnel(false),
+Smf::Interface::Interface(unsigned int ifIndex, const char *ifName)
+ : if_index(ifIndex), if_name(ifName), resequence(false), is_tunnel(false),
    is_layered(false), is_igmp_proxy(false), is_reliable(false), use_etx(false),
   
    ump_sequence(0), ip_encapsulate(false), dup_detector(NULL),
@@ -490,12 +490,12 @@ void Smf::DeleteInterfaceGroup(InterfaceGroup& ifaceGroup)
     delete &ifaceGroup;
 }  // end Smf::DeleteInterfaceGroup()
 
-Smf::Interface* Smf::AddInterface(unsigned int ifIndex)
+Smf::Interface *Smf::AddInterface(unsigned int ifIndex, const char *ifName)
 {
     Interface* iface = GetInterface(ifIndex);
     if (NULL == iface)
     {
-        iface = new Interface(ifIndex);
+        iface = new Interface(ifIndex, ifName);
         if (NULL == iface)
         {
             PLOG(PL_ERROR, "Smf::AddInterface() new Smf::Interface error: %s\n", GetErrorString());
@@ -3724,16 +3724,14 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
     InterfaceList::Iterator iterator(iface_list);
     Interface* nextIface;
     if (outputReport) PLOG(PL_ALWAYS, "nrlsmf report:\n");  // TBD - add date / timestamp
-    char ifaceName[IF_NAME_MAX+1];
-    ifaceName[IF_NAME_MAX] = '\0';
     while (NULL != (nextIface = iterator.GetNextItem()))
     {
         nextIface->PruneDuplicateDetector(current_update_time, update_age_max);
         flowCount += nextIface->GetFlowCount();
         if (outputReport)
         {
-            ProtoNet::GetInterfaceName(nextIface->GetIndex(), ifaceName, IF_NAME_MAX);
-            PLOG(PL_ALWAYS, "  iface:%s flows:%u recv:%u mrcv:%u sent:%u retr:%u fwd:%u dups:%u asym:%u queue:%u\n",ifaceName,
+            PLOG(PL_ALWAYS, "  iface:%s flows:%u recv:%u mrcv:%u sent:%u retr:%u fwd:%u dups:%u asym:%u queue:%u\n",
+                               nextIface->GetNameStr(),
                                nextIface->GetFlowCount(), nextIface->GetRecvCount(), nextIface->GetMcastCount(),
                                nextIface->GetSentCount(), nextIface->GetRetransmissionCount(), nextIface->GetForwardCount(),
                                nextIface->GetDuplicateCount(), nextIface->GetAsymCount(), nextIface->GetQueueLength());
