@@ -81,6 +81,7 @@ class SmfApp : public ProtoApp
         enum CmdType {CMD_INVALID, CMD_ARG, CMD_NOARG};
         static const char* const CMD_LIST[];
         static CmdType GetCmdType(const char* string);
+        bool ServerSend(const char* word, const char* value);
         bool OnCommand(const char* cmd, const char* val);
         static void Usage();
 
@@ -1051,69 +1052,65 @@ void SmfApp::Usage()
 
 const char* const SmfApp::CMD_LIST[] =
 {
-    "-version",         "show version and exit",
-    "-help",            "print help info an exit",
-    "-ipv6",            "enable IPv6 support (must be first on command-line)",
-    "-with-frr",        "run along frr and pull configuration where appropriate, such as vrf info",
-    "-advertise",       "Sets elastic multicast operation to advertise flows instead of token-bucket limited forwarding",
-    "+vrf",             "<vrf-name>,[<vrf-id>,]<ifaceList> : list of interfaces belonging to a vrf",
-    "+add",             "<group>,{cf|smpr|ecds},<ifaceList> : add interface(s) to flooding group with relay algorithm type given",
-    "+remove",          "<group>[,<ifaceList>] : remove entire interface group, or the interface(s) from the specified or all group(s)",
-    "+push",            "<srcIface,dstIfaceList> : forward packets from srcIFace to all dstIface's listed",
-    "+rpush",           "<srcIface,dstIfaceList> : reseq/forward packets from srcIFace to all dstIface's listed",
-    "+merge",           "<ifaceList>  : forward _among_ all iface's listed",
-    "+rmerge",          "<ifaceList>  : reseq/forward _among_ all iface's listed",
-    "+tunnel",          "<ifaceList>  : forward _among_ all iface's listed with no TTL decrement",
-    "+cf",              "<ifaceList>  : CF relay among all iface's listed",
-    "+smpr",            "<ifaceList>  : S_MPR relay among all iface's listed",
-    "+ecds",            "<ifaceList>  : E_CDS relay among all iface's listed",
-    "+layered",         "<ifaceList>  : mark interface(s) as \"layered\", where it has its own underlying multicast distribution mechanism",
-    "+igmpProxy",       "<ifaceList>  : mark interface(s) to send igmp joins for the groups we are interested to receive",
-    "+reliable",        "<ifaceList>  : experimental reliable hop-by-hop forwarding option (adds UMP option to IPv4 packets)",
-    "+encapsulate",     "<ifaceList>  : use IPIP encapsulation for outbound unicast packets on listed smf \"device\" interfaces",
-    "+etx",             "<ifaceList>  : enable ETX-based Elastic Mcast relay selection without requiring 'reliable' mode",
-    "+elastic",         "<group> : enable Elastic Multicast for specific interface group",
     "+adaptive",        "<group> : enable Smart Routing for specific interface group",
-    "+utos",            "<trafficClass> : set IP traffic class to be ignored by reliable forwarding",
-    "+route",           "<dstAddr>,<nextHopAddr> : used for debugging encapsulation only",
+    "+add",             "<group>,{cf|smpr|ecds},<ifaceList> : add interface(s) to flooding group with relay algorithm type given",
+    "-advertise",       "Sets elastic multicast operation to advertise flows instead of token-bucket limited forwarding",
+    "+allow",           "{<vrfLeakSpec> | <filterSpec> | all} : set VRF route leak policy or filter for flows that nrlsmf elastic mcast is allowed to forward.",
+    "+boost",           "{on | off}  : boost process priority (default = on)",
+    "+cf",              "<ifaceList>  : CF relay among all iface's listed",
+    "+cid",             "<vifName>,<iface1>[/{t|r|d}][,<iface2>[/{t|r|d}][,<iface3>[/{t|r|d}],...]] to add/delete elements to composite interface device",
+    "+delayoff",        "<double>    : number of microseconds delay before executing a relay off command (default = 0)",
+    "+deny",            "{<vrfLeakSpec> | <filterSpec> | all} : set VRF route leak policy or filter for flows that nrlsmf elastic mcast should ignore",
+    "+device",          "<vifName>,<ifaceName>[/{t|r|d}][,<addr1>[,addr2, ...]] to create virtual interface 'device' associated with one or more physical interfaces",
+
     "+dscpCapture",     "<dscpValue>,<dscpValueList> : set the DSCP values(s) for unicast capture.",
     "+dscpRelease",     "<dscpValue>,<dscpValueList> : unset DSCP values(s) for unicast capture.",
-
+    "+ecds",            "<ifaceList>  : E_CDS relay among all iface's listed",
+    "+elastic",         "<group> : enable Elastic Multicast for specific interface group",
+    "+encapsulate",     "<ifaceList>  : use IPIP encapsulation for outbound unicast packets on listed smf \"device\" interfaces",
     "+etx",             "<iface> use IP_UMP header extension to measure link quality and build/use ETX metric",
-    "+flow",            "[<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)",
-    "+join",            "[<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)",
-    "+leave",           "[<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)",
-
-    "+device",          "<vifName>,<ifaceName>[/{t|r|d}][,<addr1>[,addr2, ...]] to create virtual interface 'device' associated with one or more physical interfaces",
-    "+cid",             "<vifName>,<iface1>[/{t|r|d}][,<iface2>[/{t|r|d}][,<iface3>[/{t|r|d}],...]] to add/delete elements to composite interface device",
-
-    "+rate",            "[<iface>,]<bitsPerSecond> : impose forwarding/transmit rate limit",
-    "+queue",           "[<iface>,]<limit> : perform SMF packet queuing",
-    "+allow",           "{<vrfLeakSpec> | <filterSpec> | all} : set VRF route leak policy or filter for flows that nrlsmf elastic mcast is allowed to forward.",
-    "+deny",            "{<vrfLeakSpec> | <filterSpec> | all} : set VRF route leak policy or filter for flows that nrlsmf elastic mcast should ignore",
-    "+unicast",         "{unicastPrefix | off} : allow unicast forwarding for a given prefix, or off (default = off)",
-    "+delayoff",        "<double>    : number of microseconds delay before executing a relay off command (default = 0)",
-    "+ihash",           "<algorithm> : to set ihash_only hash algorithm",
-    "+hash",            "<algorithm> : to set H-DPD hash algorithm",
-    "+ttl",             "<value>     : set TTL of outbound packets",
+    "+filterDups",      "{on | off}  : filter received duplicates for \"device\" operation (default = on)",
     //"+firewall",      "{on | off}  : use firewall instead of ProtoCap to capture _and_ forward packets",
     "+firewallCapture", "{on | off}  : use firewall instead of ProtoCap to capture packets",
     "+firewallForward", "{on | off}  : use firewall instead of ProtoCap to forward packets",
+    "+flow",            "[<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)",
     "+forward",         "{on | off}  : forwarding enable/disable (default = on)",
-    "+relay",           "{on | off}  : act as relay node (default = on)",
-    "+boost",           "{on | off}  : boost process priority (default = on)",
+    "+hash",            "<algorithm> : to set H-DPD hash algorithm",
+    "-help",            "print help info an exit",
     "+idpd",            "{on | off}  : to do I-DPD when possible",
-    "+window",          "{on | off}  : do window-based I-DPD of sequenced packets",
-    "+resequence",      "{on | off}  : resequence outbound multicast packets",
-    "+filterDups",      "{on | off}  : filter received duplicates for \"device\" operation (default = on)",
-    "+defaultForward",  "{on | off}  : same as \"relay\" (for backwards compatibility)",
+    "+igmpProxy",       "<ifaceList>  : mark interface(s) to send igmp joins for the groups we are interested to receive",
+    "+ihash",           "<algorithm> : to set ihash_only hash algorithm",
     "+instance",        "<instanceName> : sets our instance (control_pipe) name",
-    "+smfServer",       "<serverName>   : instructs smf to \"register\" itself to the given server (pipe only)\"+smfTap\"",
-    "+tap",             "<tapName>      : instructs smf to divert forwarded packets to process ProtoPipe named <tapName>",
-    "+debug",           "<debugLevel>   : set debug level [0..6]",
-    "+log",             "<logFile>      : debug log file",
+    "-ipv6",            "enable IPv6 support (must be first on command-line)",
+    "+join",            "[<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)",
+    "+layered",         "<ifaceList>  : mark interface(s) as \"layered\", where it has its own underlying multicast distribution mechanism",
+    "+leave",           "[<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)",
     "+load",            "<configFile>   : load nrlsmf JSON configuration file",
+    "+log",             "<logFile>      : debug log file",
+    "+merge",           "<ifaceList>  : forward _among_ all iface's listed",
+    "+push",            "<srcIface,dstIfaceList> : forward packets from srcIFace to all dstIface's listed",
+    "+queue",           "[<iface>,]<limit> : perform SMF packet queuing",
+    "+rate",            "[<iface>,]<bitsPerSecond> : impose forwarding/transmit rate limit",
+    "+relay",           "{on | off}  : act as relay node (default = on)",
+    "+reliable",        "<ifaceList>  : experimental reliable hop-by-hop forwarding option (adds UMP option to IPv4 packets)",
+    "+remove",          "<group>[,<ifaceList>] : remove entire interface group, or the interface(s) from the specified or all group(s)",
+    "+resequence",      "{on | off}  : resequence outbound multicast packets",
+    "+rmerge",          "<ifaceList>  : reseq/forward _among_ all iface's listed",
+    "+route",           "<dstAddr>,<nextHopAddr> : used for debugging encapsulation only",
+    "+rpush",           "<srcIface,dstIfaceList> : reseq/forward packets from srcIFace to all dstIface's listed",
     "+save",            "<configFile>   : save JSON configurstion file upon exit",
+    "+smfServer",       "<serverName>   : instructs smf to \"register\" itself to the given server (pipe only)\"+smfTap\"",
+    "+smpr",            "<ifaceList>  : S_MPR relay among all iface's listed",
+    "-stats",           "Returns interface information for all groups",
+    "+tap",             "<tapName>      : instructs smf to divert forwarded packets to process ProtoPipe named <tapName>",
+    "+ttl",             "<value>     : set TTL of outbound packets",
+    "+tunnel",          "<ifaceList>  : forward _among_ all iface's listed with no TTL decrement",
+    "+unicast",         "{unicastPrefix | off} : allow unicast forwarding for a given prefix, or off (default = off)",
+    "+utos",            "<trafficClass> : set IP traffic class to be ignored by reliable forwarding",
+    "-version",         "show version and exit",
+    "+vrf",             "<vrf-name>,[<vrf-id>,]<ifaceList> : list of interfaces belonging to a vrf",
+    "+window",          "{on | off}  : do window-based I-DPD of sequenced packets",
+    "-with-frr",        "run along frr and pull configuration where appropriate, such as vrf info",
     NULL
 };
 
@@ -1501,6 +1498,7 @@ bool SmfApp::ProcessCommands(int argc, const char*const* argv)
     int i = 1;
     while ( i < argc)
     {
+        fprintf(stderr, "Arg[%d] = %s\n", i, argv[i]);
         // Is it a class SmfApp command?
         switch (GetCmdType(argv[i]))
         {
@@ -1514,8 +1512,9 @@ bool SmfApp::ProcessCommands(int argc, const char*const* argv)
             case CMD_NOARG:
                 if (!OnCommand(argv[i], NULL))
                 {
-                    if (!need_help) // catches "help" and "version" checks
-                        PLOG(PL_FATAL, "SmfApp::ProcessCommands() ProcessCommand(%s) error\n", argv[i]);
+                    if (need_help) // catches "help" and "version" checks
+                        return true;
+                    PLOG(PL_FATAL, "SmfApp::ProcessCommands() ProcessCommand(%s) error\n", argv[i]);
                     return false;
                 }
                 i++;
@@ -1534,6 +1533,23 @@ bool SmfApp::ProcessCommands(int argc, const char*const* argv)
     return true;
 }  // end SmfApp::ProcessCommands()
 
+// if the server pipe is not open, don't fail.  If it is open and the 
+// send fails, then fail.
+bool SmfApp::ServerSend(const char* word, const char* value)
+{
+    if (server_pipe.IsOpen())
+    {
+        std::ostringstream ss;
+        ss << "{\"" << word << "\":\"" << value << "\"}\n";
+        unsigned int len = ss.str().size();
+        if (!server_pipe.Send(ss.str().c_str(),len))
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(instance) error sending %s to smf server\n", ss.str().c_str());
+            return false;
+        }
+     }       
+     return true;
+}
 bool SmfApp::OnCommand(const char* cmd, const char* val)
 {
     CmdType type = GetCmdType(cmd);
@@ -1581,6 +1597,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     }
     else if (!strncmp("add", cmd, len))
     {
+        PLOG(PL_INFO, "SmfApp::OnCommand(add) cmd=%s len = %d\n", cmd, len);
         // add [<group>,]{cf|smpr|ecds},<ifaceList> : add interface(s) to flooding group with relay algorithm type given
         size_t vlen = strlen(val);
         char* vtext = new char[vlen + 1];
@@ -2907,16 +2924,11 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         }
         strncpy(control_pipe_name, val, 127);
         control_pipe_name[127] = '\0';
-        if (server_pipe.IsOpen())
+        // Following returns json formatted response, if that is not desired, comment the lines below and uncomment next section
+        if (!ServerSend("smfClientStart", "control_pipe_name"))
         {
-            char buffer[256];
-            snprintf(buffer, 256, "smfClientStart %s", control_pipe_name);
-            unsigned int numBytes = strlen(buffer)+1;
-            if (!server_pipe.Send(buffer, numBytes))
-            {
-                PLOG(PL_ERROR, "SmfApp::OnCommand(instance) error sending hello to smf server\n");
-                return false;
-            }
+            PLOG(PL_ERROR, "SmfApp::OnCommand(instance) error sending hello to smf server\n");
+            return false;
         }
     }
     else if (!strncmp("load", cmd, len))
@@ -2955,17 +2967,22 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                 return false;
             }
         }
+        if (val == NULL)
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(smfServer) error sending hello to smf server, no server name provided\n");
+            return false;
+        }
+        else
+            PLOG(PL_INFO, "SmfApp:  Connecting to server %s\n", val);
         if (server_pipe.Connect(val))
         {
             // Tell the "controller" (server) our control pipe name, if applicable
             if ('\0' != control_pipe_name[0])
             {
-                char buffer[256];
-                snprintf(buffer, 256, "smfClientStart %s", control_pipe_name);
-                unsigned int numBytes = strlen(buffer)+1;
-                if (!server_pipe.Send(buffer, numBytes))
+                // change what is commented if we don't want json behavior
+                if (!ServerSend("smfClientStart", control_pipe_name))
                 {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(smfServer) error sending hello to smf server\n");
+                    PLOG(PL_ERROR, "SmfApp::OnCommand(instance) error sending hello to smf server\n");
                     return false;
                 }
             }
@@ -2989,10 +3006,8 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             // Tell the remote "tap" process our control pipe name, if applicable
             if ('\0' != control_pipe_name[0])
             {
-                char buffer[256];
-                snprintf(buffer, 256, "smfClientStart %s", control_pipe_name);
-                unsigned int numBytes = strlen(buffer)+1;
-                if (!tap_pipe.Send(buffer, numBytes))
+                // change what is commented if we don't want json behavior
+                if (!ServerSend("smfClientStart", control_pipe_name))
                 {
                     PLOG(PL_ERROR, "SmfApp::OnCommand(tap) error sending 'smfClientStart' to 'tap' process \"%s\"\n", val);
                     return false;
@@ -4268,6 +4283,12 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
         srcIface->SetTunnel(tunnel);
         // Make sure the group's source interface is OK to be an "rpush" source
     }
+    if (NULL == srcIface)
+    {
+        // This is a "template" PUSH group or hasn't yet had its source interface set
+        // (so we don't do anything to set its associations)
+        return true;
+    }
 
     // Iterate through the group's set of interfaces and update associations
     Smf::InterfaceGroup::Iterator ifacerator(ifaceGroup);
@@ -5175,7 +5196,14 @@ bool SmfApp::AssignAddresses(const char* ifaceName, unsigned int ifaceIndex, con
     return true;
 }  // end SmfApp::AssignAddresses()
 
-
+/* These are the messages that come in through the server socket
+ *   "-jsonInfo",        "Returns string with group names and interfaces, json formatted to unix socket",
+ *   "-jsonStats",       "Return stats for everything in json format to unix socket",
+ *   "-jsonVersion",     "Return version in json format to unix socket",  Not in CLI
+ *   "-ping",            "Ping/Heartbeat returns 'pong' if nrlsmf is running", // should this be for a specific group?
+ *   "-stats",           "Return stats for everything  to unix socket",
+ *   "-info",            "Returns string with group names and interfaces"
+ */
 void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 {
     if (ProtoSocket::RECV == theEvent)
@@ -5184,13 +5212,14 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
         unsigned int len = 8191;
         if (thePipe.Recv(buffer, len))
         {
-            buffer[len] = '\0';
-            // Parse received message from controller and populate
-            // our forwarding table
-            if (len)
-	            PLOG(PL_DEBUG,"SmfApp::OnControlMsg() recv'd %d Byte message from controller \"%s\"\n", len, buffer);
-	        char* cmd = buffer;
+            // trim trailing white space if present
+            char *end = buffer + len - 1;
+            while(end > buffer && isspace((unsigned char)*end)) end--;
+            end[1] = '\0'; 
+            len = strlen(buffer);
+
             char* arg = NULL;
+
             for (unsigned int i = 0; i < len; i++)
             {
                 if ('\0' == buffer[i])
@@ -5200,10 +5229,21 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                 else if (isspace(buffer[i]))
                 {
                     buffer[i] = '\0';
-                    arg = buffer+i+1;
+                    arg = buffer+i+1; // ending arg may be empty if buffer ends in " \n" so trim when we first get it
                     break;
                 }
             }
+            // Parse received message from controller and populate our forwarding table.  
+            // If the length of the message is just 1, it is an empty message.
+            len = strlen(buffer);
+            if (len > 1)
+	            PLOG(PL_DEBUG,"SmfApp::OnControlMsg() recv'd %d Byte message from controller \"%s\"\n", len, buffer);
+            else
+            {
+                PLOG(PL_ERROR, "SmfApp::OnControlMsg() empty command\n");
+                return;
+            }
+            char* cmd = buffer;
             unsigned int cmdLen = strlen(cmd);
             unsigned int argLen = len - (arg - cmd);
             // Check for a pipe only commands first
@@ -5316,6 +5356,11 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
             }
             else if (!strncmp(cmd, "smfServerStart", cmdLen))
             {
+                if (arg == NULL)
+                {
+                    PLOG(PL_ERROR, "SmfApp::OnControlMsg(smfServerStart) No server name provided\n");
+                    return;
+                }
                 if (server_pipe.IsOpen()) server_pipe.Close();
                 if (!server_pipe.Connect(arg))
                     PLOG(PL_ERROR, "SmfApp::OnControlMsg(smfServerStart) error connecting to smf server\n");
@@ -5344,31 +5389,243 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                 }
                 smf.SetNeighborList(arg, argLen);
             }
-	        else if (!strncmp(cmd, "queueStats", cmdLen))
-	        {
-	    	    // Dump interface queue lengths to server_pipe
-                int len = snprintf(buffer, 8192, "smfQueueStats ");
-		        Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
-		        Smf::Interface* nextIface;
-		        char ifaceName[Smf::IF_NAME_MAX+1];
-		        ifaceName[Smf::IF_NAME_MAX] = '\0';
-                bool firstIface = true;
-		        while (NULL != (nextIface = iterator.GetNextItem()))
-		        {
-	                ProtoNet::GetInterfaceName(nextIface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
-                    snprintf(buffer+len, 8192-len, "%s%s,%u", firstIface ? "" : ";", ifaceName, nextIface->GetQueueLength());
-                    firstIface = false;
-		        }
+            else if (!strncmp("jsonVersion", cmd, len))
+            {
+                ServerSend("jsonVersion", _SMF_VERSION);
+                return;
+            }
+            else if (!strncmp("ping", cmd, len)) // just checking that nrlsmf is running, don't care about anything else ...
+            {
                 if (server_pipe.IsOpen())
                 {
-                    unsigned int numBytes = strlen(buffer);
-                    server_pipe.Send(buffer, numBytes);  // TBD - error check?
+                    char hb[6] = "pong\n";
+                    unsigned int numBytes = strlen(hb);
+                    if (!server_pipe.Send(hb, numBytes))
+                    {
+                        PLOG(PL_ERROR, "SmfApp::OnCommand(instance) error sending heartbeat to smf server\n");
+                        return;
+                    }
+                    // following line sends json format back, probably not needed
+                    // ServerSend("ping", "pong");
+                }       
+                else
+                {
+                    fprintf(stderr, "Server pipe is NOT open\n");
+                    PLOG(PL_WARN, "SmfApp::OnCommand(ping) warning: unable to connect to smfServer\n");
+                }
+            }
+	        else if (!strncmp(cmd, "stats", cmdLen))
+	        {
+                std::ostringstream ss;
+                if (server_pipe.IsOpen())
+                {
+                    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
+                    Smf::Interface* nextIface;
+                    while (NULL != (nextIface = iterator.GetNextItem()))
+                    {
+                        ss <<  "interface:" << nextIface->GetNameStr();
+                        ss <<  " flows:" << nextIface->GetFlowCount();
+                        ss <<  " recv:" << nextIface->GetRecvCount();
+                        ss <<  " mrcv:" << nextIface->GetMcastCount();
+                        ss <<  " sent:" << nextIface->GetSentCount();
+                        ss <<  " retr:" << nextIface->GetRetransmissionCount();
+                        ss <<  " fwd:" << nextIface->GetForwardCount();
+                        ss <<  " dups:" << nextIface->GetDuplicateCount();
+                        ss <<  " asym:" << nextIface->GetAsymCount();
+                        ss <<  " queue:" << nextIface->GetQueueLength();
+                        ss << "\n";
+                    }
+                    unsigned int numBytes = ss.str().size();
+                    if (!server_pipe.Send(ss.str().c_str(), numBytes))
+                    {
+                        PLOG(PL_ERROR, "SmfApp::OnCommand(stats) error sending stats to smf server\n");
+                        return;
+                    }
+                }
+                else 
+                {
+                    fprintf(stderr, "Server pipe is not open for stats\n");
+                    return;
+                }
+            }
+            else if (!strncmp("jsonInfo", cmd, len)) // just checking groupInfo ...
+            {
+                Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
+                Smf::InterfaceGroup* group;
+                std::ostringstream ss;
+                bool first = true;
+                std::string spot;
+                ss << "[";
+                while (NULL != (group = grouperator.GetNextItem()))
+                {
+                    char ifaceName[Smf::IF_NAME_MAX + 1];
+                    ifaceName[Smf::IF_NAME_MAX] = '\0';
+                    Smf::InterfaceGroup::Iterator ifacerator(*group);
+                    Smf::Interface* iface;
+
+                    // If we don't want to see PUSH groups, uncomment following two lines ...
+                    // if (Smf::PUSH == group->GetForwardingMode()) // I think we want to skip these ...
+                    //     continue;
+                    spot = first ? "" : ",";   
+                    first = false;
+                    ss << spot << "{\"GroupName\": \"" << group->GetName() << "\",";
+                    ss << "\"GroupType\": \"" << (group->IsTemplateGroup() ? "Template" : "Regular") << "\",";
+                    std::string relayType;
+                    switch (group->GetRelayType())
+                    {
+                        case Smf::INVALID: relayType="Invalid"; break;
+                        case Smf::CF: relayType="cf"; break;
+                        case Smf::S_MPR: relayType="s_mpr"; break;
+                        case Smf::E_CDS: relayType="e_cds"; break;
+                        case Smf::MPR_CDS: relayType="mpr_cds"; break;
+                        case Smf::NS_MPR: relayType="ns_mpr"; break;
+                    }
+                    ss << "\"RelayType\": \"" << relayType << "\",";
+                    switch (group->GetForwardingMode())
+                    {
+                        case Smf::PUSH: relayType="Push"; break;
+                        case Smf::MERGE: relayType="Merge"; break;
+                        case Smf::RELAY: relayType="Relay"; break;
+                    }
+                    ss << "\"ForwardingMode\": \"" << relayType << "\",";
+                    ss << "\"Interfaces\": [";
+                    bool firstInterface = true;
+                    while (NULL != (iface = ifacerator.GetNextInterface()))
+                    {
+                        ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
+                        spot = firstInterface ? "" : ",";
+                        ss << spot << "\""<< ifaceName << "\"";
+                        firstInterface = false;
+                    }
+                    ss << "]";
+                    if (group->GetElasticMulticast())
+                        ss << ", \"Elastic\" : true";
+                    if (group->GetAdaptiveRouting())
+                        ss << ", \"Adaptive\" : true";
+                    ss << "}";
+                }
+                ss << "]\n";
+                if (server_pipe.IsOpen())
+                {
+                    unsigned int numBytes = ss.str().size();
+                    if (!server_pipe.Send(ss.str().c_str(), numBytes))
+                    {
+                        PLOG(PL_ERROR, "SmfApp::OnCommand(jsonInfo) error sending jsonInfo to smf server\n");
+                        return;
+                    }
                 }
                 else
                 {
-                    fprintf(stdout, "%s\n", buffer);
+                    fprintf(stderr, "Server pipe is NOT open\n");
+                    PLOG(PL_WARN, "SmfApp::OnCommand(jsonInfo) warning: unable to connect to smfServer\n");
                 }
-	        }
+            }
+            else if (!strncmp("info", cmd, len)) // just checking groupInfo ...
+            {
+                Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
+                Smf::InterfaceGroup* group;
+                std::ostringstream ss;
+                ss << "";
+                while (NULL != (group = grouperator.GetNextItem()))
+                {
+                    char ifaceName[Smf::IF_NAME_MAX + 1];
+                    ifaceName[Smf::IF_NAME_MAX] = '\0';
+                    Smf::InterfaceGroup::Iterator ifacerator(*group);
+                    Smf::Interface* iface;
+
+                    // If we don't want to see PUSH groups, uncomment following two lines ...
+                    // if (Smf::PUSH == group->GetForwardingMode()) // I think we want to skip these ...
+                    //     continue;
+                    ss << "GroupName:" << group->GetName();
+                    ss << " GroupType:" << (group->IsTemplateGroup() ? "Template" : "Regular");
+                    std::string relayType;
+                    switch (group->GetRelayType())
+                    {
+                        case Smf::INVALID: relayType="Invalid"; break;
+                        case Smf::CF: relayType="cf"; break;
+                        case Smf::S_MPR: relayType="s_mpr"; break;
+                        case Smf::E_CDS: relayType="e_cds"; break;
+                        case Smf::MPR_CDS: relayType="mpr_cds"; break;
+                        case Smf::NS_MPR: relayType="ns_mpr"; break;
+                    }
+                    ss << " RelayType:" << relayType;
+                    switch (group->GetForwardingMode())
+                    {
+                        case Smf::PUSH: relayType="Push"; break;
+                        case Smf::MERGE: relayType="Merge"; break;
+                        case Smf::RELAY: relayType="Relay"; break;
+                    }
+                    ss << " ForwardingMode:" << relayType;
+                    ss << " Interfaces:";
+                    bool firstInterface = true;
+                    while (NULL != (iface = ifacerator.GetNextInterface()))
+                    {
+                        ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
+                        ss << ( firstInterface ? "" : ",") << ifaceName;
+                        firstInterface = false;
+                    }
+                    if (group->GetElasticMulticast())
+                        ss << ", Elastic";
+                    if (group->GetAdaptiveRouting())
+                        ss << ", Adaptive";
+                    ss << "\n";
+                }
+                ss << "\n";
+                if (server_pipe.IsOpen())
+                {
+                    unsigned int numBytes = ss.str().size();
+                    if (!server_pipe.Send(ss.str().c_str(), numBytes))
+                    {
+                        PLOG(PL_ERROR, "SmfApp::OnCommand(info) error sending info to smf server\n");
+                        return;
+                    }
+                }
+                else
+                {
+                    fprintf(stderr, "Server pipe is NOT open\n");
+                    PLOG(PL_WARN, "SmfApp::OnCommand(info) warning: unable to connect to smfServer\n");
+                }
+            }
+            else if (!strncmp("jsonStats", cmd, len)) // just checking stats ...
+            {
+                std::ostringstream ss;
+                ss << "[";
+                if (server_pipe.IsOpen())
+                {
+                    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
+                    Smf::Interface* nextIface;
+                    bool comma = false;
+                    while (NULL != (nextIface = iterator.GetNextItem()))
+                    {
+                        ss << (comma ? "," : "") << "{";
+                        ss <<  "\"interface\":\"" << nextIface->GetNameStr() << "\",";
+                        ss <<  "\"flows\":\"" << nextIface->GetFlowCount() <<  "\",";
+                        ss <<  "\"recv\":\"" << nextIface->GetRecvCount() <<  "\",";
+                        ss <<  "\"mrcv\":\"" << nextIface->GetMcastCount() << "\",";
+                        ss <<  "\"sent\":\"" << nextIface->GetSentCount() << "\",";
+                        ss <<  "\"retr\":\"" << nextIface->GetRetransmissionCount() << "\",";
+                        ss <<  "\"fwd\":\"" << nextIface->GetForwardCount() <<  "\",";
+                        ss <<  "\"dups\":\"" << nextIface->GetDuplicateCount() << "\",";
+                        ss <<  "\"asym\":\"" << nextIface->GetAsymCount() << "\",";
+                        ss <<  "\"queue\":\"" << nextIface->GetQueueLength() << "\"";
+                        ss << "}";
+                        comma = true;
+                    }
+                    ss << "]\n";
+                    unsigned int numBytes = ss.str().size();
+                    if (!server_pipe.Send(ss.str().c_str(), numBytes))
+                    {
+                        PLOG(PL_ERROR, "SmfApp::OnCommand(jsonStats) error sending jsonStats to smf server\n");
+                        return;
+                    }
+                }
+                else 
+                {
+                    fprintf(stderr, "Server pipe is not open for stats\n");
+                    return;
+                }
+            }
+
 #ifdef MNE_SUPPORT
             else if (!strncmp(cmd, "mneBlockMac", cmdLen))
             {
@@ -5386,9 +5643,17 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 #endif // MNE_SUPPORT
             else
             {
+                bool passed = true;
                 // Maybe it's a regular command
                 if (!OnCommand(cmd, arg))
-                    PLOG(PL_ERROR, "SmfApp::OnControlMsg() invalid command: \"%s\"\n", cmd);
+                {
+                    if (!(!strncmp(cmd, "help",cmdLen) || !strncmp(cmd, "version",cmdLen)))
+                        PLOG(PL_ERROR, "SmfApp::OnControlMsg() invalid command: \"%s\"\n", cmd);
+                        passed = false;
+                }
+                // clientStart has already replied back to the server
+                if (!strncmp(cmd, "smfClientStart",cmdLen))
+                    ServerSend(cmd, passed ? "OK" : "failed");
             }
         }
     }
