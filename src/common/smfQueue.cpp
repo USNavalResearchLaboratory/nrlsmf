@@ -39,6 +39,20 @@ unsigned int SmfQueueBase::BuildKey(char* keyBuffer,  // must be sized at least 
     return (len << 3);
 }  // end SmfQueueBase::BuildKey()
 
+
+SmfPacket* SmfPacket::Pool::GetPacket()
+{
+    SmfPacket* pkt = Get();
+    if (NULL == pkt)
+    {
+        pkt = new SmfPacket(); // TBD - do we need to set bufmax
+        if (NULL == pkt)
+            PLOG(PL_ERROR, "SmfPacket::Pool::GetPacket() new SmfPacket error: %s\n", GetErrorString());
+    }
+    return pkt;
+}  // end SmfPacket::Pool::GetPacket()
+
+
 // The methods here implement a FIFO queue with two levels of 
 // priority.  The "priority_index" is the current "Last Out"
 // packet of the higher priority. (Note a high priority packet
