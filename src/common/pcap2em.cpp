@@ -7,7 +7,7 @@
 #include "protoPktETH.h"
 #include "protoPktIP.h"
 #include "elasticMsg.h"
-#include "flowTable.h"
+#include "protoFlow.h"
 #include <pcap.h>
 #include <stdio.h>
 
@@ -160,7 +160,7 @@ int main(int argc, char* argv[])
                         ack.GetSrcAddr(srcIp);
                         UINT8 trafficClass = ack.GetTrafficClass();
                         ProtoPktIP::Protocol protocol = ack.GetProtocol();
-                        FlowDescription flowDescription(dstIp, srcIp, trafficClass, protocol);
+                        ProtoFlow::Description flowDescription(dstIp, srcIp, trafficClass, protocol);
                         fprintf(outfile, "flow>");
                         flowDescription.Print(outfile);
                         fprintf(outfile, "\n");
@@ -189,7 +189,7 @@ int main(int argc, char* argv[])
                             adv.GetSrcAddr(srcIp);
                             UINT8 trafficClass = adv.GetTrafficClass();
                             ProtoPktIP::Protocol protocol = adv.GetProtocol();
-                            FlowDescription flowDescription(dstIp, srcIp, trafficClass, protocol);
+                            ProtoFlow::Description flowDescription(dstIp, srcIp, trafficClass, protocol);
                             flowDescription.Print(outfile);
                             fprintf(outfile, " ttl>%u hops>%u metric>%lf", adv.GetTTL(), adv.GetHopCount(), adv.GetMetric());
                             ProtoAddress advAddr;

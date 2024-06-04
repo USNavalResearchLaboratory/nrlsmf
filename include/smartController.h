@@ -1,7 +1,7 @@
 #ifndef _SMART_CONTROLLER
 #define _SMART_CONTROLLER
 
-#include "flowTable.h"
+#include "protoFlow.h"
 #include "elasticMsg.h"
 #include "r2dnMsg.h"
 #include "mcastFib.h"
@@ -42,7 +42,7 @@ class SmartController
 
         // This method is invoked by the forwarding plane (or via interface from forwarding plane) when
         // there is a newly detected flow or upon flow activity updates
-        void Update(const FlowDescription&  flowDescription,
+        void Update(const ProtoFlow::Description&         flowDescription,
                     unsigned int                          ifaceIndex,
                     const ProtoAddress&                   relayAddr,
                     unsigned int                          pktCount,
@@ -54,31 +54,31 @@ class SmartController
         bool AddManagedMembership(unsigned int ifaceIndex, const ProtoAddress& groupAddr);
 
         //This function builds an ack in the buffer passed as a parameter.
-        unsigned int BuildAck(UINT32*                buffer,
-                                     unsigned int           length,
-                                      ProtoAddress&    dstMac,  // also used for ACK upstream relay addr
-                                     const ProtoAddress&    srcMac,
-                                     const ProtoAddress&    dstIp,      // Destination IP of ack (who sent the packet)
-                                     const ProtoAddress&    srcIp,      // Source IP of the ack (who received the packet (self))
-                                     const ProtoAddress&    ackLinkSrc,      // who sent the original packet
-                                     const ProtoAddress&    ackLinkDst,      // who received the original packet
-                                     const FlowDescription& flowDescription,
-                                     const UINT16           seqNo,      // Sequence number of the original packet
-                                     const UINT32           fragOffset, // if original packet was a fragment, this will be the fragment offset.
-                                     const bool atDestination = false,
-                                     const bool              broadcastedPacket=true); // Bool Used to signify whether packet is at the destination.
+        unsigned int BuildAck(UINT32*                        buffer,
+                              unsigned int                   length,
+                              ProtoAddress&                  dstMac,  // also used for ACK upstream relay addr
+                              const ProtoAddress&            srcMac,
+                              const ProtoAddress&            dstIp,      // Destination IP of ack (who sent the packet)
+                              const ProtoAddress&            srcIp,      // Source IP of the ack (who received the packet (self))
+                              const ProtoAddress&            ackLinkSrc,      // who sent the original packet
+                              const ProtoAddress&            ackLinkDst,      // who received the original packet
+                              const ProtoFlow::Description&  flowDescription,
+                              const UINT16                   seqNo,      // Sequence number of the original packet
+                              const UINT32                   fragOffset, // if original packet was a fragment, this will be the fragment offset.
+                              const bool                     atDestination = false,
+                              const bool                     broadcastedPacket=true); // Bool Used to signify whether packet is at the destination.
 
         unsigned int BuildPathAd(UINT32*                buffer,
-                                     unsigned int           length,
-                                     const ProtoAddress&    dstMac,  // also used for ACK upstream relay addr
-                                     const ProtoAddress&    srcMac,
-                                     const ProtoAddress&    dstIp,      // Destination IP of ack (who sent the packet)
-                                     const ProtoAddress&    srcIp);
+                                 unsigned int           length,
+                                 const ProtoAddress&    dstMac,  // also used for ACK upstream relay addr
+                                 const ProtoAddress&    srcMac,
+                                 const ProtoAddress&    dstIp,      // Destination IP of ack (who sent the packet)
+                                 const ProtoAddress&    srcIp);
 
         // Updates the metrics after a unicast packet transmission
-        void ProcessUnicastPacket(const FlowDescription& flowDescription, MulticastFIB::UpstreamRelay* next_hop, UINT16 packetID, UINT16 fragOffset);
+        void ProcessUnicastPacket(const ProtoFlow::Description& flowDescription, MulticastFIB::UpstreamRelay* next_hop, UINT16 packetID, UINT16 fragOffset);
         // Updates the metrics after a broadcast packet transmission (calls ProcessUnicastPacket) for each next-hop
-        void ProcessBroadcastPacket(const FlowDescription& flowDescription, UINT16 packetID, UINT16 fragOffset);
+        void ProcessBroadcastPacket(const ProtoFlow::Description& flowDescription, UINT16 packetID, UINT16 fragOffset);
         // Updates the metrics after an acknowledgement is received.
         void HandleAck(SmartAck& ack, unsigned int ifaceIndex, const ProtoAddress& srcMac,const ProtoAddress& ifaceMac, UINT16 seqNo);
         // Updates the return path table after an advertisement is received.
@@ -93,13 +93,13 @@ class SmartController
         void DeactivateMembership(MulticastFIB::Membership&      membership,
                                   MulticastFIB::Membership::Flag flag);
         // For adding flows to tables.
-        bool AddFlow(const FlowDescription& flowDescription);
+        bool AddFlow(const ProtoFlow::Description& flowDescription);
         // Used to print all metrics for all flows.  Primarily for debugging.
         void PrintRLMetrics();
         void PrintAddressList(ProtoAddressList& addr_list);
         MulticastFIB::UpstreamRelayList& accessDownstreamRelayList()
                     {return downstream_relays;}
-        bool checkForAdvertisement(const FlowDescription& flowDescription, const ProtoAddress& addr);
+        bool checkForAdvertisement(const ProtoFlow::Description& flowDescription, const ProtoAddress& addr);
 
 
 
@@ -116,7 +116,7 @@ class SmartController
         bool OnMembershipTimeout(ProtoTimer& theTimer);
 
         // Call to update the forwarder's Routing information.
-        void updateForwarder(const FlowDescription& flow);
+        void updateForwarder(const ProtoFlow::Description& flow);
         // EM variables, not used:
         ProtoTimerMgr&                  timer_mgr;
         ElasticTicker                   time_ticker;
@@ -134,7 +134,7 @@ class SmartController
         ProtoAddressList    return_path_list;
         ProtoAddressList    forward_path_list;
         ProtoAddressList    interface_list;
-        std::vector<FlowDescription> sortedFlowTable;
+        std::vector<ProtoFlow::Description> sortedFlowTable;
         SmartForwarder*     smart_forwarder;
 };// ENd SmartController Class
 

@@ -858,7 +858,7 @@ MulticastFIB::RL_Data::RL_Data()
 }
 
 MulticastFIB::RL_Data::RL_Data(const ProtoFlow::Description& flow, double learningRate)
-: FlowEntryTemplate(flow)
+: EntryTemplate(flow)
 {
     learning_rate = learningRate;
 }
