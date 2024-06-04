@@ -204,6 +204,9 @@ class SmfApp : public ProtoApp
                     {proto_cap = protoCap;}
                 ProtoCap* GetProtoCap() const
                     {return proto_cap;}
+                    
+                    
+                    
                 void SetProtoVif(ProtoVif* protoVif)
                     {proto_vif = protoVif;}
                 ProtoVif* GetProtoVif() const
@@ -4404,6 +4407,7 @@ bool SmfApp::AddCidElement(const char* deviceName, const char* ifaceName)
     Smf::Interface* iface = smf.GetInterface(ifIndex);
     if (NULL == iface)
     {
+        xxx
         PLOG(PL_ERROR, "SmfApp::AddCidElement() error: invalid nrlsmf interface \"%s\"\n", deviceName);
         return false;
     }
@@ -5536,6 +5540,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
         dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, dstMacAddr, srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt, false, &isDuplicate);
         PLOG(PL_DETAIL, "SmfApp::HandleInboundPacket(): Called ProcessPacket, return value  = %d \n", dstCount);
         if (dstCount < 0) result = false;
+        
         if (srcIface.IsEncapsulating() && (4 == ipPkt.GetVersion()))
         {
             // We need to check to see if we need to unpack the packet
@@ -5571,7 +5576,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, S
                     }
                 }
             }
-        }
+        }  // end if (srcIFace.IsEncapsulating() ...
     }
 
     // If this "srcIface" is a "SMF Device", we need to write a copy up to the

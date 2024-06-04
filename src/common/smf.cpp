@@ -2211,7 +2211,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             PLOG(PL_DEBUG, "Smf::ProcessPacket():  ACK for me, handling\n" );
             // TODO: Is it for me? If not we need to forward it.
             // Send ack to controller for processing.
-            smart_controller->HandleAck(smartAck,srcIface.GetIndex(), srcMac, srcIface.GetInterfaceAddress(), (UINT16)ipv4Pkt.GetID());
+            smart_controller->HandleAck(smartAck, srcIface.GetIndex(), srcMac, srcIface.GetInterfaceAddress(), (UINT16)ipv4Pkt.GetID());
             return -1;
         }
 
