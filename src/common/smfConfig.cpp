@@ -114,7 +114,7 @@ bool SmfConfig::AddInterface(const char*        ifaceName,
                 continue;
             }
             char addrString[256];
-            sprintf(addrString, "%s/%u", addr.GetHostString(), maskLen);
+            snprintf(addrString, 256, "%s/%u", addr.GetHostString(), maskLen);
             if (!array->AppendString(addrString))
             {
                 PLOG(PL_ERROR, "SmfConfig::AddInterface() error adding 'address' item: %s\n", GetErrorString());

@@ -1703,7 +1703,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             else
                 result = true;
             if (!result) break;
-            FlowDescription flowDescription(dstAddr);
+            ProtoFlow::Description flowDescription(dstAddr);
             result = mcast_controller.SetPolicy(flowDescription, true);
             if (!result) break;
         }
@@ -1727,7 +1727,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             else
                 result = true;
             if (!result) break;
-            FlowDescription flowDescription(dstAddr);
+            ProtoFlow::Description flowDescription(dstAddr);
             result = mcast_controller.SetPolicy(flowDescription, false);
             if (!result) break;
         }
@@ -2297,7 +2297,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         if (server_pipe.IsOpen())
         {
             char buffer[256];
-            sprintf(buffer, "smfClientStart %s", control_pipe_name);
+            snprintf(buffer, 256, "smfClientStart %s", control_pipe_name);
             unsigned int numBytes = strlen(buffer)+1;
             if (!server_pipe.Send(buffer, numBytes))
             {
@@ -2348,7 +2348,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             if ('\0' != control_pipe_name[0])
             {
                 char buffer[256];
-                sprintf(buffer, "smfClientStart %s", control_pipe_name);
+                snprintf(buffer, 256, "smfClientStart %s", control_pipe_name);
                 unsigned int numBytes = strlen(buffer)+1;
                 if (!server_pipe.Send(buffer, numBytes))
                 {
@@ -2377,7 +2377,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             if ('\0' != control_pipe_name[0])
             {
                 char buffer[256];
-                sprintf(buffer, "smfClientStart %s", control_pipe_name);
+                snprintf(buffer, 256, "smfClientStart %s", control_pipe_name);
                 unsigned int numBytes = strlen(buffer)+1;
                 if (!tap_pipe.Send(buffer, numBytes))
                 {
@@ -4407,7 +4407,6 @@ bool SmfApp::AddCidElement(const char* deviceName, const char* ifaceName)
     Smf::Interface* iface = smf.GetInterface(ifIndex);
     if (NULL == iface)
     {
-        xxx
         PLOG(PL_ERROR, "SmfApp::AddCidElement() error: invalid nrlsmf interface \"%s\"\n", deviceName);
         return false;
     }
@@ -4619,7 +4618,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 	        else if (!strncmp(cmd, "queueStats", cmdLen))
 	        {
 	    	    // Dump interface queue lengths to server_pipe
-		        sprintf(buffer, "smfQueueStats ");
+                int len = snprintf(buffer, 8192, "smfQueueStats ");
 		        Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
 		        Smf::Interface* nextIface;
 		        char ifaceName[Smf::IF_NAME_MAX+1];
@@ -4628,8 +4627,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 		        while (NULL != (nextIface = iterator.GetNextItem()))
 		        {
 	                ProtoNet::GetInterfaceName(nextIface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
-                    size_t len = strlen(buffer);
-                    sprintf(buffer+len, "%s%s,%u", firstIface ? "" : ";", ifaceName, nextIface->GetQueueLength());
+                    snprintf(buffer+len, 8192-len, "%s%s,%u", firstIface ? "" : ";", ifaceName, nextIface->GetQueueLength());
                     firstIface = false;
 		        }
                 if (server_pipe.IsOpen())
@@ -5380,7 +5378,7 @@ bool SmfApp::ForwardFrameToTap(unsigned int srcIfIndex, unsigned int dstCount, u
     // 1) Build an "smfPkt" message header to send message to "tap" process
     unsigned int msgHdrLen = 7 + 1 + 1 + dstCount;
     char* msgBuffer = frameBuffer - msgHdrLen;
-    sprintf(msgBuffer, "smfPkt ");
+    snprintf(msgBuffer, 7, "smfPkt ");
     msgBuffer[7] = (UINT8)(dstCount + 1);
     msgBuffer[8] = (UINT8)srcIfIndex;
     for (unsigned int i = 0; i < dstCount; i++)
@@ -5826,10 +5824,10 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
 bool SmfApp::BlockICMP(const char* ifaceName, bool enable)
 {
     // Make and install "iptables" firewall rules
-    const size_t RULE_MAX = 511;
-    char rule[RULE_MAX+1];
+    const size_t RULE_MAX = 512;
+    char rule[RULE_MAX];
     const char* action = enable ? "-A" : "-D";
-    sprintf(rule, "iptables %s INPUT -i %s -p icmp -j DROP", action, ifaceName);
+    snprintf(rule, RULE_MAX, "iptables %s INPUT -i %s -p icmp -j DROP", action, ifaceName);
     // Add redirection so we can get stderr result
     strcat(rule, " 2>&1");
     FILE* p = popen(rule, "r");

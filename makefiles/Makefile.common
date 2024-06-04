@@ -44,7 +44,7 @@ nrlsmf:    $(NRLSMF_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o $@ $(NRLSMF_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
 
 # Builds "nrlsmf" with embedded experimental Elastic Multicast code
-ELASTIC_SRC = $(NRLSMF_SRC) $(COMMON)/mcastFib.cpp $(COMMON)/flowTable.cpp \
+ELASTIC_SRC = $(NRLSMF_SRC) $(COMMON)/mcastFib.cpp \
 	$(COMMON)/elasticMsg.cpp
 
 ELASTIC_OBJ = $(ELASTIC_SRC:.cpp=.o)
@@ -54,7 +54,7 @@ elastic:	$(ELASTIC_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o nrlsmf $(ELASTIC_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
 
 # Builds "nrlsmf" with embedded Smart Robust Routing (SRR) Code (for R2DN Program)
-ADAPTIVE_SRC = $(NRLSMF_SRC) $(COMMON)/mcastFib.cpp $(COMMON)/flowTable.cpp \
+ADAPTIVE_SRC = $(NRLSMF_SRC) $(COMMON)/mcastFib.cpp \
 	$(COMMON)/elasticMsg.cpp $(COMMON)/path.cpp $(COMMON)/r2dnMsg.cpp $(COMMON)/smartController.cpp $(COMMON)/smartForwarder.cpp
 
 ADAPTIVE_OBJ = $(ADAPTIVE_SRC:.cpp=.o)
@@ -64,7 +64,7 @@ adaptive:	$(ADAPTIVE_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o nrlsmf $(ADAPTIVE_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
 
 # Builds "fibTest" for testing MulticastFIB class
-FIB_SRC = $(COMMON)/fibTest.cpp $(COMMON)/mcastFib.cpp $(COMMON)/flowTable.cpp \
+FIB_SRC = $(COMMON)/fibTest.cpp $(COMMON)/mcastFib.cpp \
 	$(COMMON)/elasticMsg.cpp $(COMMON)/r2dnMsg.cpp
 
 FIB_OBJ = $(FIB_SRC:.cpp=.o)
@@ -75,7 +75,7 @@ fibTest:	$(FIB_OBJ) $(LIBPROTO)
     
     
 # Builds "pcap2em" for Elastic Multicast pcap analysis
-PCAPEM_SRC = $(COMMON)/pcap2em.cpp $(COMMON)/elasticMsg.cpp $(COMMON)/flowTable.cpp
+PCAPEM_SRC = $(COMMON)/pcap2em.cpp $(COMMON)/elasticMsg.cpp
 
 PCAPEM_OBJ = $(PCAPEM_SRC:.cpp=.o)
 

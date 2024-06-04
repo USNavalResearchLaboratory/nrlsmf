@@ -61,7 +61,7 @@ MulticastFIB::Membership::Membership(unsigned int           ifaceIndex,
                                      const ProtoAddress&    src,
                                      UINT8                  trafficClass,
                                      ProtoPktIP::Protocol   protocol)
-  : FlowEntryTemplate(dst, src, trafficClass, protocol, ifaceIndex),
+  : EntryTemplate(dst, src, trafficClass, protocol, ifaceIndex),
     membership_flags(0), idle_count_threshold(DEFAULT_IDLE_COUNT_THRESHOLD),
     idle_count(0), igmp_timeout_valid(false), elastic_timeout_valid(false),
     default_forwarding_status(LIMIT)
@@ -77,14 +77,14 @@ MulticastFIB::FlowPolicy::FlowPolicy(const ProtoAddress&  dst,
                                      const ProtoAddress&  src,
                                      UINT8                trafficClass,
                                      ProtoPktIP::Protocol protocol)
-  : FlowEntryTemplate(dst, src, trafficClass, protocol),
+  : EntryTemplate(dst, src, trafficClass, protocol),
     bucket_rate(1.0), bucket_depth(10), 
     forwarding_status(LIMIT), acking_status(false)
 {
 }
 
-MulticastFIB::FlowPolicy::FlowPolicy(const FlowDescription& description, int flags)
-  : FlowEntryTemplate(description, flags), bucket_rate(1.0), bucket_depth(10), 
+MulticastFIB::FlowPolicy::FlowPolicy(const ProtoFlow::Description& description, int flags)
+  : EntryTemplate(description, flags), bucket_rate(1.0), bucket_depth(10), 
     forwarding_status(LIMIT), acking_status(false)
 {
 }
@@ -306,7 +306,7 @@ bool MulticastFIB::MembershipTable::IsMember(const ProtoAddress&   dst,
 {
 
     if (!dst.IsValid()) return false;
-    FlowDescription flowDescription(dst, src);
+    ProtoFlow::Description flowDescription(dst, src);
     if (!src.IsValid() && !wildcardSource)
     {
         // Find dst-only membership entry
@@ -857,7 +857,7 @@ MulticastFIB::RL_Data::RL_Data()
     learning_rate = DEFAULT_LEARNING_RATE;
 }
 
-MulticastFIB::RL_Data::RL_Data(const FlowDescription& flow, double learningRate)
+MulticastFIB::RL_Data::RL_Data(const ProtoFlow::Description& flow, double learningRate)
 : FlowEntryTemplate(flow)
 {
     learning_rate = learningRate;
@@ -1047,7 +1047,7 @@ double MulticastFIB::RL_Data::processSentPacket(ProtoAddress addr, UINT16 seqNo,
 //
 //}
 
-MulticastFIB::RL_Data * MulticastFIB::RL_Table::addFlow(const FlowDescription& flow)
+MulticastFIB::RL_Data * MulticastFIB::RL_Table::addFlow(const ProtoFlow::Description& flow)
 {
 
     MulticastFIB::RL_Data * data_ptr = FindEntry(flow);
@@ -1136,7 +1136,7 @@ MulticastFIB::Entry::Entry(const ProtoAddress&  dst,
                            const ProtoAddress&  src,        // invalid src addr means dst only
                            UINT8                trafficClass,
                            ProtoPktIP::Protocol protocol)
-  : FlowEntryTemplate(dst, src, trafficClass, protocol),
+  : EntryTemplate(dst, src, trafficClass, protocol),
     flow_managed(false), flow_active(false), flow_idle(false),
     default_forwarding_status(LIMIT), forwarding_count(0), 
     best_relay(NULL), unicast_probability(0.0),
@@ -1147,9 +1147,9 @@ MulticastFIB::Entry::Entry(const ProtoAddress&  dst,
 {
 }
 
-MulticastFIB::Entry::Entry(const FlowDescription& flowDescription, int flags)
+MulticastFIB::Entry::Entry(const ProtoFlow::Description& flowDescription, int flags)
 
- : FlowEntryTemplate(flowDescription, flags), 
+ : EntryTemplate(flowDescription, flags), 
    flow_managed(false), flow_active(false), flow_idle(false),
    default_forwarding_status(LIMIT), forwarding_count(0),
    //downstream_relay(), 
@@ -1610,7 +1610,7 @@ bool MulticastFIB::ParseFlowList(ProtoPktIP& pkt, Entry*& fibEntry, unsigned int
     if (NULL == fibEntry)
     {
         // Generate flow description from the packet.  This will include source, which we may want to remove.  TODO: check this
-        FlowDescription flowDescription;
+        ProtoFlow::Description flowDescription;
         flowDescription.InitFromPkt(pkt);
         flowDescription.SetSrcMaskLength(0);
 
@@ -1804,12 +1804,12 @@ ElasticMulticastForwarder::~ElasticMulticastForwarder()
     // mcast_fib.Destroy(); TBD - implement something to destroy mcast_fib.entry_table
 }
 
-bool ElasticMulticastForwarder::SetAckingStatus(const FlowDescription& flowDescription,
-                                                bool                   ackingStatus)
+bool ElasticMulticastForwarder::SetAckingStatus(const ProtoFlow::Description& flowDescription,
+                                                bool                          ackingStatus)
 {
     // Sets acking status for all matching entries for the given "flowDescription"
     MulticastFIB::EntryTable& flowTable = mcast_fib.AccessFlowTable();
-    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, FlowDescription::FLAG_ALL, false);  // non bimatch iterator
+    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, ProtoFlow::Description::FLAG_ALL, false);  // non bimatch iterator
     MulticastFIB::Entry* entry = iterator.GetNextEntry();
     //bool exactMatch = false;
     if (NULL != entry)
@@ -1861,7 +1861,7 @@ bool ElasticMulticastForwarder::SetAckingStatus(const FlowDescription& flowDescr
 }  // end ElasticMulticastForwarder::SetAckingStatus()
 
 
-bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&          flowDescription,
+bool ElasticMulticastForwarder::SetForwardingStatus(const ProtoFlow::Description&   flowDescription,
                                                     unsigned int                    ifaceIndex,
                                                     MulticastFIB::ForwardingStatus  forwardingStatus,
                                                     bool                            ackingStatus,
@@ -1873,7 +1873,7 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&      
 
     // Sets forwarding status for all matching (sub-matching, non-bimatch) entries.
     MulticastFIB::EntryTable& flowTable = mcast_fib.AccessFlowTable();
-    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, FlowDescription::FLAG_ALL, false);  // non bimatch iterator
+    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, ProtoFlow::Description::FLAG_ALL, false);  // non bimatch iterator
     MulticastFIB::Entry* entry = iterator.GetNextEntry();
     bool exactMatch = false;
     if (NULL != entry)
@@ -1974,13 +1974,13 @@ ElasticMulticastController::~ElasticMulticastController()
 }
 
 // Simple allow/deny policy for now
-bool ElasticMulticastController::SetPolicy(const FlowDescription& flowDescription, bool allow)
+bool ElasticMulticastController::SetPolicy(const ProtoFlow::Description& flowDescription, bool allow)
 {
     
     // Set a full wildcard policy as default if not already set.  This sets the opposite policy
     // for any flows that don't match allowed (or denied) flows ...
     // TBD - perhaps only set wildcard when explicitly configured???
-    FlowDescription wildcardDescription;
+    ProtoFlow::Description wildcardDescription;
     MulticastFIB::FlowPolicy* wildcard = policy_table.FindEntry(wildcardDescription);
     if (NULL == wildcard)
     {
@@ -2055,7 +2055,7 @@ void ElasticMulticastController::RemoveManagedMembership(unsigned int ifaceIndex
 {
     bool match = false;
     bool ackingStatus = false;
-    FlowDescription flowDescription(groupAddr, PROTO_ADDR_NONE, 0x03, ProtoPktIP::RESERVED);
+    ProtoFlow::Description flowDescription(groupAddr, PROTO_ADDR_NONE, 0x03, ProtoPktIP::RESERVED);
     MulticastFIB::MembershipTable::Iterator iterator(membership_table, &flowDescription);
     MulticastFIB::Membership* membership;
     while (NULL != (membership = iterator.GetNextEntry()))
@@ -2189,7 +2189,7 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
     ack.GetSrcAddr(srcIp);
     UINT8 trafficClass = ack.GetTrafficClass();
     ProtoPktIP::Protocol protocol = ack.GetProtocol();
-    FlowDescription membershipDescription(dstIp, srcIp, trafficClass, protocol, ifaceIndex);
+    ProtoFlow::Description membershipDescription(dstIp, srcIp, trafficClass, protocol, ifaceIndex);
 
     if (GetDebugLevel() >= PL_DETAIL)
     {
@@ -2239,7 +2239,7 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
     membership->ResetIdleCount();  // reset packet-count based "timeout"
     if (updateForwarder)
     {
-        FlowDescription flowDescription(dstIp, srcIp, trafficClass, protocol);
+        ProtoFlow::Description flowDescription(dstIp, srcIp, trafficClass, protocol);
         mcast_forwarder->SetForwardingStatus(flowDescription, ifaceIndex, MulticastFIB::FORWARD, true, false);
     }
 
@@ -2381,12 +2381,12 @@ bool ElasticMulticastController::OnMembershipTimeout(ProtoTimer& theTimer)
     return false;
 }  // end MulticastFIB::OnMembershipTimeout()
 
-void ElasticMulticastController::Update(const FlowDescription&  flowDescription,
-                                        unsigned int            ifaceIndex,  // inbound interface index (unused)
-                                        const ProtoAddress&     relayAddr,   // upstream relay addr
-                                        unsigned int            pktCount,
-                                        unsigned int            pktInterval,
-                                        bool                    oldAckingStatus)
+void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescription,
+                                        unsigned int                   ifaceIndex,  // inbound interface index (unused) 
+                                        const ProtoAddress&            relayAddr,   // upstream relay addr              
+                                        unsigned int                   pktCount,                                        
+                                        unsigned int                   pktInterval,                                     
+                                        bool                           oldAckingStatus)                                 
 {
     if (GetDebugLevel() >= PL_DEBUG)
     {

@@ -3,7 +3,7 @@
 #ifndef _MCAST_FIB
 #define _MCAST_FIB
 
-#include "flowTable.h"
+#include "protoFlow.h"
 #include "elasticMsg.h"
 #include "r2dnMsg.h"
 #include "path.h"
@@ -384,7 +384,7 @@ class MulticastFIB
 		// The class maintains a list of RL_Metrics, for each "next hop" address, as well as a list of sent packets, corresponding to the packets that have been sent over each list.
 		// A seperate list is maintained for each next hop. THis list is required for the computation of the correction factor in the RL algorithm.
 		// Additionally, RL_Data tracks the flow for which the data is defined.
-		class RL_Data : public FlowEntryTemplate<ProtoTree>
+		class RL_Data : public ProtoFlow::EntryTemplate<ProtoTree>
 		{
             public:
 			 struct RL_Metric_Tuple
@@ -416,7 +416,7 @@ class MulticastFIB
 
 
 
-				RL_Data(const FlowDescription& flow, double learningRate);
+				RL_Data(const ProtoFlow::Description& flow, double learningRate);
 				RL_Data();
 				~RL_Data();
 
@@ -448,26 +448,26 @@ class MulticastFIB
 		};
 
         // A per-flow talbe of RL_Data objects.
-		class RL_Table : public FlowTableTemplate<RL_Data, ProtoTree>
+		class RL_Table : public ProtoFlow::TableTemplate<RL_Data, ProtoTree>
 		{
             public:
-                RL_Data* addFlow(const FlowDescription& flow);
+                RL_Data* addFlow(const ProtoFlow::Description& flow);
 		};
 
 #endif // ADAPTIVE_ROUTING
         
         // The MulticastFIB::Entry class is used to keep state for flows detected
-        class Entry : public FlowEntryTemplate<ProtoTree>
+        class Entry : public ProtoFlow::EntryTemplate<ProtoTree>
         {
             public:
                 Entry(const ProtoAddress&   dst,
                       const ProtoAddress&   src,        // invalid src addr means dst only
                       UINT8                 trafficClass = 0x03,
                       ProtoPktIP::Protocol  theProtocol = ProtoPktIP::RESERVED);
-                Entry(const FlowDescription& flowDescription, int flags = FlowDescription::FLAG_ALL);
+                Entry(const  ProtoFlow::Description& flowDescription, int flags = ProtoFlow::Description::FLAG_ALL);
                 ~Entry();
 
-                bool IsExactMatch(const FlowDescription& flowDescription) const
+                bool IsExactMatch(const  ProtoFlow::Description& flowDescription) const
                 {
                     return ProtoTree::ItemIsEqual(*this,
                                                   flowDescription.GetKey(),
@@ -641,7 +641,7 @@ class MulticastFIB
                 unsigned int    ref_count[129];
         };  // end class MulticastFIB::MaskLengthList
         */
-        class EntryTable : public FlowTableTemplate<Entry, ProtoTree> {};
+        class EntryTable : public ProtoFlow::TableTemplate<Entry, ProtoTree> {};
 
         EntryTable& AccessFlowTable()
             {return flow_table;}
@@ -651,7 +651,7 @@ class MulticastFIB
 
         class MembershipTable;  // forward declaration to support friendship
 
-        class Membership : public FlowEntryTemplate<ProtoIndexedQueue>
+        class Membership : public ProtoFlow::EntryTemplate<ProtoIndexedQueue>
         {
             public:
                 // invalid/none src addr means dst only
@@ -724,7 +724,7 @@ class MulticastFIB
 
         };  // end class MulticastFIB::Membership
 
-        class MembershipTable : public FlowTableTemplate<Membership, ProtoIndexedQueue>
+        class MembershipTable : public ProtoFlow::TableTemplate<Membership, ProtoIndexedQueue>
         {
             public:
                 MembershipTable();
@@ -768,7 +768,7 @@ class MulticastFIB
                 Membership* GetRingLeader()
                     {return ring_leader;}
 
-                Membership* FindMembership(const FlowDescription& flowDescription)
+                Membership* FindMembership(const  ProtoFlow::Description& flowDescription)
                     {return FindEntry(flowDescription);}
 
                 Membership* FindMembership(unsigned int         ifaceIndex,
@@ -777,7 +777,7 @@ class MulticastFIB
                                            UINT8                trafficClass = 0x03,
                                            ProtoPktIP::Protocol protocol = ProtoPktIP::RESERVED)
                 {
-                    FlowDescription description(dst, src, trafficClass, protocol, ifaceIndex);
+                    ProtoFlow::Description description(dst, src, trafficClass, protocol, ifaceIndex);
                     return FindMembership(description);
                 }
 
@@ -816,7 +816,7 @@ class MulticastFIB
 
         };  // end class MulticastFIB::MembershipTable
 
-        class FlowPolicy : public FlowEntryTemplate<ProtoTree>
+        class FlowPolicy : public ProtoFlow::EntryTemplate<ProtoTree>
         {
             public:
                 // invalid/none src addr means dst only
@@ -824,7 +824,7 @@ class MulticastFIB
                            const ProtoAddress&  src = PROTO_ADDR_NONE,
                            UINT8                trafficClass = 0x03,
                            ProtoPktIP::Protocol protocol = ProtoPktIP::RESERVED);
-                FlowPolicy(const FlowDescription& flowDescription, int flags = FlowDescription::FLAG_ALL);
+                FlowPolicy(const  ProtoFlow::Description& flowDescription, int flags =  ProtoFlow::Description::FLAG_ALL);
                 ~FlowPolicy();
 
                 void SetAckingStatus(bool status)
@@ -856,12 +856,12 @@ class MulticastFIB
                 // TBD - should a flow have overriding mix/max update interval/count option?
         };  // end class MulticastFIB::FlowPolicy
 
-        class PolicyTable : public FlowTableTemplate<FlowPolicy, ProtoTree>
+        class PolicyTable : public ProtoFlow::TableTemplate<FlowPolicy, ProtoTree>
         {
             public:
                 // "deepSearch=true" lets us find policies with best-matching source address
                 //  This lets us exclude (or include) specific sources as needed
-                FlowPolicy* FindBestMatch(const FlowDescription& flowDescription, bool deepSearch=true)
+                FlowPolicy* FindBestMatch(const  ProtoFlow::Description& flowDescription, bool deepSearch=true)
                     {return FindBestMatch(flowDescription, deepSearch);}
 
         };  // end class MulticastFIB::PolicyTable
@@ -936,21 +936,21 @@ class MulticastFIB
         void InsertEntry(Entry& entry)
             {flow_table.InsertEntry(entry);}
 
-        Entry* FindEntry(const FlowDescription& flowDescription)
+        Entry* FindEntry(const  ProtoFlow::Description& flowDescription)
             {return flow_table.FindEntry(flowDescription);}
 
-        Entry* FindBestMatch(const FlowDescription& flowDescription, bool exhaustiveSearch=false)
+        Entry* FindBestMatch(const  ProtoFlow::Description& flowDescription, bool exhaustiveSearch=false)
             {return flow_table.FindBestMatch(flowDescription, exhaustiveSearch);}
 
-        bool SetForwardingStatus(const FlowDescription& flowDescription,
-                                 unsigned int           ifaceIndex,
-                                 ForwardingStatus       forwardingStatus,
-                                 bool                   ackingStatus);
+        bool SetForwardingStatus(const  ProtoFlow::Description& flowDescription,
+                                 unsigned int                   ifaceIndex,
+                                 ForwardingStatus               forwardingStatus,
+                                 bool                           ackingStatus);
 
-        bool SetAckingCondition(const FlowDescription&    flowDescription,
-                                unsigned int              count,
-                                unsigned int              intervalMax,
-                                unsigned int              intervalMin);
+        bool SetAckingCondition(const  ProtoFlow::Description&    flowDescription,
+                                unsigned int                      count,
+                                unsigned int                      intervalMax,
+                                unsigned int                      intervalMin);
 
         void ActivateFlow(Entry& entry, unsigned int currentTick);
         void ReactivateFlow(Entry& entry, unsigned int currentTick)
@@ -1059,19 +1059,19 @@ class ElasticMulticastForwarder
         //       and more forgiving of the order in which they were entered.
         //       Need to think about what to do with pre-existing flows
         //      anyway if managed policies are loaded "on-the-fly".
-        bool SetForwardingStatus(const FlowDescription&         flowDescription,
-                                 unsigned int                   ifaceIndex,
-                                 MulticastFIB::ForwardingStatus forwardingStatus,
-                                 bool                           ackingStatus,
-                                 bool                           managed);
+        bool SetForwardingStatus(const  ProtoFlow::Description&         flowDescription,
+                                 unsigned int                           ifaceIndex,
+                                 MulticastFIB::ForwardingStatus         forwardingStatus,
+                                 bool                                   ackingStatus,
+                                 bool                                   managed);
 
-        bool SetAckingStatus(const FlowDescription& flowDescription,
-                             bool                   ackingStatus);
+        bool SetAckingStatus(const  ProtoFlow::Description& flowDescription,
+                             bool                           ackingStatus);
         /*
-        bool SetAckingCondition(const FlowDescription&  flowDescription,
-                                unsigned int            count,
-                                unsigned int            intervalMax,
-                                unsigned int            intervalMin)
+        bool SetAckingCondition(const  ProtoFlow::Description&  flowDescription,
+                                unsigned int                    count,
+                                unsigned int                    intervalMax,
+                                unsigned int                    intervalMin)
         {
             return mcast_fib.SetAckingCondition(flowDescription, count, intervalMax, intervalMin);
         }
@@ -1079,9 +1079,9 @@ class ElasticMulticastForwarder
 
         // The following required overrides are needed since they require access
         // to a network interface output mechanism (for sending EM-ACK)
-        virtual bool SendAck(unsigned int           ifaceIndex,
-                             const ProtoAddress&    upstreamAddr,
-                             const FlowDescription& flowDescription) = 0;
+        virtual bool SendAck(unsigned int                   ifaceIndex,
+                             const ProtoAddress&            upstreamAddr,
+                             const  ProtoFlow::Description& flowDescription) = 0;
         class OutputMechanism
         {
             public:
@@ -1128,12 +1128,12 @@ class ElasticMulticastController
 
         // This method is invoked by the forwarding plane (or via interface from forwarding plane) when
         // there is a newly detected flow or upon flow activity updates
-        void Update(const FlowDescription&                flowDescription,
-                    unsigned int                          ifaceIndex,
-                    const ProtoAddress&                   relayAddr,
-                    unsigned int                          pktCount,
-                    unsigned int                          pktInterval,
-                    bool                                  ackingStatus);
+        void Update(const ProtoFlow::Description&   flowDescription,
+                    unsigned int                    ifaceIndex,         
+                    const ProtoAddress&             relayAddr,          
+                    unsigned int                    pktCount,           
+                    unsigned int                    pktInterval,        
+                    bool                            ackingStatus);      
 
         void HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAddress& srcIp, unsigned int ifaceIndex, bool inbound);
 
@@ -1147,7 +1147,7 @@ class ElasticMulticastController
         void DeactivateMembership(MulticastFIB::Membership&      membership,
                                   MulticastFIB::Membership::Flag flag);
         
-        bool SetPolicy(const FlowDescription& description, bool allow);
+        bool SetPolicy(const ProtoFlow::Description& description, bool allow);
         
         bool HasPolicies() const
             {return !policy_table.IsEmpty();}

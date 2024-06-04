@@ -731,7 +731,7 @@ class Smf
                        MulticastFIB::UpstreamHistory*  upstreamHistory);
         
         MulticastFIB::Entry* UpdateElasticRouting(unsigned int                   currentTick,
-                                                  const FlowDescription&         flowDescription,
+                                                  const ProtoFlow::Description&  flowDescription,
                                                   Interface&                     srcIface,
                                                   const ProtoAddress&            srcMac,
                                                   MulticastFIB::UpstreamHistory* upstreamHistory, 
@@ -753,14 +753,14 @@ class Smf
                       UINT16                         nackCount);
      
         // required ElasticMulticastForwarder overrides
-        bool SendAck(unsigned int           ifaceIndex,   // interface it goes out on
-                     const ProtoAddress&    upstreamAddr, // upstream to address it to
-                     const FlowDescription& flowDescription);
+        bool SendAck(unsigned int                  ifaceIndex,   // interface it goes out on
+                     const ProtoAddress&           upstreamAddr, // upstream to address it to
+                     const ProtoFlow::Description& flowDescription);
         
         // shortcut version when Interface is already dereferenced
-        bool SendAck(Interface&             iface,         // interface it goes out on
-                     const ProtoAddress&    upstreamAddr,  // upstream to address it to
-                     const FlowDescription& flowDescription);
+        bool SendAck(Interface&                    iface,         // interface it goes out on
+                     const ProtoAddress&           upstreamAddr,  // upstream to address it to
+                     const ProtoFlow::Description& flowDescription);
         
         // For reliable forwarding option
         static const double DEFAULT_REPAIR_WINDOW;
