@@ -63,7 +63,7 @@ Smf::Interface::Extension::~Extension()
 
 Smf::Interface::Interface(unsigned int ifIndex)
  : if_index(ifIndex), resequence(false), is_tunnel(false), 
-   is_layered(false), is_reliable(false), use_etx(false), is_shadowing(false), block_igmp(false),
+   is_layered(false), is_reliable(false), use_etx(false),
    ump_sequence(0), ip_encapsulate(false), dup_detector(NULL), 
    unicast_group_count(0), 
 #ifdef ELASTIC_MCAST
@@ -371,11 +371,10 @@ Smf::Smf(ProtoTimerMgr& timerMgr)
  : timer_mgr(timerMgr), hash_algorithm(NULL), ihash_only(true),
    idpd_enable(true), use_window(false),
    relay_enabled(false), relay_selected(false),
-   delay_time(0),
+   delay_time(0), hash_stash(1024),
    update_age_max(DEFAULT_AGE_MAX), current_update_time(0),
    selector_list_len(0), neighbor_list_len(0),
-   recv_count(0), mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0),
-   hash_stash(1024)
+   recv_count(0), mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0)
 {
     delay_relay_off_timer.SetInterval(delay_time);
     delay_relay_off_timer.SetListener(this,&Smf::OnDelayRelayOffTimeout);
@@ -512,6 +511,11 @@ void Smf::RemoveInterface(unsigned int ifIndex)
 {
     Interface* iface = GetInterface(ifIndex);
     if (NULL == iface) return;
+    RemoveInterface(iface);
+}  // end Smf::RemoveInterace(by index)
+
+void Smf::RemoveInterface(Interface* iface)
+{
     InterfaceGroupList::Iterator iterator(iface_group_list);
     InterfaceGroup* ifaceGroup;
     while (NULL != (ifaceGroup = iterator.GetNextItem()))

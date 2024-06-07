@@ -30,6 +30,8 @@ NOTES:
 
 #include <stdint.h>  // for intptr_t
 
+#define INT2VOIDP(i) (void*)(uintptr_t)(i)
+
 #define SET_DSCP   1
 #define RESET_DSCP 0
 
@@ -93,9 +95,9 @@ class Smf
         
         // Manage/Query a list of the node's local MAC/IP addresses
         // (Also cache interface index so we can look that up by address)
-        bool AddOwnAddress(const ProtoAddress& addr, intptr_t ifaceIndex)
+        bool AddOwnAddress(const ProtoAddress& addr, unsigned int ifaceIndex)
         {
-            bool result = local_addr_list.Insert(addr, (void*)ifaceIndex);
+            bool result = local_addr_list.Insert(addr, INT2VOIDP(ifaceIndex));
             ASSERT(result);
             return result;
         }
@@ -210,20 +212,7 @@ class Smf
                     {is_layered = state;}
                 bool IsLayered() const
                     {return is_layered;}
-                
-                // If "is_shadowing", the snmf "device" uses the underlying
-                // interface addressing (MAC and IP) for its transmissions
-                void SetShadowing(bool state)
-                    {is_shadowing = state;}
-                bool IsShadowing() const
-                    {return is_shadowing;}
-                
-                // Controls blocking of outbound IGMP messages
-                // (Only applies to nrlsmf "device" interfaces running elastic mcast)
-                void SetBlockIGMP(bool state)
-                    {block_igmp = state;}
-                bool BlockIGMP() const
-                    {return block_igmp;}
+               
                 // These enable/disable reliable forwarding for the interface
                 void SetReliable(bool state)
                 {
@@ -415,8 +404,6 @@ class Smf
                 bool                                  is_layered;                                                               
                 bool                                  is_reliable;  
                 bool                                  use_etx; 
-                bool                                  is_shadowing;  // nrlsmf vif 'device' interfaces only   
-                bool                                  block_igmp;    // nrlsmf vif 'device' elastic mcast interfaces only                                            
                 UINT16                                ump_sequence;                                                             
                 bool                                  ip_encapsulate;                                                           
                 ProtoAddress                          encapsulation_link;  // MAC addr of next hop for encapsulated packets     
@@ -474,6 +461,7 @@ class Smf
         InterfaceList& AccessInterfaceList()
             {return iface_list;}
         void RemoveInterface(unsigned int ifIndex);
+        void RemoveInterface(Interface* iface);
         void DeleteInterface(Interface* iface);
         
         bool IsInGroup(Interface& iface)

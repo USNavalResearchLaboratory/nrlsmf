@@ -111,11 +111,16 @@ class SmfQueueTableTemplate : public ProtoTreeTemplate<QUEUE_TYPE>
         
 };  // end class SmfQueueTableTemplate
 
-
 class SmfPacket : public SmfPacketTemplate<ProtoList::Item> 
 {
     public:
-        class Pool : public ProtoListTemplate<SmfPacket>::ItemPool {};
+        class Pool : public ProtoListTemplate<SmfPacket>::ItemPool
+        {
+            public:
+                // This gets packet from pool or allocates one as needed
+                // TBD - add a pool depth limit ???
+                SmfPacket* GetPacket();
+        };
 };  // end class SmfPacket
 
 class SmfQueue : public SmfQueueBase, public ProtoListTemplate<SmfPacket>
