@@ -2249,8 +2249,11 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         while (NULL != (next = tk.GetNextItem()))
         {
             ProtoTokenator tk2(next, '/');
-            const char* ifaceName = tk2.GetNextItem();  // detaches tokenized string item, so we MUST delete it later
-            const char* ifaceStatus = tk.GetNextItem();
+            char ifaceName[Smf::IF_NAME_MAX + 1];
+            const char* ifaceNameTemp = tk2.GetNextItem();  // detaches tokenized string item, so we MUST delete it later
+            strncpy(ifaceName, ifaceNameTemp, Smf::IF_NAME_MAX);
+            ifaceName[Smf::IF_NAME_MAX] = '\0';
+            const char* ifaceStatus = tk2.GetNextItem();
             int cidFlags;
             if (NULL == ifaceStatus)
             {
@@ -2283,10 +2286,14 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                         return false;
                 }
             }
-            if (!AddCidElement(vifName, next, cidFlags, 0))
+            if (!AddCidElement(vifName, ifaceName, cidFlags, 0))
             {
                 PLOG(PL_ERROR, "SmfApp::OnCommand(cid) error: AddCidElement() failure!\n");
                 return false;
+            }
+            else
+            {
+                first = false;
             }
         }
         if (first)
@@ -4561,7 +4568,7 @@ unsigned int SmfApp::AddCidElement(const char* deviceName, const char* ifaceName
         vifIndex = ProtoNet::GetInterfaceIndex(deviceName);
     if (0 == capIndex)
     {
-        PLOG(PL_ERROR, "SmfApp::GetCidElementList() error: unable to get interface index for device \"%s\"\n", deviceName);
+        PLOG(PL_ERROR, "SmfApp::GetCidElementList() error: unable to get interface index for interface \"%s\"\n", ifaceName);
         return 0;
     }
     // Verify that this "deviceName" is an existing nrlsmf interface
