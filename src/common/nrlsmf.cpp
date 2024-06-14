@@ -2190,15 +2190,17 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     {
         // value is in form <vifName>,<ifaceName>[,shadow][,blockIGMP],[,addr1/maskLen,addr2[/maskLen],...
         // copy it so we can parse it
-        
         ProtoTokenator tk(val, ',');
-        tk.GetNextItem();
-        char* vifName = tk.DetachPreviousItem();
-        tk.GetNextItem();
-        char* ifaceName = tk.DetachPreviousItem();
+        const char* vifName = tk.GetNextItem(true); // _detaches_ tokenized 'vifName' so needs deletion later
+        if (NULL == vifName)
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(device) error: no arguments provided!\n");
+            return false;
+        }
+        const char* ifaceName = tk.GetNextItem(true); // _detaches_ tokenized 'ifaceName' so needs deletion later
         if (NULL == ifaceName)
         {
-            PLOG(PL_ERROR, "SmfApp::OnCommand(device) error: invalid argument: \"%s\"\n", val);
+            PLOG(PL_ERROR, "SmfApp::OnCommand(device) error: mission <ifaceName> argument!\n");
             delete[] vifName;
             return false;
         }
@@ -2235,24 +2237,20 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     {
         // cid <vifName>,<iface1,iface2, ...>
         ProtoTokenator tk(val, ',');
-        const char* next = tk.GetNextItem();
-        if (NULL == next)
+        const char* vifName = tk.GetNextItem(true); // _detaches_ tokenized 'vifName', so we MUST delete it later
+        if (NULL == vifName)
         {
             PLOG(PL_ERROR, "SmfApp::OnCommand(cid) error: no arguments given!\n");
             Usage();
             return false;
         }
-        char vifName[Smf::IF_NAME_MAX + 1];
-        strncpy(vifName, next, Smf::IF_NAME_MAX);
-        vifName[Smf::IF_NAME_MAX] = '\0';
-        bool first = true;
-        while (NULL != (next = tk.GetNextItem()))
+        const char* next;
+        unsigned int ifaceCount = 0;  // for error checking
+        while (NULL != (next = tk.GetNextItem())) // _detaches_ tokenized 'vifName', so we MUST delete it later
         {
+            ifaceCount++;
             ProtoTokenator tk2(next, '/');
-            char ifaceName[Smf::IF_NAME_MAX + 1];
-            const char* ifaceNameTemp = tk2.GetNextItem();  // detaches tokenized string item, so we MUST delete it later
-            strncpy(ifaceName, ifaceNameTemp, Smf::IF_NAME_MAX);
-            ifaceName[Smf::IF_NAME_MAX] = '\0';
+            const char* ifaceName = tk2.GetNextItem(true);  // _detaches_ tokenized 'ifaceName', so we MUST delete it later
             const char* ifaceStatus = tk2.GetNextItem();
             int cidFlags;
             if (NULL == ifaceStatus)
@@ -2276,6 +2274,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                         {
                             PLOG(PL_ERROR, "SmfApp::OnCommand(cid) error: invalid interface status: %s\n", next);
                             delete[] ifaceName;
+                            delete[] vifName;
                             return false;
                         }
                         continue;
@@ -2283,20 +2282,21 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                     default:
                         PLOG(PL_ERROR, "SmfApp::OnCommand(cid) error: invalid interface deletion: %s\n", next);
                         delete[] ifaceName;
+                        delete[] vifName;
                         return false;
                 }
             }
             if (!AddCidElement(vifName, ifaceName, cidFlags, 0))
             {
                 PLOG(PL_ERROR, "SmfApp::OnCommand(cid) error: AddCidElement() failure!\n");
+                delete[] ifaceName;
+                delete[] vifName;
                 return false;
             }
-            else
-            {
-                first = false;
-            }
-        }
-        if (first)
+            delete[] ifaceName;
+        }  // end while (NULL != (next = tk.GetNextItem()))
+        delete[] vifName;
+        if (0 == ifaceCount)
         {
             PLOG(PL_ERROR, "SmfApp::OnCommand(cid) error: no interface list provided!\n");
             Usage();
