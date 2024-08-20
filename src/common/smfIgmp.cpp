@@ -133,7 +133,7 @@ void SmfIgmp::UpdateInterfaces()
 
     // Example output from FRR-PIM
     // # show ip igmp vrf all interface json
-    // {  
+    // {
     //   "default": {
     //     "green1":{
     //       "name":"green1",
@@ -182,7 +182,7 @@ void SmfIgmp::UpdateInterfaces()
             return;
 
         case ProtoJson::Parser::PARSE_DONE:
-            doc = parser.DetachDocument();
+            doc = parser.AccessDocument();
             if (!doc)
             {
                 PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() NULL document\n");
@@ -346,7 +346,7 @@ void SmfIgmp::UpdateMemberships()
             return;
 
         case ProtoJson::Parser::PARSE_DONE:
-            doc = parser.DetachDocument();
+            doc = parser.AccessDocument();
             if (!doc)
             {
                 PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() NULL document\n");
