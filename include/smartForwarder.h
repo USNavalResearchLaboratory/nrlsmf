@@ -2,7 +2,7 @@
 #ifndef _SMART_FORWARDER
 #define _SMART_FORWARDER
 
-#include "flowTable.h"
+#include "protoFlow.h"
 #include "elasticMsg.h"
 #include "r2dnMsg.h"
 #include "mcastFib.h"
@@ -34,15 +34,15 @@ class SmartForwarder
 
         // set forwarding status to BLOCK, LIMIT, HYBRID, or FORWARD
         // This is from EM, not used:
-        bool SetForwardingStatus(const FlowDescription&  flowDescription,
-                                 unsigned int                          ifaceIndex,
-                                 MulticastFIB::ForwardingStatus        forwardingStatus,
-                                 bool                                  ackingStatus);
+        bool SetForwardingStatus(const ProtoFlow::Description&  flowDescription,
+                                 unsigned int                   ifaceIndex,
+                                 MulticastFIB::ForwardingStatus forwardingStatus,
+                                 bool                           ackingStatus);
 
-        bool SetAckingStatus(const FlowDescription& flowDescription,
-                             bool                   ackingStatus);
+        bool SetAckingStatus(const ProtoFlow::Description&  flowDescription,
+                             bool                           ackingStatus);
         /*
-        bool SetAckingCondition(const FlowDescription&  flowDescription,
+        bool SetAckingCondition(const ProtoFlow::Description&  flowDescription,
                                 unsigned int            count,
                                 unsigned int            intervalMax,
                                 unsigned int            intervalMin)
@@ -51,14 +51,14 @@ class SmartForwarder
         }
         */
         // Update routing tale to forward packets of a particular flow to a specific next hop, with some probability, and to broadcast with some probability.
-        bool UpdateRoutingTable(const FlowDescription& flowDescription, MulticastFIB::UpstreamRelay nextHop, double broadcastProbability);
+        bool UpdateRoutingTable(const ProtoFlow::Description& flowDescription, MulticastFIB::UpstreamRelay nextHop, double broadcastProbability);
 
 
         // The following required overrides are needed since they require access
         // to a network interface output mechanism (for sending EM-ACK)
         // virtual bool SendAck(unsigned int           ifaceIndex,
         //                      const ProtoAddress&    upstreamAddr,
-        //                     const FlowDescription& flowDescription) = 0;  // copied from ElasticForwarder but not _actually_ used by the SmartForwarder ...
+        //                     const ProtoFlow::Description& flowDescription) = 0;  // copied from ElasticForwarder but not _actually_ used by the SmartForwarder ...
         // To send acknoweldgements.
         class OutputMechanism
         {
@@ -70,8 +70,8 @@ class SmartForwarder
 
         // Not sure if this is still used.
         void MarkPacket(SmartPkt& pkt, const ProtoAddress& addr);
-        MulticastFIB::UpstreamRelay* getNextHop(const FlowDescription& flowDescription);
-        double getBroadcastProbability(const FlowDescription& flowDescription);
+        MulticastFIB::UpstreamRelay* getNextHop(const ProtoFlow::Description& flowDescription);
+        double getBroadcastProbability(const ProtoFlow::Description& flowDescription);
 
     protected:
        // Our "ticker" is a count of microseconds that is used for our

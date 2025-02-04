@@ -137,6 +137,7 @@ class SmfApp : public ProtoApp
         Smf::Interface* AddDevice(const char* vifName, const char* ifaceName, bool stealAddrs);
         Smf::Interface* CreateDevice(const char* vifName);
         unsigned int AddCidElement(const char* deviceName, const char* ifaceName, int flags, unsigned int vifIndex);
+        bool RemoveCidElement(const char* deviceName, const char* ifaceName);
         bool TransferAddresses(unsigned int vifIndex, unsigned int ifaceIndex);
         bool AssignAddresses(const char* ifaceName, unsigned int ifaceIndex, const char* addrList);
         
@@ -179,14 +180,14 @@ class SmfApp : public ProtoApp
                     CID_RX = 0x01,
                     CID_TX = 0x02
                 };
-                CidElement(ProtoCap* protoCap, unsigned int capIndex, int flags = CID_RX);
+                CidElement(ProtoCap& protoCap, int flags = CID_TX | CID_RX);
                 ~CidElement();
                 
-                ProtoCap* GetProtoCap()
+                ProtoCap& GetProtoCap()
                     {return proto_cap;}
                     
-                unsigned int GetIndex() const
-                    {return cap_index;}
+                unsigned int GetInterfaceIndex() const
+                    {return proto_cap.GetInterfaceIndex();}
 
                 bool FlagIsSet(Flag flag) const
                     {return (0 != (flag & cid_flags));}
@@ -201,8 +202,7 @@ class SmfApp : public ProtoApp
                     {cid_flags &= ~flag;}
 
             private:
-                ProtoCap*       proto_cap;
-                unsigned int    cap_index;
+                ProtoCap&       proto_cap;
                 int             cid_flags;
         };  // end class SmfApp::CidElement
 
@@ -220,7 +220,7 @@ class SmfApp : public ProtoApp
 
                 void CloseDevice();
                 void Close();
-
+                
                 void SetProtoVif(ProtoVif* protoVif)
                     {proto_vif = protoVif;}
                 ProtoVif* GetProtoVif() const
@@ -241,7 +241,9 @@ class SmfApp : public ProtoApp
                     {return block_igmp;}
 
                 // Adds a "rx-only" Composite Interface Device element
-                bool AddCidElement(ProtoCap* protoCap, unsigned int capIndex, int flags);// = CidElement::CID_RX);
+                bool AddCidElement(ProtoCap& protoCap, int flags);// = CidElement::CID_RX);
+                
+                void RemoveCidElement(unsigned int capIndex);
                 
                 CidElement* GetPrincipalElement() {return cid_list.GetHead();}
                 
@@ -492,7 +494,7 @@ bool SmfApp::InterfaceMechanism::SetTxRateLimit(double bytesPerSecond)
                 if (!nextElement->FlagIsSet(CidElement::CID_TX)) continue;
                 if (blockOnAny)
                 {
-                    if (nextElement->GetProtoCap()->OutputNotification())
+                    if (nextElement->GetProtoCap().OutputNotification())
                     {
                         unblock = false;
                         break;
@@ -500,7 +502,7 @@ bool SmfApp::InterfaceMechanism::SetTxRateLimit(double bytesPerSecond)
                 }
                 else  // blockOnAll
                 {
-                    if (!nextElement->GetProtoCap()->OutputNotification())
+                    if (!nextElement->GetProtoCap().OutputNotification())
                     {
                         unblock = true;
                         break;
@@ -539,44 +541,57 @@ bool SmfApp::InterfaceMechanism::SetTxRateLimit(double bytesPerSecond)
     return false;
 }  // end SmfApp::InterfaceMechanism::SetTxRateLimit()
 
-bool SmfApp::InterfaceMechanism::AddCidElement(ProtoCap* protoCap, unsigned int capIndex, int flags)
+bool SmfApp::InterfaceMechanism::AddCidElement(ProtoCap& protoCap, int flags)
 {
     // Check to see if protoCap or its associated iface index already added.
-    CidElement* element;
+    CidElement* elem;
     CidElementList::Iterator ciderator(cid_list);
-    while (NULL != (element = ciderator.GetNextItem()))
+    unsigned int capIndex = protoCap.GetInterfaceIndex();
+    while (NULL != (elem = ciderator.GetNextItem()))
     {
-        if (capIndex == element->GetIndex())
+        if (capIndex == elem->GetInterfaceIndex())
         {
             // Already in list, so just update flags
             PLOG(PL_DETAIL, "SmfApp::InterfaceMechanism::AddCidElement() updating flags for existing ifaceIndex: %u\n", capIndex);
-            element->SetFlags(flags);  // TBD - update notifications as needed?
+            elem->SetFlags(flags);  // TBD - update notifications as needed?
             return true;
         }
     }
-    element = new CidElement(protoCap, capIndex, flags);
-    if (NULL == element)
+    elem = new CidElement(protoCap, flags);
+    if (NULL == elem)
     {
         PLOG(PL_ERROR, "SmfApp::InterfaceMechanism::AddCidElement() new CidElement error: %s\n", GetErrorString());
         return false;
     }
-    cid_list.Append(*element);
+    cid_list.Append(*elem);
     cid_list_length += 1;
     return true;
 }  // end SmfApp::InterfaceMechanism::AddCidElement()
 
+void SmfApp::InterfaceMechanism::RemoveCidElement(unsigned int capIndex)
+{
+    CidElementList::Iterator ciderator(cid_list);
+    CidElement* elem;
+    while (NULL != (elem = ciderator.GetNextItem()))
+    {
+        if (capIndex == elem->GetInterfaceIndex())
+        {
+            cid_list.Remove(*elem);
+            cid_list_length--;
+            delete elem; // closes ProtoCap, etc
+        }
+    }
+    PLOG(PL_WARN, "SmfApp::InterfaceMechanism::RemoveCidElement() warning: invalid interface index %u for this InterfaceMechanism!\n", capIndex);
+}  // end SmfApp::InterfaceMechanism::RemoveCidElement()
+
 void SmfApp::InterfaceMechanism::StartInputNotification()
 {
-    CidElement* element;
+    CidElement* elem;
     CidElementList::Iterator ciderator(cid_list);
-    while (NULL != (element = ciderator.GetNextItem()))
+    while (NULL != (elem = ciderator.GetNextItem()))
     {
-        if (element->FlagIsSet(CidElement::CID_RX))
-        {
-            ProtoCap* cap = element->GetProtoCap();
-            ASSERT(NULL != cap);
-            cap->StartInputNotification();  // (TBD) error check?
-        }
+        if (elem->FlagIsSet(CidElement::CID_RX))
+            elem->GetProtoCap().StartInputNotification();  // (TBD) error check?
     }
 }  // end SmfApp::InterfaceMechanism::StartInputNotification()
 
@@ -612,19 +627,24 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
 {
     bool success = false;
     unsigned int numBytes = frameLength;
-    ProtoCap* cap = (1 == cid_list_length) ? cid_list.GetHead()->GetProtoCap() : NULL;
-    if (NULL != cap)
+    if (1 == cid_list_length)
     {
         // It's a "regular" cap interface or vif bound to single cap interface
-        if ((NULL != proto_vif) && !is_shadowing)
+        CidElement* elem = cid_list.GetHead();
+        if (!elem->FlagIsSet(CidElement::CID_TX))
+        {
+            success = false;
+            numBytes = 0;  // will end up setting TX_BLOCK for this interface until a CID_TX element is available
+        }
+        else if ((NULL != proto_vif) && !is_shadowing)
         {
             // Send frame using vif MAC addr as source address for frame
-            success = cap->ForwardFrom(frame, numBytes, proto_vif->GetHardwareAddress());
+            success = elem->GetProtoCap().ForwardFrom(frame, numBytes, proto_vif->GetHardwareAddress());
         }
         else
         {
             // Forward using the "cap" MAC addr as the source addr
-            success = cap->Forward(frame, numBytes);
+            success = elem->GetProtoCap().Forward(frame, numBytes);
         }
     }
     else
@@ -643,9 +663,9 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
                 numBytes = frameLength;
                 bool mirrorSuccess;
                 if (is_shadowing)
-                    mirrorSuccess = elem->GetProtoCap()->Forward(frame, numBytes);
+                    mirrorSuccess = elem->GetProtoCap().Forward(frame, numBytes);
                 else
-                    mirrorSuccess = elem->GetProtoCap()->ForwardFrom(frame, numBytes, proto_vif->GetHardwareAddress());
+                    mirrorSuccess = elem->GetProtoCap().ForwardFrom(frame, numBytes, proto_vif->GetHardwareAddress());
                 if (0 == numBytes) mirrorSuccess = false;
                 success |= mirrorSuccess;  // 'success' will be true if _any_ interface works
                 elem = GetNextTxElement(false);
@@ -667,9 +687,9 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
             {
                 numBytes = frameLength;
                 if (is_shadowing)
-                    success = elem->GetProtoCap()->Forward(frame, numBytes);
+                    success = elem->GetProtoCap().Forward(frame, numBytes);
                 else
-                    success = elem->GetProtoCap()->ForwardFrom(frame, numBytes, proto_vif->GetHardwareAddress());
+                    success = elem->GetProtoCap().ForwardFrom(frame, numBytes, proto_vif->GetHardwareAddress());
                 if (0 == numBytes) success = false;
                 if (success) break;
                 elem = GetNextTxElement(true);
@@ -694,9 +714,14 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
         while (NULL != (elem = GetNextTxElement(false)))
         {
             // For now for both mirror and round-robin, any interface can "wake up" the vif for output
-            elem->GetProtoCap()->StartOutputNotification();
+            // Note if no elements with CID_TX, then output notification will be started when a CID
+            // is added as CID_TX or changed to CID_TX status
+            if (elem->FlagIsSet(CidElement::CID_TX))
+            {
+                elem->GetProtoCap().StartOutputNotification();
+                output_notification = true;
+            }
         }
-        output_notification = true;
         return TX_BLOCK;
     }
     else
@@ -718,7 +743,7 @@ bool SmfApp::InterfaceMechanism::OnTxTimeout(ProtoTimer& theTimer)
         theTimer.Deactivate();
         CidElement* elem = cid_list.GetHead();
         // This will result in call to SmfApp::OnPktCapture()
-        elem->GetProtoCap()->OnNotify(ProtoChannel::NOTIFY_OUTPUT);
+        elem->GetProtoCap().OnNotify(ProtoChannel::NOTIFY_OUTPUT);
         return false;
     }
     ASSERT(0.0 != GetTxRateLimit());
@@ -872,18 +897,15 @@ bool SmfApp::InterfaceMechanism::OnTxTimeout(ProtoTimer& theTimer)
 
 
 
-SmfApp::CidElement::CidElement(ProtoCap* protoCap, unsigned int capIndex, int flags)
-  : proto_cap(protoCap), cap_index(capIndex), cid_flags(flags)
+SmfApp::CidElement::CidElement(ProtoCap& protoCap, int flags)
+  : proto_cap(protoCap), cid_flags(flags)
 {
 }
 
 SmfApp::CidElement::~CidElement()
 {
-    if (NULL != proto_cap)
-    {
-        proto_cap->Close();
-        delete proto_cap;
-    }
+    proto_cap.Close();
+    delete &proto_cap;
 }
 
 SmfApp::InterfaceMatcher::InterfaceMatcher(const char* ifacePrefix, Smf::InterfaceGroup& ifaceGroup)
@@ -967,17 +989,18 @@ void SmfApp::Usage()
                     "              [push <srcIface>,<dstIfaceList>] [rpush <srcIface>,<dstIfaceList>]\n"
                     "              [merge <ifaceList>][rmerge <ifaceList>]\n"
                     "              [forward {on|off}][relay {on|off}][delayoff <value>]\n"
-                    "              [device <vifName>,<ifaceName>[,<addr>[/<maskLen>][,<addr2>[/<maskLen>] ...]]]\n"
+                    "              [device <vifName>,<ifaceName>[/{t|r}][,<addr>[/<maskLen>][,<addr2>[/<maskLen>]...]]]\n"
                     "              [rate [<iface>,]<bits/sec>][queue [<iface>,]<limit>][filterDups {on | off}]\n"
                     "              [layered <ifaceList>][reliable <ifaceList>][advertise]\n"
                     "              [unicast {<group> | <unicastPrefix> | off}][encapsulate <ifaceList>]\n"
-	                "              [dscpCapture <dscpValue>,<dscpValueList>]\n"
+                    "              [dscpCapture <dscpValue>,<dscpValueList>]\n"
                     "              [dscpRelease <dscpValue>,<dscpValueList>]\n"
-	                "              [ihash <algorithm>][hash <algorithm>]\n"
+                    "              [ihash <algorithm>][hash <algorithm>]\n"
                     "              [idpd {on | off}][window {on | off}]\n"
                     "              [instance <instanceName>][smfServer <serverName>]\n"
                     "              [resequence {on|off}][ttl <value>][boost {on|off}]\n"
-                    "              [debug <debugLevel>][log <debugLogFile>]\n\n"
+                    "              [debug <debugLevel>][log <debugLogFile>]\n"
+                    "              [cid <vifName>,<iface>[/{t|r|d}][, <iface2>[/{t|r|d}],...]\n"
                     "   (Note \"firewall\" options must be specified _before_ iface config commands!\n");
 }
 
@@ -993,7 +1016,7 @@ const char* const SmfApp::CMD_LIST[] =
     "+rpush",       // <srcIface,dstIfaceList> : reseq/forward packets from srcIFace to all dstIface's listed
     "+merge",       // <ifaceList> forward _among_ all iface's listed
     "+rmerge",      // <ifaceList> : reseq/forward _among_ all iface's listed
-    "+tunnel",       // <ifaceList> forward _among_ all iface's listed with no TTL decrement
+    "+tunnel",      // <ifaceList> forward _among_ all iface's listed with no TTL decrement
     "+cf",          // <ifaceList> : CF relay among all iface's listed
     "+smpr",        // <ifaceList> : S_MPR relay among all iface's listed
     "+ecds",        // <ifaceList> : E_CDS relay among all iface's listed
@@ -1020,8 +1043,8 @@ const char* const SmfApp::CMD_LIST[] =
     "+window",      // {on | off} do window-based I-DPD of sequenced packets
     "+resequence",  // {on | off}  : resequence outbound multicast packets
     "+ttl",         // <value> : set TTL of outbound packets
-    "+device",      // <vifName>,<ifaceName>[,<addr1>[,addr2, ...]]
-    "+cid",         // <vifName>,<iface1>[,<iface2>[,<iface3>,...]]
+    "+device",      // <vifName>,<ifaceName>[/{t|r|d}][,<addr1>[,addr2, ...]] to create virtual interface 'device' associated with one or more physical interfaces
+    "+cid",         // <vifName>,<iface1>[/{t|r|d}][,<iface2>[/{t|r|d}][,<iface3>[/{t|r|d}],...]] to add/delete elements to composite interface device
     "+rate",        // [<ifaceName>,]<bitsPerSecond> : impose forwarding/transmit rate limit
     "+queue",       // perform SMF packet queuing ...
     "+layered",     // <ifaceList> : mark interface(s) as "layered", where it has its own underlying multicast distribution mechanism
@@ -1038,7 +1061,6 @@ const char* const SmfApp::CMD_LIST[] =
     "+save",        // <configFile> : save JSON configurstion file upon exit
     NULL
 };
-
 
 SmfApp::CmdType SmfApp::GetCmdType(const char* cmd)
 {
@@ -1278,11 +1300,11 @@ void SmfApp::OnShutdown()
             ProtoRouteMgr* rtMgr = NULL;
             ProtoRouteTable rtTable;   // used to cache stolen routes from vif for restoration to cap
             // Restore address to _first_ (only one for non-composite devices) CidElement
-            CidElement* element = mech->GetPrincipalElement();
-            ProtoCap* cap = (NULL != element) ? element->GetProtoCap() : NULL;
-            if (NULL != cap)
+            CidElement* elem = mech->GetPrincipalElement();
+            if (NULL != elem)
             {
-                unsigned int capIndex = cap->GetInterfaceIndex();
+                ProtoCap& cap = elem->GetProtoCap();
+                unsigned int capIndex = cap.GetInterfaceIndex();
                 ProtoAddressList addrList;
                 ProtoNet::GetInterfaceAddressList(capIndex, ProtoAddress::IPv4, addrList);
 #ifdef HAVE_IPV6
@@ -1378,7 +1400,7 @@ void SmfApp::OnShutdown()
                     rtMgr->Close();
                     delete rtMgr;
                 }
-            }  // end if (NULL != cap)
+            }  // end if (NULL != elem)
         }  // end (NULL != vif)
         if (NULL != mech)
         {
@@ -1907,7 +1929,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             else
                 result = true;
             if (!result) break;
-            FlowDescription flowDescription(dstAddr);
+            ProtoFlow::Description flowDescription(dstAddr);
             result = mcast_controller.SetPolicy(flowDescription, true);
             if (!result) break;
         }
@@ -1931,7 +1953,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             else
                 result = true;
             if (!result) break;
-            FlowDescription flowDescription(dstAddr);
+            ProtoFlow::Description flowDescription(dstAddr);
             result = mcast_controller.SetPolicy(flowDescription, false);
             if (!result) break;
         }
@@ -2168,15 +2190,17 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     {
         // value is in form <vifName>,<ifaceName>[,shadow][,blockIGMP],[,addr1/maskLen,addr2[/maskLen],...
         // copy it so we can parse it
-        
         ProtoTokenator tk(val, ',');
-        tk.GetNextItem();
-        char* vifName = tk.DetachPreviousItem();
-        tk.GetNextItem();
-        char* ifaceName = tk.DetachPreviousItem();
+        const char* vifName = tk.GetNextItem(true); // _detaches_ tokenized 'vifName' so needs deletion later
+        if (NULL == vifName)
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(device) error: no arguments provided!\n");
+            return false;
+        }
+        const char* ifaceName = tk.GetNextItem(true); // _detaches_ tokenized 'ifaceName' so needs deletion later
         if (NULL == ifaceName)
         {
-            PLOG(PL_ERROR, "SmfApp::OnCommand(device) error: invalid argument: \"%s\"\n", val);
+            PLOG(PL_ERROR, "SmfApp::OnCommand(device) error: mission <ifaceName> argument!\n");
             delete[] vifName;
             return false;
         }
@@ -2213,32 +2237,66 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     {
         // cid <vifName>,<iface1,iface2, ...>
         ProtoTokenator tk(val, ',');
-        const char* next = tk.GetNextItem();
-        if (NULL == next)
+        const char* vifName = tk.GetNextItem(true); // _detaches_ tokenized 'vifName', so we MUST delete it later
+        if (NULL == vifName)
         {
             PLOG(PL_ERROR, "SmfApp::OnCommand(cid) error: no arguments given!\n");
             Usage();
             return false;
         }
-        char vifName[Smf::IF_NAME_MAX + 1];
-        strncpy(vifName, next, Smf::IF_NAME_MAX);
-        vifName[Smf::IF_NAME_MAX] = '\0';
-        bool first = true;
-        while (NULL != (next = tk.GetNextItem()))
+        const char* next;
+        unsigned int ifaceCount = 0;  // for error checking
+        while (NULL != (next = tk.GetNextItem())) // _detaches_ tokenized 'vifName', so we MUST delete it later
         {
-            int flags = CidElement::CID_RX;
-            if (first)
-            {   
-                flags |= CidElement::CID_TX;
-                first = false;
+            ifaceCount++;
+            ProtoTokenator tk2(next, '/');
+            const char* ifaceName = tk2.GetNextItem(true);  // _detaches_ tokenized 'ifaceName', so we MUST delete it later
+            const char* ifaceStatus = tk2.GetNextItem();
+            int cidFlags;
+            if (NULL == ifaceStatus)
+            {
+                cidFlags = CidElement::CID_TX | CidElement::CID_RX;
             }
-            if (!AddCidElement(vifName, next, flags, 0))
+            else 
+            {
+                switch(ifaceStatus[0])
+                {
+                    case 't':
+                        cidFlags = CidElement::CID_TX;
+                        break;
+                    case 'r':
+                        cidFlags = CidElement::CID_RX;
+                        break;
+                    case 'd':
+                    {
+                        // remove this interface from the Composite Interface Device (CID)
+                        if (!RemoveCidElement(vifName, ifaceName))
+                        {
+                            PLOG(PL_ERROR, "SmfApp::OnCommand(cid) error: invalid interface status: %s\n", next);
+                            delete[] ifaceName;
+                            delete[] vifName;
+                            return false;
+                        }
+                        continue;
+                    }
+                    default:
+                        PLOG(PL_ERROR, "SmfApp::OnCommand(cid) error: invalid interface deletion: %s\n", next);
+                        delete[] ifaceName;
+                        delete[] vifName;
+                        return false;
+                }
+            }
+            if (!AddCidElement(vifName, ifaceName, cidFlags, 0))
             {
                 PLOG(PL_ERROR, "SmfApp::OnCommand(cid) error: AddCidElement() failure!\n");
+                delete[] ifaceName;
+                delete[] vifName;
                 return false;
             }
-        }
-        if (first)
+            delete[] ifaceName;
+        }  // end while (NULL != (next = tk.GetNextItem()))
+        delete[] vifName;
+        if (0 == ifaceCount)
         {
             PLOG(PL_ERROR, "SmfApp::OnCommand(cid) error: no interface list provided!\n");
             Usage();
@@ -2515,7 +2573,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         if (server_pipe.IsOpen())
         {
             char buffer[256];
-            sprintf(buffer, "smfClientStart %s", control_pipe_name);
+            snprintf(buffer, 256, "smfClientStart %s", control_pipe_name);
             unsigned int numBytes = strlen(buffer)+1;
             if (!server_pipe.Send(buffer, numBytes))
             {
@@ -2566,7 +2624,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             if ('\0' != control_pipe_name[0])
             {
                 char buffer[256];
-                sprintf(buffer, "smfClientStart %s", control_pipe_name);
+                snprintf(buffer, 256, "smfClientStart %s", control_pipe_name);
                 unsigned int numBytes = strlen(buffer)+1;
                 if (!server_pipe.Send(buffer, numBytes))
                 {
@@ -2595,7 +2653,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             if ('\0' != control_pipe_name[0])
             {
                 char buffer[256];
-                sprintf(buffer, "smfClientStart %s", control_pipe_name);
+                snprintf(buffer, 256, "smfClientStart %s", control_pipe_name);
                 unsigned int numBytes = strlen(buffer)+1;
                 if (!tap_pipe.Send(buffer, numBytes))
                 {
@@ -2903,20 +2961,19 @@ bool SmfApp::SaveConfig(const char* configPath)
         {
             // The "principal" ProtoCap associated with a vif 'device' is the 
             // only one where addresses may have been
-            CidElement* element = mech->GetPrincipalElement();
-            ProtoCap* cap = (NULL != element) ? element->GetProtoCap() : NULL;
-            if (NULL != cap)
+            CidElement* elem = mech->GetPrincipalElement();
+            if (NULL != elem)
             {
-                if (0 == ProtoNet::GetInterfaceName(cap->GetInterfaceIndex(), deviceName, Smf::IF_NAME_MAX))
+                if (0 == ProtoNet::GetInterfaceName(elem->GetInterfaceIndex(), deviceName, Smf::IF_NAME_MAX))
                 {
                     PLOG(PL_ERROR, "SmfApp::SaveConfig() error: unable to get device name\n");
                     return false;
                 }
                 // Assume if pcap has no addresses, the vif device has 'stolen' addresses
                 ProtoAddressList tempList;
-                ProtoNet::GetInterfaceAddressList(cap->GetInterfaceIndex(), ProtoAddress::IPv4, tempList);
+                ProtoNet::GetInterfaceAddressList(elem->GetInterfaceIndex(), ProtoAddress::IPv4, tempList);
                 if (tempList.IsEmpty())
-                    ProtoNet::GetInterfaceAddressList(cap->GetInterfaceIndex(), ProtoAddress::IPv6, tempList);
+                    ProtoNet::GetInterfaceAddressList(elem->GetInterfaceIndex(), ProtoAddress::IPv6, tempList);
                 // Prune link-local addresses
                 ProtoAddressList::Iterator adderator(tempList);
                 ProtoAddress addr;
@@ -2926,7 +2983,7 @@ bool SmfApp::SaveConfig(const char* configPath)
                 }
                 if (!tempList.IsEmpty())
                     addrList = &iface->AccessAddressList();
-            }  // end if (NULL != cap)
+            }  // end if (NULL != elem)
         }  // end if (NULL != vif)
         if (!config.AddInterface(ifaceName, addrList, (NULL != vif) ? deviceName : NULL,
                                  iface->IsReliable(), iface->IsLayered(), 
@@ -3566,7 +3623,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
         cap->StopInputNotification();  // will be re-enabled in UpdateGroupAssociations() as needed
         cap->SetUserData(iface);
         unsigned int flags = CidElement::CID_TX | CidElement::CID_RX;
-        mech->AddCidElement(cap, ifIndex, flags);
+        mech->AddCidElement(*cap, flags);
     }  // end if (mech->GetElementList().IsEmpty())
 
 #ifdef _PROTO_DETOUR
@@ -4311,14 +4368,14 @@ void SmfApp::RemoveMatchers(const char* groupName)
 // channels. This is mainly to support experimentation but have other use cases.
 
 // A nrlsmf "device" is a virtual interface (ProtoVif "vif") bound to one or more pcap instances (ProtoCap "cap")
-unsigned int SmfApp::OpenDevice(const char* vifName, const char* ifaceName, const char* addrList, bool shadow, bool blockIGMP)
+unsigned int SmfApp::OpenDevice(const char* vifName, const char* ifaceNameAndFlags, const char* addrList, bool shadow, bool blockIGMP)
 {
     // Add ProtoVif "device", stealing ifaceName addresses if NULL addrString
-    Smf::Interface* iface = AddDevice(vifName, ifaceName, (NULL == addrList));
+    Smf::Interface* iface = AddDevice(vifName, ifaceNameAndFlags, (NULL == addrList));
     if (NULL == iface)
     {
         PLOG(PL_ERROR, "SmfApp::OpenDevice() error: unable to add device '%s'\n", vifName);
-        return false;
+        return 0;
     }
     unsigned int vifIndex = iface->GetIndex();
     
@@ -4329,6 +4386,9 @@ unsigned int SmfApp::OpenDevice(const char* vifName, const char* ifaceName, cons
     }
     
     InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
+    
+    ProtoTokenator tk(ifaceNameAndFlags, '/');  // get the isolated 'ifaceName' portion of 'ifaceNameAndFlags'
+    const char* ifaceName = tk.GetNextItem();
     
     // Save device interface IPv4 addresses for possible IPIP encapsulation use
     if (shadow)
@@ -4351,7 +4411,7 @@ unsigned int SmfApp::OpenDevice(const char* vifName, const char* ifaceName, cons
     return vifIndex;
 }  // end SmfApp::OpenDevice()
 
-Smf::Interface* SmfApp::AddDevice(const char* vifName, const char* ifaceName, bool stealAddrs)
+Smf::Interface* SmfApp::AddDevice(const char* vifName, const char* ifaceNameAndFlags, bool stealAddrs)
 {
     // 1) Create the ProtoVif device
     Smf::Interface* iface = CreateDevice(vifName);
@@ -4361,23 +4421,54 @@ Smf::Interface* SmfApp::AddDevice(const char* vifName, const char* ifaceName, bo
         return NULL;
     }
     unsigned int vifIndex = iface->GetIndex();
+    
     // 2) Add the given "ifaceName" as a CidElement for this virtual device
     //    This will be the underlying interface tethered to the vif although
     //     multiple CidElements can be tethered to a vif device
-    unsigned int flags = CidElement::CID_TX | CidElement::CID_RX;
-    unsigned int ifaceIndex = AddCidElement(vifName, ifaceName, flags, vifIndex);
+    
+    // Note "ifaceName" here can have syntax "ifaceName[/{t|r|d}]" to specify tx-only (t) or rx-only (r) operation for the given iface
+    // (This is with respect to composite interface device (cid) capaability. - the default is tx and rx operation)
+    
+    ProtoTokenator tk(ifaceNameAndFlags, '/');
+    const char* ifaceName = tk.GetNextItem(true); // detaches tokenized string item, so we MUST delete it later
+    const char* ifaceStatus = tk.GetNextItem();
+    int cidFlags;
+    if (NULL == ifaceStatus)
+    {
+        cidFlags = CidElement::CID_TX | CidElement::CID_RX;
+    }
+    else 
+    {
+        switch(ifaceStatus[0])
+        {
+            case 't':
+                cidFlags = CidElement::CID_TX;
+                break;
+            case 'r':
+                cidFlags = CidElement::CID_RX;
+                break;
+            default:
+                PLOG(PL_ERROR, "SmfApp::OpenDevice(%s) error: invalid interface status: %s\n", ifaceNameAndFlags);
+                delete[] ifaceName;
+                return NULL;
+        }
+    }
+    unsigned int ifaceIndex = AddCidElement(vifName, ifaceName, cidFlags, vifIndex);
     if (0 == ifaceIndex)
     {
         PLOG(PL_ERROR, "SmfApp::AddDevice() error: unable to add interface \"%s\" as element\n", ifaceName);
         smf.RemoveInterface(iface);
+        delete[] ifaceName;
         return NULL;
     }
     if (stealAddrs && !TransferAddresses(vifIndex, ifaceIndex))
     {
         PLOG(PL_ERROR, "SmfApp::AddDevice() error: unable to transfer addresses from interface \"%s\"\n", ifaceName);
         smf.RemoveInterface(iface);
+        delete[] ifaceName;
         return NULL;
     }
+    delete[] ifaceName;
     return iface;
 }  // end SmfApp::AddDevice()
 
@@ -4477,11 +4568,11 @@ unsigned int SmfApp::AddCidElement(const char* deviceName, const char* ifaceName
         vifIndex = ProtoNet::GetInterfaceIndex(deviceName);
     if (0 == capIndex)
     {
-        PLOG(PL_ERROR, "SmfApp::GetCidElementList() error: unable to get interface index for device \"%s\"\n", deviceName);
+        PLOG(PL_ERROR, "SmfApp::GetCidElementList() error: unable to get interface index for interface \"%s\"\n", ifaceName);
         return 0;
     }
     // Verify that this "deviceName" is an existing nrlsmf interface
-    Smf::Interface* iface = smf.GetInterface(capIndex);
+    Smf::Interface* iface = smf.GetInterface(vifIndex);
     if (NULL == iface)
     {
         PLOG(PL_ERROR, "SmfApp::AddCidElement() error: invalid nrlsmf interface \"%s\"\n", deviceName);
@@ -4510,9 +4601,26 @@ unsigned int SmfApp::AddCidElement(const char* deviceName, const char* ifaceName
     }
     cap->StopInputNotification();  // will be re-enabled in UpdateGroupAssociations() as needed
     cap->SetUserData(iface);
-    mech->AddCidElement(cap, capIndex, flags);
+    mech->AddCidElement(*cap, flags);
     return capIndex;
 }  // end SmfApp::AddCidElement()
+
+bool SmfApp::RemoveCidElement(const char* deviceName, const char* ifaceName)
+{
+    unsigned int vifIndex = ProtoNet::GetInterfaceIndex(deviceName);
+    // Verify that this "deviceName" is an existing nrlsmf interface
+    Smf::Interface* iface = smf.GetInterface(vifIndex);
+    if (NULL == iface)
+    {
+        PLOG(PL_ERROR, "SmfApp::RemoveCidElement() error: invalid nrlsmf interface \"%s\"\n", deviceName);
+        return false;
+    }    
+    // Get its interface mechanism
+    InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
+    unsigned int capIndex = ProtoNet::GetInterfaceIndex(ifaceName);
+    mech->RemoveCidElement(capIndex);
+    return true;
+}  // end SmfApp::RemoveCidElement()
 
 bool SmfApp::TransferAddresses(unsigned int vifIndex, unsigned ifaceIndex)
 {
@@ -4862,7 +4970,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 	        else if (!strncmp(cmd, "queueStats", cmdLen))
 	        {
 	    	    // Dump interface queue lengths to server_pipe
-		        sprintf(buffer, "smfQueueStats ");
+                int len = snprintf(buffer, 8192, "smfQueueStats ");
 		        Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
 		        Smf::Interface* nextIface;
 		        char ifaceName[Smf::IF_NAME_MAX+1];
@@ -4871,8 +4979,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 		        while (NULL != (nextIface = iterator.GetNextItem()))
 		        {
 	                ProtoNet::GetInterfaceName(nextIface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
-                    size_t len = strlen(buffer);
-                    sprintf(buffer+len, "%s%s,%u", firstIface ? "" : ";", ifaceName, nextIface->GetQueueLength());
+                    snprintf(buffer+len, 8192-len, "%s%s,%u", firstIface ? "" : ";", ifaceName, nextIface->GetQueueLength());
                     firstIface = false;
 		        }
                 if (server_pipe.IsOpen())
@@ -5602,7 +5709,7 @@ bool SmfApp::ForwardFrameToTap(unsigned int srcIfIndex, unsigned int dstCount, u
     // 1) Build an "smfPkt" message header to send message to "tap" process
     unsigned int msgHdrLen = 7 + 1 + 1 + dstCount;
     char* msgBuffer = frameBuffer - msgHdrLen;
-    sprintf(msgBuffer, "smfPkt ");
+    snprintf(msgBuffer, 7, "smfPkt ");
     msgBuffer[7] = (UINT8)(dstCount + 1);
     msgBuffer[8] = (UINT8)srcIfIndex;
     for (unsigned int i = 0; i < dstCount; i++)
@@ -5800,7 +5907,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
                     }
                 }
             }
-        }
+        }  // end if (srcIFace.IsEncapsulating() ...
     }
     // Check if this is an "SMF Device" interface (i.e., coupled with a vif)
     // If this "srcIface" is part of an "SMF Device" (i.e., is a "vif"), we need to write a copy up to the
@@ -6050,10 +6157,10 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
 bool SmfApp::BlockICMP(const char* ifaceName, bool enable)
 {
     // Make and install "iptables" firewall rules
-    const size_t RULE_MAX = 511;
-    char rule[RULE_MAX+1];
+    const size_t RULE_MAX = 512;
+    char rule[RULE_MAX];
     const char* action = enable ? "-A" : "-D";
-    sprintf(rule, "iptables %s INPUT -i %s -p icmp -j DROP", action, ifaceName);
+    snprintf(rule, RULE_MAX, "iptables %s INPUT -i %s -p icmp -j DROP", action, ifaceName);
     // Add redirection so we can get stderr result
     strcat(rule, " 2>&1");
     FILE* p = popen(rule, "r");

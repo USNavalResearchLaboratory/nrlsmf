@@ -61,10 +61,10 @@ MulticastFIB::Membership::Membership(unsigned int           ifaceIndex,
                                      const ProtoAddress&    src,
                                      UINT8                  trafficClass,
                                      ProtoPktIP::Protocol   protocol)
-  : FlowEntryTemplate(dst, src, trafficClass, protocol, ifaceIndex),
+  : EntryTemplate(dst, src, trafficClass, protocol, ifaceIndex),
     membership_flags(0), idle_count_threshold(DEFAULT_IDLE_COUNT_THRESHOLD),
-    idle_count(0), igmp_timeout_valid(false), elastic_timeout_valid(false),
-    default_forwarding_status(LIMIT)
+    igmp_timeout_active(false), elastic_timeout_active(false),
+    default_forwarding_status(LIMIT), downstream_relay_count(0)
 {
 }
 
@@ -72,19 +72,150 @@ MulticastFIB::Membership::~Membership()
 {
 }
 
+bool MulticastFIB::Membership::ActivateDownstreamRelay(const ProtoAddress&  srcIp, 
+                                                       const ProtoAddress&  srcMac, 
+                                                       unsigned int         refreshTick,
+                                                       unsigned int         timeoutTick)
+{
+    bool relaysChanged = false;
+    DownstreamRelay* cache = NULL;  // if we do a remove/add, this saves memory dealloc/realloc
+    DownstreamRelay* match = NULL;
+    DownstreamRelayList::Iterator iterator(downstream_relay_list);
+    DownstreamRelay* next;
+    bool seekingTimeouts = true;
+    while (NULL != (next = iterator.GetNextItem()))
+    {
+        if (next->GetIpAddr().HostIsEqual(srcIp))
+        {
+            match = next;
+        }
+        else
+        {
+            // Check to see if "next" has timed out
+            int delta = next->GetTimeoutTick() - refreshTick;
+            if ((delta < -ElasticTicker::DELTA_MAX) || (delta > ElasticTicker::DELTA_MAX))
+                PLOG(PL_WARN, "MulticastFIB::Membership::ActivateDownstreamRelay() warning: unexpected zombie DownstreamRelay! (delta:%d)\n", delta);
+            if ((delta < 0) || (delta > ElasticTicker::DELTA_MAX))
+            {
+                downstream_relay_list.Remove(*next);
+                downstream_relay_count--;
+                // Cache relay to be removed in case it can be reused
+                if (NULL == cache)
+                    cache = next;
+                else
+                    delete next;
+                relaysChanged = true;
+            }
+            else
+            {   
+                // downstream_relay_list is ordered, so more timeouts possible
+                seekingTimeouts = false;
+            }
+        }
+        if ((NULL != match) && !seekingTimeouts) break;  // no need to continue iterating through list
+    }
+    if (NULL != match)
+    {
+        match->SetTimeoutTick(timeoutTick);
+        // Move to end of downstream_relay_list
+        downstream_relay_list.Remove(*match);
+        downstream_relay_list.Append(*match);
+        if (NULL != cache) delete cache;  // don't need to use cached node
+    }
+    else
+    {
+        if (NULL != cache)
+        {
+            cache->SetAddresses(srcIp, srcMac);
+        }
+        else if (NULL == (cache = new DownstreamRelay(srcIp, srcMac)))
+        {
+            PLOG(PL_FATAL, "MulticastFIB::Membership::ActivateDownstreamRelay() new DownstreamRelay error: %s\n", GetErrorString());
+            return false;
+        }
+        cache->SetTimeoutTick(timeoutTick);
+        downstream_relay_list.Append(*cache);
+        downstream_relay_count++;
+        relaysChanged = true;
+    }
+    return relaysChanged;
+};  // end MulticastFIB::Membership::ActivateDownstreamRelay()
+
+bool MulticastFIB::Membership::DeactivateDownstreamRelay(unsigned int currentTick)
+{
+    // This is called upon elastic timeouts for a membership to deactivate any timed-out relays
+    // There _should_ be at least one DownstreamRelay that has timed out
+    // (at the head of the list). (returns true if downstream relay set changed)
+    bool relaysChanged = false;
+    DownstreamRelayList::Iterator iterator(downstream_relay_list);
+    DownstreamRelay* next;
+    while (NULL != (next = iterator.GetNextItem()))
+    {
+        // Check to see if currentTick > relay timeout tick
+        int delta = next->GetTimeoutTick() - currentTick;
+        if ((delta < -ElasticTicker::DELTA_MAX) || (delta > ElasticTicker::DELTA_MAX))
+            PLOG(PL_WARN, "MulticastFIB::Membership::DeactivateDownstreamRelay() warning: unexpected zombie DownstreamRelay! (delta:%d)\n", delta);
+        if ((delta < 0) || (delta > ElasticTicker::DELTA_MAX))
+        {
+            downstream_relay_list.Remove(*next);
+            downstream_relay_count--;
+            delete next;  // TBD - maintain a pool instead of alloc/dealloc
+            relaysChanged = true;
+        }
+        else
+        {   
+            // downstream_relay_list is ordered, so more timeouts possible
+            break;
+        }
+    }
+    return relaysChanged;  // nominally this should always be true
+
+}  // end MulticastFIB::Membership::DeactivateDownstreamRelay()
+
+bool MulticastFIB::Membership::UpdateDownstreamRelays(unsigned int pktCount)
+{
+    bool relaysChanged = false;
+    DownstreamRelayList::Iterator iterator(downstream_relay_list);
+    DownstreamRelay* next;
+    while (NULL != (next = iterator.GetNextItem()))
+    {
+        if (next->IncrementIdleCount() >= idle_count_threshold)
+        {
+            downstream_relay_list.Remove(*next);
+            downstream_relay_count--;
+            delete next;
+            relaysChanged = true;
+        }
+    }
+    return relaysChanged;
+}  // end MulticastFIB::Membership::UpdateDownstreamRelays()
+
+void MulticastFIB::Membership::PrintDownstreamRelayList(FILE* filePtr) // to ProtoDebug by default
+{
+    if (NULL == filePtr) filePtr = GetDebugLog();
+    DownstreamRelayList::Iterator iterator(downstream_relay_list);
+    DownstreamRelay* relay = iterator.GetNextItem();
+    // Print first item without comma and remainder with leading comma delimiter
+    if (NULL != relay) fprintf(filePtr, "%s", relay->GetIpAddr().GetHostString());
+    while (NULL != (relay = iterator.GetNextItem()))
+    {
+        fprintf(filePtr, ",%s", relay->GetIpAddr().GetHostString());
+    }
+}  // end MulticastFIB::Membership::PrintDownstreamRelayList()
+
 
 MulticastFIB::FlowPolicy::FlowPolicy(const ProtoAddress&  dst,
                                      const ProtoAddress&  src,
                                      UINT8                trafficClass,
                                      ProtoPktIP::Protocol protocol)
-  : FlowEntryTemplate(dst, src, trafficClass, protocol),
+  : EntryTemplate(dst, src, trafficClass, protocol),
     bucket_rate(1.0), bucket_depth(10), 
     forwarding_status(LIMIT), acking_status(false)
 {
 }
 
-MulticastFIB::FlowPolicy::FlowPolicy(const FlowDescription& description, int flags)
-  : FlowEntryTemplate(description, flags), bucket_rate(1.0), bucket_depth(10), 
+MulticastFIB::FlowPolicy::FlowPolicy(const ProtoFlow::Description& description, int flags)
+  : EntryTemplate(description, flags), bucket_rate(1.0), bucket_depth(10), 
     forwarding_status(LIMIT), acking_status(false)
 {
 }
@@ -306,7 +437,7 @@ bool MulticastFIB::MembershipTable::IsMember(const ProtoAddress&   dst,
 {
 
     if (!dst.IsValid()) return false;
-    FlowDescription flowDescription(dst, src);
+    ProtoFlow::Description flowDescription(dst, src);
     if (!src.IsValid() && !wildcardSource)
     {
         // Find dst-only membership entry
@@ -321,7 +452,7 @@ bool MulticastFIB::MembershipTable::IsMember(const ProtoAddress&   dst,
 }  // end MulticastFIB::MembershipTable::IsMember()
 
 // Activate or update membership to timeout at given "tick"
-bool MulticastFIB::MembershipTable::ActivateMembership(Membership& membership, Membership::Flag flag, unsigned int tick)
+bool MulticastFIB::MembershipTable::ActivateMembership(Membership& membership, Membership::Flag flag, unsigned int timeoutTick)
 {
     if (Membership::STATIC == flag)
     {
@@ -330,22 +461,23 @@ bool MulticastFIB::MembershipTable::ActivateMembership(Membership& membership, M
     }
     bool insert = false;
     // If membership already in ring, determine if update affects ring position
-    if (membership.elastic_timeout_valid || membership.igmp_timeout_valid)
+    if (membership.elastic_timeout_active || membership.igmp_timeout_active)
     {
         if (flag == membership.timeout_flag)
         {
-            insert = true;  // remove/ re-insert this membership to new position
+            // This is a change to currrent scheduled timeout
+            insert = true;  // remove and reinsert this membership to new position
         }
         else
         {
-            unsigned int currentTick =
-                (Membership::ELASTIC == membership.timeout_flag) ?
-                    membership.elastic_timeout_tick : membership.igmp_timeout_tick;
-            int delta = tick - currentTick;
+            // Determine if this new, different timeout precedes the membership's current scheduled timeout
+            unsigned int currentTimeoutTick = (Membership::ELASTIC == membership.timeout_flag) ?
+                                                 membership.elastic_timeout_tick : membership.igmp_timeout_tick;
+            int delta = timeoutTick - currentTimeoutTick;
             ASSERT(abs(delta) <= TICK_AGE_MAX);
-            if (delta < 0) 
+            if (delta < 0)   // this new timeoutTick precedes the current active timeoutTick for this membership
                 insert = true;
-            // else no change in position
+            // else no change in position since current schedule timeout is still next
         }
         if (insert)
         {
@@ -373,19 +505,19 @@ bool MulticastFIB::MembershipTable::ActivateMembership(Membership& membership, M
     
     if (Membership::ELASTIC == flag)
     {
-        membership.elastic_timeout_tick = tick;
-        membership.elastic_timeout_valid = true;
+        membership.elastic_timeout_tick = timeoutTick;
+        membership.elastic_timeout_active = true;
     }
     else  // if (Membership::MANAGED == flag)
     {
-        membership.igmp_timeout_tick = tick;
-        membership.igmp_timeout_valid = true;
+        membership.igmp_timeout_tick = timeoutTick;
+        membership.igmp_timeout_active = true;
     }
     if (insert)
     {
         membership.timeout_flag = flag;
         // This assertion checks that we are inserting a compatible timeout
-        ASSERT((NULL == ring_leader) || (abs((int)(ring_leader->GetTimeout() - membership.GetTimeout())) <= TICK_AGE_MAX));
+        ASSERT((NULL == ring_leader) || (abs((int)(ring_leader->GetTimeoutTick() - membership.GetTimeoutTick())) <= TICK_AGE_MAX));
         if (!membership_ring.Insert(membership))
         {
             PLOG(PL_ERROR, "MulticastFIB::MembershipTable::ActivateMembership() error: unable to insert timeout!\n");
@@ -397,7 +529,7 @@ bool MulticastFIB::MembershipTable::ActivateMembership(Membership& membership, M
         }
         else
         {
-            int delta = tick - ring_leader->GetTimeout(); 
+            int delta = timeoutTick - ring_leader->GetTimeoutTick(); 
             // Note that ProtoSortedTree inserts ties prior to any existing
             // matching entry, thus the "delta <= 0" condition
             if (delta <= 0) ring_leader = &membership;
@@ -410,8 +542,8 @@ bool MulticastFIB::MembershipTable::ActivateMembership(Membership& membership, M
 void MulticastFIB::MembershipTable::DeactivateMembership(Membership& membership, Membership::Flag flag)
 {
     if ((Membership::STATIC != flag) &&
-        (membership.elastic_timeout_valid ||
-         membership.igmp_timeout_valid))
+        (membership.elastic_timeout_active ||
+         membership.igmp_timeout_active))
     {
         if (flag == membership.timeout_flag)
         {
@@ -431,19 +563,19 @@ void MulticastFIB::MembershipTable::DeactivateMembership(Membership& membership,
             }
             if (Membership::ELASTIC == flag)
             {
-                membership.elastic_timeout_valid = false;
-                if (membership.igmp_timeout_valid)
+                membership.elastic_timeout_active = false;
+                if (membership.igmp_timeout_active)
                 {
-                    membership.igmp_timeout_valid = false;
+                    membership.igmp_timeout_active = false;
                     ActivateMembership(membership, Membership::MANAGED, membership.igmp_timeout_tick);
                 }
             }
             else // if (Membership::MANAGED == flag)
             {
-                membership.igmp_timeout_valid = false;
-                if (membership.elastic_timeout_valid)
+                membership.igmp_timeout_active = false;
+                if (membership.elastic_timeout_active)
                 {
-                    membership.elastic_timeout_valid = false;
+                    membership.elastic_timeout_active = false;
                     ActivateMembership(membership, Membership::ELASTIC, membership.elastic_timeout_tick);
                 }
             }
@@ -451,9 +583,9 @@ void MulticastFIB::MembershipTable::DeactivateMembership(Membership& membership,
         else
         {
             if (Membership::ELASTIC == flag)
-                membership.elastic_timeout_valid = false;
+                membership.elastic_timeout_active = false;
             else // if (Membership::MANAGED == flag)
-                membership.igmp_timeout_valid = false;
+                membership.igmp_timeout_active = false;
         }
     }
     membership.ClearFlag(flag);
@@ -586,7 +718,7 @@ unsigned int MulticastFIB::ActivityStatus::Age(unsigned int currentTick)
 
 
 MulticastFIB::UpstreamHistory::UpstreamHistory(const ProtoAddress& addr)
- : src_addr(addr), seq_prev(0), idle_count(0), good_count(0), loss_estimate(0.0)
+ : src_addr(addr), seq_prev(0), good_count(0), loss_estimate(0.0)
    //,active_flow_count(0)
 {
 }
@@ -857,8 +989,8 @@ MulticastFIB::RL_Data::RL_Data()
     learning_rate = DEFAULT_LEARNING_RATE;
 }
 
-MulticastFIB::RL_Data::RL_Data(const FlowDescription& flow, double learningRate)
-: FlowEntryTemplate(flow)
+MulticastFIB::RL_Data::RL_Data(const ProtoFlow::Description& flow, double learningRate)
+: EntryTemplate(flow)
 {
     learning_rate = learningRate;
 }
@@ -1047,7 +1179,7 @@ double MulticastFIB::RL_Data::processSentPacket(ProtoAddress addr, UINT16 seqNo,
 //
 //}
 
-MulticastFIB::RL_Data * MulticastFIB::RL_Table::addFlow(const FlowDescription& flow)
+MulticastFIB::RL_Data * MulticastFIB::RL_Table::addFlow(const ProtoFlow::Description& flow)
 {
 
     MulticastFIB::RL_Data * data_ptr = FindEntry(flow);
@@ -1136,7 +1268,7 @@ MulticastFIB::Entry::Entry(const ProtoAddress&  dst,
                            const ProtoAddress&  src,        // invalid src addr means dst only
                            UINT8                trafficClass,
                            ProtoPktIP::Protocol protocol)
-  : FlowEntryTemplate(dst, src, trafficClass, protocol),
+  : EntryTemplate(dst, src, trafficClass, protocol),
     flow_managed(false), flow_active(false), flow_idle(false),
     default_forwarding_status(LIMIT), forwarding_count(0), 
     best_relay(NULL), unicast_probability(0.0),
@@ -1147,9 +1279,9 @@ MulticastFIB::Entry::Entry(const ProtoAddress&  dst,
 {
 }
 
-MulticastFIB::Entry::Entry(const FlowDescription& flowDescription, int flags)
+MulticastFIB::Entry::Entry(const ProtoFlow::Description& flowDescription, int flags)
 
- : FlowEntryTemplate(flowDescription, flags), 
+ : EntryTemplate(flowDescription, flags), 
    flow_managed(false), flow_active(false), flow_idle(false),
    default_forwarding_status(LIMIT), forwarding_count(0),
    //downstream_relay(), 
@@ -1610,7 +1742,7 @@ bool MulticastFIB::ParseFlowList(ProtoPktIP& pkt, Entry*& fibEntry, unsigned int
     if (NULL == fibEntry)
     {
         // Generate flow description from the packet.  This will include source, which we may want to remove.  TODO: check this
-        FlowDescription flowDescription;
+        ProtoFlow::Description flowDescription;
         flowDescription.InitFromPkt(pkt);
         flowDescription.SetSrcMaskLength(0);
 
@@ -1804,12 +1936,12 @@ ElasticMulticastForwarder::~ElasticMulticastForwarder()
     // mcast_fib.Destroy(); TBD - implement something to destroy mcast_fib.entry_table
 }
 
-bool ElasticMulticastForwarder::SetAckingStatus(const FlowDescription& flowDescription,
-                                                bool                   ackingStatus)
+bool ElasticMulticastForwarder::SetAckingStatus(const ProtoFlow::Description& flowDescription,
+                                                bool                          ackingStatus)
 {
     // Sets acking status for all matching entries for the given "flowDescription"
     MulticastFIB::EntryTable& flowTable = mcast_fib.AccessFlowTable();
-    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, FlowDescription::FLAG_ALL, false);  // non bimatch iterator
+    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, ProtoFlow::Description::FLAG_ALL, false);  // non bimatch iterator
     MulticastFIB::Entry* entry = iterator.GetNextEntry();
     //bool exactMatch = false;
     if (NULL != entry)
@@ -1861,7 +1993,7 @@ bool ElasticMulticastForwarder::SetAckingStatus(const FlowDescription& flowDescr
 }  // end ElasticMulticastForwarder::SetAckingStatus()
 
 
-bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&          flowDescription,
+bool ElasticMulticastForwarder::SetForwardingStatus(const ProtoFlow::Description&   flowDescription,
                                                     unsigned int                    ifaceIndex,
                                                     MulticastFIB::ForwardingStatus  forwardingStatus,
                                                     bool                            ackingStatus,
@@ -1873,7 +2005,7 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const FlowDescription&      
 
     // Sets forwarding status for all matching (sub-matching, non-bimatch) entries.
     MulticastFIB::EntryTable& flowTable = mcast_fib.AccessFlowTable();
-    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, FlowDescription::FLAG_ALL, false);  // non bimatch iterator
+    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, ProtoFlow::Description::FLAG_ALL, false);  // non bimatch iterator
     MulticastFIB::Entry* entry = iterator.GetNextEntry();
     bool exactMatch = false;
     if (NULL != entry)
@@ -1974,13 +2106,13 @@ ElasticMulticastController::~ElasticMulticastController()
 }
 
 // Simple allow/deny policy for now
-bool ElasticMulticastController::SetPolicy(const FlowDescription& flowDescription, bool allow)
+bool ElasticMulticastController::SetPolicy(const ProtoFlow::Description& flowDescription, bool allow)
 {
     
     // Set a full wildcard policy as default if not already set.  This sets the opposite policy
     // for any flows that don't match allowed (or denied) flows ...
     // TBD - perhaps only set wildcard when explicitly configured???
-    FlowDescription wildcardDescription;
+    ProtoFlow::Description wildcardDescription;
     MulticastFIB::FlowPolicy* wildcard = policy_table.FindEntry(wildcardDescription);
     if (NULL == wildcard)
     {
@@ -2055,7 +2187,7 @@ void ElasticMulticastController::RemoveManagedMembership(unsigned int ifaceIndex
 {
     bool match = false;
     bool ackingStatus = false;
-    FlowDescription flowDescription(groupAddr, PROTO_ADDR_NONE, 0x03, ProtoPktIP::RESERVED);
+    ProtoFlow::Description flowDescription(groupAddr, PROTO_ADDR_NONE, 0x03, ProtoPktIP::RESERVED);
     MulticastFIB::MembershipTable::Iterator iterator(membership_table, &flowDescription);
     MulticastFIB::Membership* membership;
     while (NULL != (membership = iterator.GetNextEntry()))
@@ -2181,7 +2313,8 @@ void ElasticMulticastController::HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAd
 // The external input mechanism passes these in
 void ElasticMulticastController::HandleAck(const ElasticAck& ack, 
                                            unsigned int ifaceIndex, 
-                                           const ProtoAddress& srcAddr)
+                                           const ProtoAddress& ackSrcIp,
+                                           const ProtoAddress& ackSrcMac)  // ackSrcIp/ackSrcMac is source of EM_ACK
 {
     // TBD - confirm that it's for me
     ProtoAddress dstIp, srcIp;
@@ -2189,13 +2322,13 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
     ack.GetSrcAddr(srcIp);
     UINT8 trafficClass = ack.GetTrafficClass();
     ProtoPktIP::Protocol protocol = ack.GetProtocol();
-    FlowDescription membershipDescription(dstIp, srcIp, trafficClass, protocol, ifaceIndex);
+    ProtoFlow::Description membershipDescription(dstIp, srcIp, trafficClass, protocol, ifaceIndex);
 
     if (GetDebugLevel() >= PL_DETAIL)
     {
         PLOG(PL_DETAIL, "nrlsmf: recv'd EM_ACK for flow ");
         membershipDescription.Print();
-        PLOG(PL_ALWAYS, " from %s\n", srcAddr.GetHostString());
+        PLOG(PL_ALWAYS, " from %s\n", ackSrcIp.GetHostString());
     }
 
     // Find membership ...
@@ -2226,7 +2359,20 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
         membershipDescription.Print();
         PLOG(PL_ALWAYS, "\n");
     }
-    if (!ActivateMembership(*membership, MulticastFIB::Membership::ELASTIC, MulticastFIB::DEFAULT_ACK_TIMEOUT))
+    // TBD - use (per interface) configured ACK timout instead of hard-coded default
+    // Note if first activated membership the ticker is reset to zero
+    unsigned int currentTick = membership_timer.IsActive() ? UpdateTicker() : ResetTicker();
+    
+    // Important to update the downstream_relay_list _first_ so "ActivateMemberhip" sets the proper timeout
+    // (TBD - perhaps the two steps here should be consolidated for more straightforward code?)
+    unsigned int timeoutTick = currentTick + (unsigned int)(MulticastFIB::DEFAULT_ACK_TIMEOUT*TICK_RATE);
+    if (membership->ActivateDownstreamRelay(ackSrcIp, ackSrcMac, currentTick, timeoutTick))
+    {
+        OnDownstreamRelayChange(*membership, false);  // change due to arriving EM_ACK or other relay timeouts
+    }
+    
+    timeoutTick = membership->GetNextElasticTimeoutTick();  // returns refresh tick of least fresh DownstreamRelay (first to timeout)
+    if (!ActivateMembership(*membership, MulticastFIB::Membership::ELASTIC, currentTick, timeoutTick))
     {
         PLOG(PL_ERROR, "ElasticMulticastController::HandleAck() error: unable to activate elastic membership\n");
         if (0 == membership->GetFlags())
@@ -2236,10 +2382,12 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
         }
         return;
     }
-    membership->ResetIdleCount();  // reset packet-count based "timeout"
+    
+    membership->ResetIdleCount();  // reset packet-count based "timeout"    
+    
     if (updateForwarder)
     {
-        FlowDescription flowDescription(dstIp, srcIp, trafficClass, protocol);
+        ProtoFlow::Description flowDescription(dstIp, srcIp, trafficClass, protocol);
         mcast_forwarder->SetForwardingStatus(flowDescription, ifaceIndex, MulticastFIB::FORWARD, true, false);
     }
 
@@ -2247,36 +2395,39 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
 
 bool ElasticMulticastController::ActivateMembership(MulticastFIB::Membership&       membership,
                                                     MulticastFIB::Membership::Flag  flag,
-                                                    double                          timeoutSec)
+                                                    unsigned int                    currentTick,
+                                                    unsigned int                    timeoutTick)
 {
     if (membership_timer.IsActive())
     {
-        unsigned int oldTick = membership_table.GetNextTimeout();
-        unsigned int currentTick = UpdateTicker();
-        unsigned int timeoutTick = (unsigned int)(timeoutSec*TICK_RATE) + currentTick;
+        // Membership is already active, so just refresh it
+        unsigned int oldTick = membership_table.GetNextTimeoutTick();
         if (!membership_table.ActivateMembership(membership, flag, timeoutTick))
         {
             PLOG(PL_ERROR, "ElasticMulticastController::ActivateMembership() error: unable to activate membership\n");
             return false;
         }
-        unsigned int newTick = membership_table.GetNextTimeout();
+        unsigned int newTick = membership_table.GetNextTimeoutTick();
         if (newTick != oldTick)
         {
-            int delta = newTick - currentTick;
-            if (delta < 0) delta = 0;
-            membership_timer.SetInterval(((double)delta) * TICK_INTERVAL);
+            double interval = membership_timer.GetTimeRemaining();
+            int delta = newTick - oldTick;
+            interval += TICK_INTERVAL * (double)delta;
+            if (interval < 0.0) interval = 0.0;
+            membership_timer.SetInterval(interval);
             membership_timer.Reschedule();
         }
     }
     else
     {
-        ResetTicker();
-        unsigned int timeoutTick = (unsigned int)(timeoutSec*TICK_RATE);
+        // This only happens with "refreshTick" is the "currentTick" so the "timeoutSec" is appropriate interval
         if (!membership_table.ActivateMembership(membership, flag, timeoutTick))
         {
             PLOG(PL_ERROR, "ElasticMulticastController::ActivateMembership() error: unable to activate membership\n");
             return false;
         }
+        double timeoutSec = TICK_INTERVAL * (double)(timeoutTick - currentTick);
+        membership_timer.SetInterval(timeoutSec);
         timer_mgr.ActivateTimer(membership_timer);
     }
     return true;
@@ -2287,17 +2438,18 @@ void ElasticMulticastController::DeactivateMembership(MulticastFIB::Membership& 
 {
     if (membership_timer.IsActive())
     {
-        unsigned int oldTick = membership_table.GetNextTimeout();
+        unsigned int oldTick = membership_table.GetNextTimeoutTick();
         membership_table.DeactivateMembership(membership, flag);
         if (membership_table.IsActive())
         {
-            unsigned int newTick = membership_table.GetNextTimeout();
+            unsigned int newTick = membership_table.GetNextTimeoutTick();
             if (newTick != oldTick)
             {
-                unsigned int currentTick = UpdateTicker();
-                int delta = newTick - currentTick;
-                if (delta < 0) delta = 0.0;
-                membership_timer.SetInterval(((double)delta) * TICK_INTERVAL);
+                double interval = membership_timer.GetTimeRemaining();
+                int delta = newTick - oldTick;
+                interval += TICK_INTERVAL * (double)delta;
+                if (interval < 0.0) interval = 0.0;
+                membership_timer.SetInterval(interval);
                 membership_timer.Reschedule();
             }
         }
@@ -2308,13 +2460,24 @@ void ElasticMulticastController::DeactivateMembership(MulticastFIB::Membership& 
     }
 }  // end ElasticMulticastController::DeactivateMembership()
 
+
+void ElasticMulticastController::OnDownstreamRelayChange(MulticastFIB::Membership& membership, bool idle)
+{
+    // Note if "idle" is true, then the relay set changed due idle_count (no ACKs for threshold pkt count)
+    PLOG(PL_INFO, "ElasticMulticastController::OnDownstreamRelayChange(%s) memberhip>", idle ? "idle" : "");
+    membership.GetFlowDescription().Print();
+    PLOG(PL_ALWAYS, " nextHops>");
+    membership.PrintDownstreamRelayList();
+    PLOG(PL_ALWAYS, "\n");
+}  // end ElasticMulticastController::OnDownstreamRelayChange()
+
 bool ElasticMulticastController::OnMembershipTimeout(ProtoTimer& theTimer)
 {
     unsigned int currentTick = time_ticker.Update();
     MulticastFIB::Membership* leader;
     while (NULL != (leader = membership_table.GetRingLeader()))
     {
-        unsigned int nextTimeout = leader->GetTimeout();
+        unsigned int nextTimeout = leader->GetTimeoutTick();
         int delta = nextTimeout - currentTick;
         if (delta <= 0)
         {
@@ -2326,6 +2489,24 @@ bool ElasticMulticastController::OnMembershipTimeout(ProtoTimer& theTimer)
                         (MulticastFIB::Membership::ELASTIC == timeoutFlag) ? "ELASTIC" : "IGMP");
                 leader->GetFlowDescription().Print();
                 PLOG(PL_ALWAYS, "\n");
+            }
+            if (MulticastFIB::Membership::ELASTIC == timeoutFlag)
+            {
+                // At least one of DownstreamRelays for this interface-specific Membership has timed out
+                if (!leader->DeactivateDownstreamRelay(currentTick))
+                {
+                    OnDownstreamRelayChange(*leader, false);  // relay set changed due timeout
+                }
+                // Need to check if this was actually the only remaining DownstreamRelay to confirm
+                // that the memberhip should be deactivated versus just updating it.
+                if (0 != leader->GetDownstreamRelayCount())
+                {
+                    // This membership is still active due to remaining DownstreamRelay(s),
+                    // So keep it active by calling ActivateMembership() which will reschedule the membership_timer as needed
+                    unsigned int timeoutTick = leader->GetNextElasticTimeoutTick();  // returns refresh tick of least fresh DownstreamRelay (first to timeout)
+                    ActivateMembership(*leader, MulticastFIB::Membership::ELASTIC, currentTick, timeoutTick);
+                    return true;
+                }
             }
             DeactivateMembership(*leader, timeoutFlag);
             if (0 == leader->GetFlags())
@@ -2379,14 +2560,17 @@ bool ElasticMulticastController::OnMembershipTimeout(ProtoTimer& theTimer)
     // and timer was deactivated in call to DeactivateMembership() above
     //theTimer.Deactivate();
     return false;
-}  // end MulticastFIB::OnMembershipTimeout()
+}  // end ElasticMulticastController::OnMembershipTimeout()
 
-void ElasticMulticastController::Update(const FlowDescription&  flowDescription,
-                                        unsigned int            ifaceIndex,  // inbound interface index (unused)
-                                        const ProtoAddress&     relayAddr,   // upstream relay addr
-                                        unsigned int            pktCount,
-                                        unsigned int            pktInterval,
-                                        bool                    oldAckingStatus)
+// This is called when the data/forwarding plane issues an update for a flow to the controller
+// "pktCount" is how many packets for the given flow have been received from given relay since the last update
+// "pktInterval" indicates number of ticks since last update (not currently used)
+void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescription,
+                                        unsigned int                   ifaceIndex,  // inbound interface index (unused) 
+                                        const ProtoAddress&            relayAddr,   // upstream relay addr              
+                                        unsigned int                   pktCount,                                        
+                                        unsigned int                   pktInterval,                                     
+                                        bool                           oldAckingStatus)                                 
 {
     if (GetDebugLevel() >= PL_DEBUG)
     {
@@ -2426,6 +2610,7 @@ void ElasticMulticastController::Update(const FlowDescription&  flowDescription,
                                                      membership->GetInterfaceIndex(), 
                                                      membership->GetDefaultForwardingStatus(), 
                                                      oldAckingStatus, false);
+                OnDownstreamRelayChange(*membership, true);  // due to unacknowledge pkt count execeeding idle_threshold
                 if (0 == membership->GetFlags())
                 {
                     if (GetDebugLevel() >= PL_DEBUG)
@@ -2444,6 +2629,12 @@ void ElasticMulticastController::Update(const FlowDescription&  flowDescription,
             }
             else
             {
+                // Since the membership is still active, prune any idle downstream relays
+                if (membership->UpdateDownstreamRelays(pktCount))
+                {
+                    OnDownstreamRelayChange(*membership, true);  // due to unacknowledge pkt count execeeding idle_threshold
+                }
+                ASSERT(0 != membership->GetDownstreamRelayCount());
                 ackingStatus = true;
             }
         }

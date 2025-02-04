@@ -135,6 +135,10 @@ class ElasticMsg : public ProtoPkt
 
 // NOTE upstream address list items are 4-byte aligned so padding may be required (e.g., ADDR_ETH)
 
+// TBD - to support non-reciprocoal (asym) elastic multicast operation, the EM_ACK _may_ need
+//       to be extended to carry the MAC address of the ACKer?  (perhaps only for unicast since
+//       ARP doesn't work over non-repricocal links.
+
 
 class ElasticAck : public ElasticMsg
 {

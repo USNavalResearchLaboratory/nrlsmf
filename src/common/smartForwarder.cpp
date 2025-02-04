@@ -28,8 +28,8 @@ SmartForwarder::~SmartForwarder()
 //    pkt.appendNodeToPath(addr);
 //}
 
-bool SmartForwarder::SetAckingStatus(const FlowDescription& flowDescription,
-                                                bool                   ackingStatus)
+bool SmartForwarder::SetAckingStatus(const ProtoFlow::Description&  flowDescription,
+                                     bool                           ackingStatus)
 {
     // IMPORTANT NOTE:  "Managed" entries are only made when "ackingStatus == true:
     // (TBD - add an extra parameter to mark entries as "managed".  I.e., will only
@@ -115,7 +115,7 @@ bool SmartForwarder::SetAckingStatus(const FlowDescription& flowDescription,
 }  // end SmartForwarder::SetAckingStatus()
 
 // This is called by the controller to update the flow table with the unicast routing information.
-bool SmartForwarder::UpdateRoutingTable(const FlowDescription& flowDescription, MulticastFIB::UpstreamRelay nextHop, double broadcastProbability)
+bool SmartForwarder::UpdateRoutingTable(const ProtoFlow::Description& flowDescription, MulticastFIB::UpstreamRelay nextHop, double broadcastProbability)
 {
     // Get the entry to the flow table correpsonding to the flow being updated.
     MulticastFIB::Entry * entry = mcast_fib.AccessFlowTable().FindBestMatch(flowDescription);
@@ -126,7 +126,7 @@ bool SmartForwarder::UpdateRoutingTable(const FlowDescription& flowDescription, 
     return true;
 }
 
-MulticastFIB::UpstreamRelay* SmartForwarder::getNextHop(const FlowDescription& flowDescription)
+MulticastFIB::UpstreamRelay* SmartForwarder::getNextHop(const ProtoFlow::Description& flowDescription)
 {
      MulticastFIB::Entry * entry = mcast_fib.AccessFlowTable().FindBestMatch(flowDescription);
     // Update the downstream relay
@@ -134,7 +134,7 @@ MulticastFIB::UpstreamRelay* SmartForwarder::getNextHop(const FlowDescription& f
 
 }
 
-double SmartForwarder::getBroadcastProbability(const FlowDescription& flowDescription)
+double SmartForwarder::getBroadcastProbability(const ProtoFlow::Description& flowDescription)
 {
     MulticastFIB::Entry * entry = mcast_fib.AccessFlowTable().FindBestMatch(flowDescription);
 
@@ -144,10 +144,10 @@ double SmartForwarder::getBroadcastProbability(const FlowDescription& flowDescri
 
 // This is old EM code.
 
-bool SmartForwarder::SetForwardingStatus(const FlowDescription&          flowDescription,
-                                                    unsigned int                    ifaceIndex,
-                                                    MulticastFIB::ForwardingStatus  forwardingStatus,
-                                                    bool                            ackingStatus)
+bool SmartForwarder::SetForwardingStatus(const ProtoFlow::Description&   flowDescription,
+                                         unsigned int                    ifaceIndex,
+                                         MulticastFIB::ForwardingStatus  forwardingStatus,
+                                         bool                            ackingStatus)
 {
     // IMPORTANT NOTE:  "Managed" entries are only made when "ackingStatus == true:
     // (TBD - add an extra parameter to mark entries as "managed".  I.e., will only

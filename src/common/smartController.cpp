@@ -112,7 +112,7 @@ void SmartController::HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAddress& srcI
                         // acking or not
                         bool match = false;
                         bool ackingStatus = false;
-                        FlowDescription flowDescription(groupAddr, PROTO_ADDR_NONE, 0x03, ProtoPktIP::RESERVED);
+                        ProtoFlow::Description flowDescription(groupAddr, PROTO_ADDR_NONE, 0x03, ProtoPktIP::RESERVED);
                         MulticastFIB::MembershipTable::Iterator iterator(membership_table, &flowDescription);
                         MulticastFIB::Membership* membership;
                         while (NULL != (membership = iterator.GetNextEntry()))
@@ -181,11 +181,11 @@ void SmartController::HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAddress& srcI
         }
     }
 }  // end SmartController::HandleIGMP()
-bool SmartController::AddFlow(const FlowDescription& flowDescription)
+bool SmartController::AddFlow(const ProtoFlow::Description& flowDescription)
 {
  /*   struct FlowSort
     {
-        bool operator() (const FlowDescription& left, const FlowDescription& right)
+        bool operator() (const ProtoFlow::Description& left, const ProtoFlow::Description& right)
         {
             return left.GetTrafficClass() < right.GetTrafficClass();
         }
@@ -194,7 +194,7 @@ bool SmartController::AddFlow(const FlowDescription& flowDescription)
     flowDescription.Print();
     TRACE("\n");
     // Binary Search.
-    std::vector<FlowDescription>::iterator it = std::lower_bound(sortedFlowTable.begin(),sortedFlowTable.end(), flowDescription, FlowSort());
+    std::vector<ProtoFlow::Description>::iterator it = std::lower_bound(sortedFlowTable.begin(),sortedFlowTable.end(), flowDescription, FlowSort());
     PLOG(PL_DEBUG, "Iterator returned position %d\n", it-sortedFlowTable.begin());
     PLOG(PL_DEBUG, "middle trouble\n");
     sortedFlowTable.insert(it,flowDescription);
@@ -290,19 +290,19 @@ unsigned int SmartController::BuildPathAd(UINT32*           buffer,
 
 
 // Builds Acks
-unsigned int SmartController::BuildAck(UINT32*                buffer,
-                                    unsigned int           length,
-                                     ProtoAddress&    dstMac,      // who is receiving MAC (single hop) TODO: this needs to be changed for asymmetric
-                                    const ProtoAddress&    srcMac,      // who is sending ACK
-                                    const ProtoAddress&    dstIp,       // who is receiving ACK (multihop)
-                                    const ProtoAddress&    srcIp,       // who is sending ACK (multihop)
-                                    const ProtoAddress&    ackLinkSrc,      // who sent the original packet
-                                    const ProtoAddress&    ackLinkDst,      // who received the original packet
-                                    const FlowDescription& flowDescription,
-                                    const UINT16          seqNo,
-                                    const UINT32         fragOffset,
-                                    const bool             atDestination,
-                                    const bool              broadcastedPacket)
+unsigned int SmartController::BuildAck(UINT32*                          buffer,
+                                       unsigned int                     length,
+                                       ProtoAddress&                    dstMac,      // who is receiving MAC (single hop) TODO: this needs to be changed for asymmetric
+                                       const ProtoAddress&              srcMac,      // who is sending ACK                    
+                                       const ProtoAddress&              dstIp,       // who is receiving ACK (multihop)       
+                                       const ProtoAddress&              srcIp,       // who is sending ACK (multihop)         
+                                       const ProtoAddress&              ackLinkSrc,      // who sent the original packet      
+                                       const ProtoAddress&              ackLinkDst,      // who received the original packet  
+                                       const ProtoFlow::Description&    flowDescription,
+                                       const UINT16                     seqNo,
+                                       const UINT32                     fragOffset,
+                                       const bool                       atDestination,
+                                       const bool                       broadcastedPacket)
 {
     // IPv4-only at moment
     PLOG(PL_DEBUG, "SmartController::BuildAck(): beginning build ACK \n ");
@@ -616,7 +616,7 @@ unsigned int SmartController::BuildAck(UINT32*                buffer,
 }  // end MulticastFIB::BuildAck()
 
 // When a packet is sent from the forwarder, this controller function needs to be called in order to correctly update RL metrics.
-void SmartController::ProcessUnicastPacket(const FlowDescription& flowDescription, MulticastFIB::UpstreamRelay* next_hop,  UINT16 packetID, UINT16 fragOffset)
+void SmartController::ProcessUnicastPacket(const ProtoFlow::Description& flowDescription, MulticastFIB::UpstreamRelay* next_hop,  UINT16 packetID, UINT16 fragOffset)
 {
     PLOG(PL_DEBUG, "SmartController::ProcessUnicastPacket(): Processing Sent Packet with ID %d to next hop %s\n ", packetID,next_hop->GetAddress().GetHostString());
     // Find the data object corresponding to the flow.
@@ -627,7 +627,7 @@ void SmartController::ProcessUnicastPacket(const FlowDescription& flowDescriptio
     updateForwarder(flowDescription);
 }
 
- bool SmartController::checkForAdvertisement(const FlowDescription& flowDescription,const ProtoAddress& addr){
+ bool SmartController::checkForAdvertisement(const ProtoFlow::Description& flowDescription,const ProtoAddress& addr){
     MulticastFIB::RL_Data * data_ptr = metric_table.FindEntry(flowDescription);
 
     if (data_ptr->getMetrics(addr)->need_advertisement){
@@ -643,7 +643,7 @@ void SmartController::ProcessUnicastPacket(const FlowDescription& flowDescriptio
 // This is ok functionality, because if we knew the next hop, the C value would remain zero, implying a 100% chance of broadcast.
 // Upon receipt of ACK, the links will be added to downstream_relays, allowing for the C factors to grow and
 // a possibility of unicasting the packet.
-void SmartController::ProcessBroadcastPacket(const FlowDescription& flowDescription, UINT16 packetID, UINT16 fragOffset)
+void SmartController::ProcessBroadcastPacket(const ProtoFlow::Description& flowDescription, UINT16 packetID, UINT16 fragOffset)
 {
     //PLOG(PL_DEBUG, "SmartController::ProcessBroadcastPacket(): Processing Sent Packet with ID %d \n ", packetID);
     // Find the data object corresponding to the flow
@@ -834,7 +834,7 @@ void SmartController::HandleAck(SmartAck& ack, unsigned int ifaceIndex, const Pr
 
     // Flow desription describes the original packet flow (destination of the data packet).
     // Use the dstIP, class, and protocol information to generate a flow description object.
-    FlowDescription flowDesc= FlowDescription(dstIp, PROTO_ADDR_NONE, trafficClass, ProtoPktIP::UDP);
+    ProtoFlow::Description flowDesc= ProtoFlow::Description(dstIp, PROTO_ADDR_NONE, trafficClass, ProtoPktIP::UDP);
     // Currently *wildcarding* the source, since flow is independent of source.  If this changes, then we change these two linses of code.
     flowDesc.SetSrcMaskLength(0);
     if (GetDebugLevel() >= PL_DEBUG)
@@ -882,7 +882,7 @@ void SmartController::HandleAck(SmartAck& ack, unsigned int ifaceIndex, const Pr
         PLOG(PL_DEBUG, "\n List of flows: \n");
         MulticastFIB::RL_Table::Iterator iterator(metric_table);
         MulticastFIB::RL_Data * d;
-        FlowDescription f;
+        ProtoFlow::Description f;
 
         while (NULL != (d = (MulticastFIB::RL_Data *) iterator.GetNextEntry()))
         {
@@ -917,7 +917,7 @@ void SmartController::HandleAck(SmartAck& ack, unsigned int ifaceIndex, const Pr
 }  // end SmartController::HandleAck()
 
 // Called to interface with the SmartForwarder. We only update information for one flow at a time, hence passing in flow as a parameter.
-void SmartController::updateForwarder(const FlowDescription& flow)
+void SmartController::updateForwarder(const ProtoFlow::Description& flow)
 {
     // Update Forwarder.
     //PLOG(PL_DEBUG, "SmartController:updateForwarder. Call to Update forwarder for flow:");
@@ -935,7 +935,7 @@ void SmartController::updateForwarder(const FlowDescription& flow)
         PLOG(PL_DEBUG, "\n List of flows: \n");
         MulticastFIB::RL_Table::Iterator iteratornew(metric_table);
         MulticastFIB::RL_Data * d;
-        FlowDescription f;
+        ProtoFlow::Description f;
 
         while (NULL != (d = (MulticastFIB::RL_Data *) iteratornew.GetNextEntry()))
         {
@@ -974,7 +974,7 @@ void SmartController::updateForwarder(const FlowDescription& flow)
     int priority = data_ptr->GetFlowDescription().GetTrafficClass();
     MulticastFIB::RL_Table::Iterator flowIt(metric_table);
     MulticastFIB::RL_Data*  ent;
-    FlowDescription f;
+    ProtoFlow::Description f;
     MulticastFIB::RL_Data::RL_Metric_Tuple * tuple_ptr;
     PLOG(PL_DEBUG, "Looping through flows\n");
     while (NULL != (ent = flowIt.GetNextEntry()))
