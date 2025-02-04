@@ -966,7 +966,7 @@ class MulticastFIB
         // Currently our "tick" for aging elastic multicast flows is a one microsecond
         // tick.  For a 32-bit int with wrapping values, we can discriminate a maximum
         // "age" equivalent to about one thousand seconds (which is plenty for the purposes here)
-        enum {TICK_AGE_MAX = 0x40000000}; // about a billion microseconds, or 1000 seconds
+        enum {TICK_AGE_MAX = 0x40000000, TICK_DELTA_MAX = 0x20000000};
 
         // return values less than zero means referenceTime > currentTime
         static int ComputeAge(unsigned int currentTick, unsigned int referenceTick)
@@ -1118,7 +1118,7 @@ class ElasticTicker
         ~ElasticTicker() {}
 
         // Ticker managed timeouts should not exceed DELTA_MAX
-        static const double DELTA_MAX;  // 1200.0 seconds
+        static const double DELTA_MAX;  // 600.0 seconds
         unsigned int Update();
         
         unsigned int GetCount() const

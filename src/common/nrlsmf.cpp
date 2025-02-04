@@ -5709,7 +5709,7 @@ bool SmfApp::ForwardFrameToTap(unsigned int srcIfIndex, unsigned int dstCount, u
     // 1) Build an "smfPkt" message header to send message to "tap" process
     unsigned int msgHdrLen = 7 + 1 + 1 + dstCount;
     char* msgBuffer = frameBuffer - msgHdrLen;
-    snprintf(msgBuffer, 7, "smfPkt ");
+    snprintf(msgBuffer, 8, "smfPkt ");
     msgBuffer[7] = (UINT8)(dstCount + 1);
     msgBuffer[8] = (UINT8)srcIfIndex;
     for (unsigned int i = 0; i < dstCount; i++)

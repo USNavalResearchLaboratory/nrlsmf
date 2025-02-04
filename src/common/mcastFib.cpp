@@ -93,9 +93,9 @@ bool MulticastFIB::Membership::ActivateDownstreamRelay(const ProtoAddress&  srcI
         {
             // Check to see if "next" has timed out
             int delta = next->GetTimeoutTick() - refreshTick;
-            if ((delta < -ElasticTicker::DELTA_MAX) || (delta > ElasticTicker::DELTA_MAX))
+            if ((delta < -TICK_DELTA_MAX) || (delta > TICK_DELTA_MAX))
                 PLOG(PL_WARN, "MulticastFIB::Membership::ActivateDownstreamRelay() warning: unexpected zombie DownstreamRelay! (delta:%d)\n", delta);
-            if ((delta < 0) || (delta > ElasticTicker::DELTA_MAX))
+            if ((delta < 0) || (delta > TICK_DELTA_MAX))
             {
                 downstream_relay_list.Remove(*next);
                 downstream_relay_count--;
@@ -153,9 +153,9 @@ bool MulticastFIB::Membership::DeactivateDownstreamRelay(unsigned int currentTic
     {
         // Check to see if currentTick > relay timeout tick
         int delta = next->GetTimeoutTick() - currentTick;
-        if ((delta < -ElasticTicker::DELTA_MAX) || (delta > ElasticTicker::DELTA_MAX))
+        if ((delta < -TICK_DELTA_MAX) || (delta > TICK_DELTA_MAX))
             PLOG(PL_WARN, "MulticastFIB::Membership::DeactivateDownstreamRelay() warning: unexpected zombie DownstreamRelay! (delta:%d)\n", delta);
-        if ((delta < 0) || (delta > ElasticTicker::DELTA_MAX))
+        if ((delta < 0) || (delta > TICK_DELTA_MAX))
         {
             downstream_relay_list.Remove(*next);
             downstream_relay_count--;
@@ -2463,12 +2463,15 @@ void ElasticMulticastController::DeactivateMembership(MulticastFIB::Membership& 
 
 void ElasticMulticastController::OnDownstreamRelayChange(MulticastFIB::Membership& membership, bool idle)
 {
-    // Note if "idle" is true, then the relay set changed due idle_count (no ACKs for threshold pkt count)
-    PLOG(PL_INFO, "ElasticMulticastController::OnDownstreamRelayChange(%s) memberhip>", idle ? "idle" : "");
-    membership.GetFlowDescription().Print();
-    PLOG(PL_ALWAYS, " nextHops>");
-    membership.PrintDownstreamRelayList();
-    PLOG(PL_ALWAYS, "\n");
+    if (GetDebugLevel() >= PL_INFO)
+    {
+        // Note if "idle" is true, then the relay set changed due idle_count (no ACKs for threshold pkt count)
+        PLOG(PL_ALWAYS, "ElasticMulticastController::OnDownstreamRelayChange(%s) membership>", idle ? "idle" : "");
+        membership.GetFlowDescription().Print();
+        PLOG(PL_ALWAYS, " nextHops>");
+        membership.PrintDownstreamRelayList();
+        PLOG(PL_ALWAYS, "\n");
+    }
 }  // end ElasticMulticastController::OnDownstreamRelayChange()
 
 bool ElasticMulticastController::OnMembershipTimeout(ProtoTimer& theTimer)
@@ -2611,9 +2614,10 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
                                                      membership->GetDefaultForwardingStatus(), 
                                                      oldAckingStatus, false);
                 OnDownstreamRelayChange(*membership, true);  // due to unacknowledge pkt count execeeding idle_threshold
+                TRACE("idle - membership flags: %d\n", membership->GetFlags());
                 if (0 == membership->GetFlags())
                 {
-                    if (GetDebugLevel() >= PL_DEBUG)
+                    //if (GetDebugLevel() >= PL_DEBUG)
                     {
                         PLOG(PL_DEBUG, "nrlsmf: removing membership ");
                         flowDescription.Print();
