@@ -167,6 +167,32 @@ class MulticastFIB
                 bool         age_max;    // if "true", the "age_tick" value is invalid
                 bool         active;
         };  // end class MulticastFIB::Age
+        
+        class IdleCounter
+        {
+            public:
+                IdleCounter() : idle_count(0) {}
+                
+                void Reset() {idle_count = 0;}
+                
+                unsigned int Increment(unsigned int count = 1)
+                {
+                    // This increment sticks at max, doesn't roll over
+                    unsigned int prevCount = idle_count;
+                    idle_count += count;
+                    if (prevCount > idle_count)
+                        idle_count = (unsigned int)-1;
+                    return idle_count;
+                }
+                
+                unsigned int GetValue() const 
+                    {return idle_count;}
+                
+            private:
+                unsigned int    idle_count;
+        };  // end class MulticastFIB::IdleCounter
+        
+        
 
         class Entry;
 
@@ -297,9 +323,10 @@ class MulticastFIB
                     {return Find(addr.GetRawHostAddress(), addr.GetLength() << 3);}
         }; // end class MulticastFIB::UpstreamRelayList
         
-         // This class keeps state for the optional
-        // reliable hop-by-hop forwarding.  We only
-        // NACK Elastic Multicast upstream relays.
+        // This class keeps state for the optional link quality measurement
+        // (The IPv4 UMP header extension is used to apply a sequence number
+        //  by "upstream" relays to support link quality measurement by
+        //  "downstream" relays/nodes.
         class UpstreamHistory : public ProtoTree::Item
         {
             public:
@@ -322,15 +349,13 @@ class MulticastFIB
                     {return activity_status.IsActive();}
                 void Deactivate()
                     {activity_status.Deactivate();}
+                
                 void ResetIdleCount()
-                    {idle_count = 0;}
+                    {idle_count.Reset();}
                 unsigned int IncrementIdleCount(unsigned int count = 1)
-                {
-                    idle_count += count;
-                    return idle_count;
-                }
+                    {return idle_count.Increment(count);}
                 unsigned int GetIdleCount() const
-                    {return idle_count;}
+                    {return idle_count.GetValue();}
                 
                 /*
                 unsigned int IncrementActiveFlowCount()
@@ -363,7 +388,7 @@ class MulticastFIB
                 ProtoAddress        src_addr;
                 UINT16              seq_prev;
                 ActivityStatus      activity_status;
-                unsigned int        idle_count;
+                IdleCounter         idle_count;
                 unsigned int        good_count;
                 double              loss_estimate;  // loss fraction estimate
                 //unsigned int        active_flow_count;   // reference count of number of flows for which this upstream is an active relay
@@ -650,6 +675,62 @@ class MulticastFIB
         // If "src" is valid, then it is an SSM membership, else ASM
 
         class MembershipTable;  // forward declaration to support friendship
+        
+        // This is used to track downstream relays actively ACKing a membership
+        // (this thus tracks "next hop" relays for a given flow.  Note that a 
+        // "next hop" DownstreamRelay may be a destination and not necessarily a relay
+        class DownstreamRelay : public ProtoList::Item
+        {
+            public:
+                DownstreamRelay(const ProtoAddress& ipAddr, const ProtoAddress& macAddr) 
+                    : ip_addr(ipAddr), mac_addr(macAddr) {}
+                ~DownstreamRelay() {}
+                
+                void SetAddresses(const ProtoAddress& ipAddr, const ProtoAddress& macAddr)
+                {
+                    ip_addr = ipAddr;
+                    mac_addr = macAddr;
+                }
+                void SetTimeoutTick(unsigned int timeoutTick)
+                    {elastic_timeout_tick = timeoutTick;}
+                
+                const ProtoAddress& GetIpAddr() const
+                    {return ip_addr;}
+                const ProtoAddress& GetMacAddr() const
+                    {return mac_addr;}
+                    
+                void Refresh(unsigned int timeoutTick)
+                {
+                    elastic_timeout_tick = timeoutTick;
+                    idle_count.Reset();
+                }
+                unsigned int GetTimeoutTick() const
+                    {return elastic_timeout_tick;}
+                
+                //void ResetIdleCount()
+                //    {idle_count.Reset();}
+                unsigned int IncrementIdleCount(unsigned int count = 1)
+                    {return idle_count.Increment(count);}
+                //unsigned int GetIdleCount() const
+                //    {return idle_count.GetValue();}
+                bool IsIdle(unsigned int idleThreshold)
+                    {return (idle_count.GetValue() >= idleThreshold);}
+                
+            private:
+            
+                ProtoAddress    ip_addr;
+                ProtoAddress    mac_addr;
+                IdleCounter     idle_count;
+                unsigned int    elastic_timeout_tick;  
+                
+        };  // end class MulticastFIB::DownstreamRelay
+        
+        class DownstreamRelayList : public ProtoListTemplate<DownstreamRelay>
+        {
+            public:
+                //DownstreamRelay* FindRelay(const ProtoAddress& srcIp)
+                //    {return Find(srcIp.GetRawHostAddress(), srcIp.GetLength() << 3);}
+        };
 
         class Membership : public ProtoFlow::EntryTemplate<ProtoIndexedQueue>
         {
@@ -679,17 +760,12 @@ class MulticastFIB
                     {membership_flags &= ~flag;}
 
                 void ResetIdleCount()
-                    {idle_count = 0;}
-                unsigned int IncrementIdleCount(unsigned int count)
-                {
-                    unsigned int prevCount = idle_count;
-                    idle_count += count;
-                    if (prevCount > idle_count)
-                        idle_count = (unsigned int)-1;
-                    return idle_count;
-                }
+                    {idle_count.Reset();}
+                unsigned int IncrementIdleCount(unsigned int count = 1)
+                    {return idle_count.Increment(count);}
                 unsigned int GetIdleCount() const
-                    {return idle_count;}
+                    {return idle_count.GetValue();}
+                    
                 void SetIdleCountThreshold(unsigned int pktCount)
                     {idle_count_threshold = pktCount;}
                 unsigned int GetIdleCountThreshold() const
@@ -697,30 +773,49 @@ class MulticastFIB
 
                 Flag GetTimeoutFlag() const
                     {return timeout_flag;}
-                // Only valid if igmp_timeout_valid || elastic_timeout_valid
-                unsigned int GetTimeout() const
+                // Only valid if igmp_timeout_active || elastic_timeout_active
+                unsigned int GetTimeoutTick() const
                     {return ((ELASTIC == timeout_flag) ? elastic_timeout_tick : igmp_timeout_tick);}
                 
                 void SetDefaultForwardingStatus(ForwardingStatus status)
                     {default_forwarding_status = status;}
                 ForwardingStatus GetDefaultForwardingStatus() const
                     {return default_forwarding_status;}
+                
+                // All three of these return "true" when the relay set changes
+                bool ActivateDownstreamRelay(const ProtoAddress& srcIp, 
+                                             const ProtoAddress& srcMac, 
+                                             unsigned int        refreshTick,  // currentTick or last refreshTick
+                                             unsigned int        timeoutTick); // 
+                bool UpdateDownstreamRelays(unsigned int pktCount);
+                bool DeactivateDownstreamRelay(unsigned int currentTick);
+                unsigned int GetNextElasticTimeoutTick() const
+                {
+                    DownstreamRelay* relay = downstream_relay_list.GetHead();
+                    return (NULL != relay) ? relay->GetTimeoutTick() : 0;
+                }
+                unsigned int GetDownstreamRelayCount() const
+                    {return downstream_relay_count;}
+                
+                void PrintDownstreamRelayList(FILE* filePtr = NULL);  // to ProtoDebug by default
 
             private:
-                const unsigned int* GetTimeoutPtr() const
+                const unsigned int* GetTimeoutTickPtr() const
                     {return ((ELASTIC == timeout_flag) ? &elastic_timeout_tick : &igmp_timeout_tick);}
 
                 friend class MulticastFIB::MembershipTable;
 
-                int                 membership_flags;
-                unsigned int        idle_count_threshold;
-                unsigned int        idle_count; // number of packets since last EM_ACK
-                Flag                timeout_flag;
-                unsigned int        igmp_timeout_tick;
-                bool                igmp_timeout_valid;
-                unsigned int        elastic_timeout_tick;
-                unsigned int        elastic_timeout_valid;
-                ForwardingStatus    default_forwarding_status;
+                int                     membership_flags;
+                unsigned int            idle_count_threshold;
+                IdleCounter             idle_count; // number of packets since last EM_ACK
+                Flag                    timeout_flag;
+                unsigned int            igmp_timeout_tick;
+                bool                    igmp_timeout_active;
+                unsigned int            elastic_timeout_tick;
+                unsigned int            elastic_timeout_active;
+                ForwardingStatus        default_forwarding_status;
+                DownstreamRelayList    downstream_relay_list;  // TBD - move idle_count into this???
+                unsigned int            downstream_relay_count;
 
         };  // end class MulticastFIB::Membership
 
@@ -756,14 +851,15 @@ class MulticastFIB
                 bool ActivateMembership(Membership&         membership,
                                         Membership::Flag    flag,
                                         unsigned int        timeoutTick);  // required for non-STATIC
+                                        
                 void DeactivateMembership(Membership&       membership,
-                                          Membership::Flag    flag);
+                                          Membership::Flag  flag);
 
                 bool IsActive() const
                     {return (NULL != ring_leader);}
 
-                unsigned int GetNextTimeout() const
-                    {return ((NULL != ring_leader) ? ring_leader->GetTimeout() : 0);}
+                unsigned int GetNextTimeoutTick() const
+                    {return ((NULL != ring_leader) ? ring_leader->GetTimeoutTick() : 0);}
 
                 Membership* GetRingLeader()
                     {return ring_leader;}
@@ -781,6 +877,7 @@ class MulticastFIB
                     return FindMembership(description);
                 }
 
+                // TBD - refactor the next two classes to provide for cleaner timeout management
                 // The Ring class maintains a queue of "activated" memberships
                 // sorted by their applicable timeout value.
                 class Ring : public ProtoSortedQueueTemplate<Membership>
@@ -788,7 +885,7 @@ class MulticastFIB
                     public:
                         // ProtoIndexedQueue required overrides
                         virtual const char* GetKey(const Item& item) const
-                            {return ((const char*)static_cast<const Membership&>(item).GetTimeoutPtr());}
+                            {return ((const char*)static_cast<const Membership&>(item).GetTimeoutTickPtr());}
                         virtual unsigned int GetKeysize(const Item& item) const
                             {return (sizeof(unsigned int) << 3);}
                         ProtoTree::Endian GetEndian() const {return ProtoTree::GetNativeEndian();}
@@ -812,7 +909,7 @@ class MulticastFIB
             private:
                 // Member variables
                 Ring            membership_ring;
-                Membership*     ring_leader;  // membership that times out last; i.e., "head" of the ring
+                Membership*     ring_leader;  // membership that times out first; i.e., "head" of the ring
 
         };  // end class MulticastFIB::MembershipTable
 
@@ -1023,11 +1120,15 @@ class ElasticTicker
         // Ticker managed timeouts should not exceed DELTA_MAX
         static const double DELTA_MAX;  // 1200.0 seconds
         unsigned int Update();
+        
+        unsigned int GetCount() const
+            {return ticker_count;}
 
-        void Reset()
+        unsigned int Reset()
         {
             ticker_time_prev.GetCurrentTime();
             ticker_count = 0;
+            return 0;
         }
 
     private:
@@ -1094,8 +1195,8 @@ class ElasticMulticastForwarder
        // Our "ticker" is a count of microseconds that is used for our
         // membership timeouts.  The forwarder is responsible for
         // keeping the "time_ticker" updated.
-        void ResetTicker()
-            {time_ticker.Reset();}
+        unsigned int  ResetTicker()
+            {return time_ticker.Reset();}
         unsigned int UpdateTicker()
             {return time_ticker.Update();}
 
@@ -1140,12 +1241,18 @@ class ElasticMulticastController
         bool AddManagedMembership(unsigned int ifaceIndex, const ProtoAddress& groupAddr);
         void RemoveManagedMembership(unsigned int ifaceIndex, const ProtoAddress& groupAddr);
 
-        void HandleAck(const ElasticAck& ack, unsigned int ifaceIndex, const ProtoAddress& srcIp);
+        void HandleAck(const ElasticAck& ack, unsigned int ifaceIndex, const ProtoAddress& srcIp, const ProtoAddress& srcMac);
+        
         bool ActivateMembership(MulticastFIB::Membership&       membership,
                                 MulticastFIB::Membership::Flag  flag,
-                                double                          timeoutSec);
+                                unsigned int                    currentTick,
+                                unsigned int                    timeoutTick);
+                                
         void DeactivateMembership(MulticastFIB::Membership&      membership,
                                   MulticastFIB::Membership::Flag flag);
+                                  
+        // callback function when membership/flow downstream relay set(next hop(s)) changes
+        void OnDownstreamRelayChange(MulticastFIB::Membership& membership, bool idle);
         
         bool SetPolicy(const ProtoFlow::Description& description, bool allow);
         
@@ -1163,8 +1270,8 @@ class ElasticMulticastController
         // Our "ticker" is a count of microseconds that is used for our
         // membership timeouts.  The "ticker" is activated whenever the
         // membership_timer is activated.
-        void ResetTicker()
-            {time_ticker.Reset();}
+        unsigned int ResetTicker()
+            {return time_ticker.Reset();}
         unsigned int UpdateTicker()
             {return time_ticker.Update();}
 

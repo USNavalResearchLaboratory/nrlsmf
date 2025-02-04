@@ -1176,7 +1176,9 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                             unsigned int upstreamIndex = GetInterfaceIndex(upstreamAddr);
                                             if (0 != upstreamIndex)
                                             {
-                                                mcast_controller->HandleAck(elasticAck, upstreamIndex, srcIp);
+                                                // TBD - srcMac here will need to be replaced in the future
+                                                // using source MAC addr embedded in EM_ACK for asymm support
+                                                mcast_controller->HandleAck(elasticAck, upstreamIndex, srcIp, srcMac);
                                                 needDstCheck = false;
                                             }
                                             // else not for me
@@ -1189,7 +1191,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                         unsigned int upstreamIndex = GetInterfaceIndex(dstMac);
                                         if (0 != upstreamIndex)
                                         {
-                                            mcast_controller->HandleAck(elasticAck, upstreamIndex, srcIp);
+                                            mcast_controller->HandleAck(elasticAck, upstreamIndex, srcIp, srcMac);
                                         }
                                     }
                                     
