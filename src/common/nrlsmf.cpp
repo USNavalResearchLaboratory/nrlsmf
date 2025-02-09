@@ -1533,7 +1533,7 @@ bool SmfApp::ProcessCommands(int argc, const char*const* argv)
     return true;
 }  // end SmfApp::ProcessCommands()
 
-// if the server pipe is not open, don't fail.  If it is open and the 
+// if the server pipe is not open, don't fail.  If it is open and the
 // send fails, then fail.
 bool SmfApp::ServerSend(const char* word, const char* value)
 {
@@ -1544,10 +1544,14 @@ bool SmfApp::ServerSend(const char* word, const char* value)
         unsigned int len = ss.str().size();
         if (!server_pipe.Send(ss.str().c_str(),len))
         {
-            PLOG(PL_ERROR, "SmfApp::OnCommand(instance) error sending %s to smf server\n", ss.str().c_str());
+            PLOG(PL_ERROR, "SmfApp::ServerSend() error sending %s to smf server\n", ss.str().c_str());
             return false;
         }
-     }       
+     }
+     else
+     {
+        PLOG(PL_DEBUG, "SmfApp::ServerSend() no socket to send %s\n", word);
+     }
      return true;
 }
 bool SmfApp::OnCommand(const char* cmd, const char* val)
@@ -4260,6 +4264,7 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
             // This is a "template" PUSH group or hasn't yet had its
             // source interface set
             // (so we don't do anything to set its associations)
+            PLOG(PL_DEBUG, "SmfApp::UpdateGroupAssociations() push on NULL srcIface\n");
             return true;
         }
         if (rseq)
@@ -4283,11 +4288,14 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
         srcIface->SetTunnel(tunnel);
         // Make sure the group's source interface is OK to be an "rpush" source
     }
+
     if (NULL == srcIface)
     {
         // This is a "template" PUSH group or hasn't yet had its source interface set
         // (so we don't do anything to set its associations)
-        return true;
+        PLOG(PL_WARN, "SmfApp::UpdateGroupAssociations() NULL srcIface\n");
+        // TBD: maybe update srcIface - the following true breaks forwarding
+        // return true;
     }
 
     // Iterate through the group's set of interfaces and update associations
