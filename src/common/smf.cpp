@@ -1293,6 +1293,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 
 #ifdef ADAPTIVE_ROUTING
             // This section of the code handles acknowledgement packets, since they require no further processing.
+            // TBD - separate ADAPTIVE_ROUTING code from ELASTIC_MCAST code !!!
 
              // Is this an ACK? (if so, notify controller)
                 // ACKS are always udp packets, so
@@ -1314,18 +1315,18 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                         isARAck=true;
                         PLOG(PL_DEBUG, "Smf::ProcessPacket(): IPv4 Packet detected: Acknowledgement\n" );
                             // If it is, recast it from a SmartPacket to a SmartAck.
-                        PLOG(PL_DEBUG, "Smf::ProcessPacket(): Buffer Lengths: eth = %d, ip = %d, ipv4 = %d, udp = %d\n", ethPkt.GetBufferLength(),ipPkt.GetBufferLength(), ipv4Pkt.GetBufferLength(), udpPkt.GetBufferLength() );
+                        PLOG(PL_DEBUG, "   Buffer Lengths: eth = %d, ip = %d, ipv4 = %d, udp = %d\n", ethPkt.GetBufferLength(),ipPkt.GetBufferLength(), ipv4Pkt.GetBufferLength(), udpPkt.GetBufferLength() );
                         SmartAck smartAck(udpPkt.AccessPayload(), ipv4Pkt.GetBufferLength());
 
                         if (!IsOwnAddress(dstIp))
                         {
                             if (smart_controller->AsymmetricMode) // forward
                             {
-                                PLOG(PL_DEBUG, "Smf::ProcessPacket(): Not for me, but asym mode\n" );
+                                PLOG(PL_DEBUG, "   Not for me, but asym mode\n" );
                                 // Mark Packet... Then ignore? Until the end.
                                 if (smartAck.flagIsSet(SmartPkt::FLAG_BCAST))
                                 {
-                                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): Broadcast\n" );
+                                    PLOG(PL_DEBUG,  "   Broadcast\n" );
                                     // DPD -- does this happen later?
 
                                     // Mark Packet.
@@ -1334,8 +1335,8 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                     //memmove((char *)payloadPtr + 4, (char *)payloadPtr, dataLen);
                                     // Add the extra node to the path
                                     smartAck.appendNodeToPath(srcIface.GetInterfaceAddress());
-                                    PLOG(PL_DEBUG, "SmartController:HandleAck. PathLength: %d\n", smartAck.getPathLength());
-                                    PLOG(PL_DEBUG, "SmartController:HandleAck. Path: ");
+                                    PLOG(PL_DEBUG, "   HandleAck: PathLength: %d\n", smartAck.getPathLength());
+                                    PLOG(PL_DEBUG, "   HandleAck: Path: ");
                                     ProtoAddress tempAddr;
                                     for (int i = 0; i < smartAck.getPathLength(); i++)
                                     {
@@ -1346,8 +1347,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                         }
 
                                     }
-                                    if (GetDebugLevel() >= PL_DEBUG)
-                                        PLOG(PL_ALWAYS, "\n");
+                                    if (GetDebugLevel() >= PL_DEBUG) PLOG(PL_ALWAYS, "\n");
                                     udpPkt.SetPayloadLength(udpPkt.GetPayloadLength()+8);
                                     ipv4Pkt.SetPayloadLength(udpPkt.GetLength());
                                     ipPkt.SetLength(ipv4Pkt.GetLength());
@@ -1361,14 +1361,14 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                 }
                                 else // This ack is not for me, and its a unicast ack meaning there is a path.
                                 {
-                                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): Unicast\n" );
+                                    PLOG(PL_DEBUG, "   Unicast\n" );
                                     // if you're not on the path, you must drop ACK.
                                     if(!smartAck.pathContains(srcIface.GetInterfaceAddress()))
                                     {
-                                            PLOG(PL_DEBUG, "Smf::ProcessPacket(): I wasn't supposed to get this ack\n" );
+                                            PLOG(PL_DEBUG, "   I wasn't supposed to get this ack\n" );
                                             return -1;
                                     }
-                                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): On ACK path\n" );
+                                    PLOG(PL_DEBUG, "   On ACK path\n" );
                                     // otherwise we're on the path, which means we should forward ack.
                                     ProtoAddress nextHopMac;
                                     if(!smartAck.getNextAddress(srcIface.GetInterfaceAddress(),nextHopMac))
@@ -1387,10 +1387,9 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                             }
                             else //if we're in symmetric mode, and we get an ack thats not for us
                             {
-                                PLOG(PL_DEBUG, "Smf::ProcessPacket(): Dropping ACK due to being in symmetric mode, and getting an ack thats not for us.");
+                                PLOG(PL_DEBUG, "   Dropping ACK due to being in symmetric mode, and getting an ack thats not for us.");
                                 return -1; //drop
                             }
-
                         } // end if not our address
                         // Here, the ack is for us... we keep going with isARAck marked.
 
@@ -1771,10 +1770,10 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 if (outbound)
                 {
                     //PLOG(PL_DEBUG, "Smf::ProcessPacket(): Outbound Smart Pkt\n" );
-                    //PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): After Mark: New UDP Length: Total: %d, Buffer: %d\n", udpPkt.GetLength(), udpPkt.GetBufferLength());
-                    //PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): After Mark: New IP Length: Total: %d, Buffer: %d\n", ipPkt.GetLength(), ipPkt.GetBufferLength());
-                    //PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): After Mark: New IPv4 Length: Total: %d, Buffer: %d\n", ipv4Pkt.GetLength(), ipv4Pkt.GetBufferLength());
-                    //PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): After Mark: New Eth Length: Total: %d, Buffer: %d\n", ethPkt.GetLength(), ethPkt.GetBufferLength());
+                    //PLOG(PL_DEBUG, "Smf::ProcessPacket(): After Mark: New UDP Length: Total: %d, Buffer: %d\n", udpPkt.GetLength(), udpPkt.GetBufferLength());
+                    //PLOG(PL_DEBUG, "Smf::ProcessPacket(): After Mark: New IP Length: Total: %d, Buffer: %d\n", ipPkt.GetLength(), ipPkt.GetBufferLength());
+                    //PLOG(PL_DEBUG, "Smf::ProcessPacket(): After Mark: New IPv4 Length: Total: %d, Buffer: %d\n", ipv4Pkt.GetLength(), ipv4Pkt.GetBufferLength());
+                    //PLOG(PL_DEBUG, "Smf::ProcessPacket(): After Mark: New Eth Length: Total: %d, Buffer: %d\n", ethPkt.GetLength(), ethPkt.GetBufferLength());
 
                     // If this is a new, outbound packet, it has not had the SmartDataPkt header inserted yet.
                     // Here we add it.
@@ -1782,7 +1781,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     // If ethernet buffer is too small
                     if (ethPkt.GetLength() + 16 > ethPkt.GetBufferLength())
                     {
-                        PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): Need More ethernet buffer space\n");
+                        PLOG(PL_DEBUG, "Smf::ProcessPacket(): Need more ethernet buffer space\n");
                         UINT32 newBuffer[ethPkt.GetLength()/4 + 4];
                         unsigned int oldLen = ethPkt.GetBufferLength();
 
@@ -1798,12 +1797,12 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     // If IP buffer is too small
                     else if (ipv4Pkt.GetLength() + 16 > ipv4Pkt.GetBufferLength())
                     {
-                        PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): Need More ip buffer space\n");
+                        PLOG(PL_DEBUG, "Smf::ProcessPacket(): Need more ip buffer space\n");
                         unsigned int ipBufferLen = ipv4Pkt.GetBufferLength();
                         UINT32* ipBuffer = (UINT32*)ethPkt.AccessPayload(); // 14 bytes plus 2
                         if (!ipPkt.InitFromBuffer(ethPkt.GetPayloadLength()+16,ipBuffer,ethPkt.GetPayloadLength()+16))
                         {
-                            PLOG(PL_ERROR, "Smf::ProcessOutboundPacket():IP Packet modification\n");
+                            PLOG(PL_ERROR, "Smf::ProcessPacket():IP Packet modification\n");
                         }
 
                         ProtoPktIPv4 ipv4Pkt(ipPkt);
@@ -1813,15 +1812,11 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     // shift payload to the right by 16 bytes (dont make this constant). to make room for header.
                     // Figure out how long the actual pacekt user data is.
                     unsigned int ipDataLength = ipv4Pkt.GetPayloadLength();
-                    PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): Get IP Length\n");
+                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): Get IP Length\n");
                     int headerLen = smartPkt.getHeaderLengthNoPath()*4;
-                    PLOG(PL_DEBUG, "Smf::ProcesOutboundPAcket(): adding %d bytes for the header\n",headerLen);
+                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): adding %d bytes for the header\n", headerLen);
                     memmove((char*)ipv4Pkt.GetPayload()+headerLen, (char*)ipv4Pkt.GetPayload(),ipDataLength);
-
-
-
-
-                    PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): Complete Memmove\n");
+                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): Complete memmove\n");
                     // update data lengths
                     ipv4Pkt.SetPayloadLength(ipDataLength+16);
                     ipPkt.SetLength(ipv4Pkt.GetLength());           // Since data length is stored as a local variable
@@ -1829,14 +1824,14 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     // Initialize smart header.
                     if(!smartPkt.initIntoBuffer(ipv4Pkt.AccessPayload(),ipv4Pkt.GetPayloadLength()))
                     {
-                        PLOG(PL_ERROR, "Smf::ProcessOutboundPacket(): Smart Packet Initialization Failed\n");
+                        PLOG(PL_ERROR, "Smf::ProcessPacket(): Smart Packet Initialization Failed\n");
                     }
                     // Just leave room for header for now
                     // Set source address in the header.
                     smartPkt.setSrcIPAddr(srcIp);
                     ProtoAddress newAddr;
                     smartPkt.getSrcIPAddr(newAddr);
-                    PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): Finished Initialization\n");
+                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): Finished Initialization\n");
 
                 }
                 else // If this is not an outbound packet, dont need to add header.
@@ -1867,7 +1862,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             {
                 duplicateMark= true;
                 // This is a duplicate packet, Drop
-                PLOG(PL_DEBUG, "Smf::ProcessPacket(): Duplicate Copy! No Ack, No Forward\n");
+                PLOG(PL_DEBUG, "Smf::ProcessPacket(): duplicate copy! no ACK, no forward\n");
                 return 0;
             }
         }
@@ -1881,7 +1876,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             // We need to increase the buffer size.
             if (ethPkt.GetLength() + 4 > ethPkt.GetBufferLength())
                 {
-                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): Need More buffer space\n");
+                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): Need more buffer space\n");
                     UINT32 newBuffer[ethPkt.GetLength()/4 + 1];
                     unsigned int oldLen = ethPkt.GetBufferLength();
 
@@ -1910,7 +1905,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 }
                 // At this point, the buffer is large enough to support the adding of a path.
 
-                PLOG(PL_DEBUG, "Smf::ProcessPacket(): Marking... Original IP Length: %d\n", ipv4Pkt.GetPayloadLength());
+                PLOG(PL_DEBUG, "Smf::ProcessPacket(): marking... original IP length: %d\n", ipv4Pkt.GetPayloadLength());
                 // Get a pointer to the user data.
                 char* payloadPtr = (char*) smartPkt.getPayload();
                 unsigned int dataLen = ipv4Pkt.GetPayloadLength() - (payloadPtr - (char*)ipv4Pkt.AccessPayload()); //convert word to bytes
@@ -1924,11 +1919,11 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 ipPkt.SetLength(ipv4Pkt.GetLength());
                 ethPkt.SetPayloadLength(ipv4Pkt.GetLength());
 
-                PLOG(PL_DEBUG, "Smf::ProcessPacket(): Checking Received Packet... Q = %f\n", smartPkt.getQFactor());
-                PLOG(PL_DEBUG, "Smf::ProcessPacket(): Checking Received Packet... C = %f\n", smartPkt.getCFactor());
+                PLOG(PL_DEBUG, "Smf::ProcessPacket(): checking received packet ... Q = %f\n", smartPkt.getQFactor());
+                PLOG(PL_DEBUG, "Smf::ProcessPacket(): checking received packet ... C = %f\n", smartPkt.getCFactor());
                 int pathlength = smartPkt.getPathLength();
-                PLOG(PL_DEBUG, "Smf::ProcessPacket(): Checking Received Packet... Path length = %d\n", pathlength);
-                PLOG(PL_DEBUG, "Smf::ProcessPacket(): Checking Received Packet... Path: ");
+                PLOG(PL_DEBUG, "Smf::ProcessPacket(): checking received packet ... Path length = %d\n", pathlength);
+                PLOG(PL_DEBUG, "Smf::ProcessPacket(): checking received packet ... Path: ");
                 ProtoAddress tempAddr;
                 if (GetDebugLevel() >= PL_DEBUG)
                 {
@@ -1941,7 +1936,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     PLOG(PL_ALWAYS, "\n");
                 }
                 smartPkt.getSrcIPAddr(tempAddr);
-                PLOG(PL_DEBUG, "Smf::ProcessPacket(): Checking Received Packet... src IP = %s\n", tempAddr.GetHostString());
+                PLOG(PL_DEBUG, "Smf::ProcessPacket(): checking received packet ... src IP = %s\n", tempAddr.GetHostString());
         }
         if (isARAck)
         {
@@ -1953,32 +1948,33 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             bool updateController;
             // Parse Flow list code added to mcastFib
             // This will make sure flow table is updated, and find the relevant fibEntry.
-            if(!mcast_fib.ParseFlowList(ipPkt,fibEntry,time_ticker.Update(), updateController, srcMac)){
-                PLOG(PL_ERROR, "Smf::ProcessPacket(): Unable to parse flow list\n");
+            if(!mcast_fib.ParseFlowList(ipPkt,fibEntry,time_ticker.Update(), updateController, srcMac))
+            {
+                PLOG(PL_ERROR, "Smf::ProcessPacket(): unable to parse flow list\n");
                 return 0;
             }
             // Add the flow to the controller if we need to. This is set via the ParseFlowList function.
             if (updateController)
             {
-                PLOG(PL_DEBUG, "Smf::ProcessPacket(): New Flow, Updating Controller\n");
+                PLOG(PL_DEBUG, "Smf::ProcessPacket(): new flow, updating controller\n");
                 smart_controller->AddFlow(fibEntry->GetFlowDescription());
             }
             // Now fib entry exists, we can ask for probability, and randomly decide whether to broadcast.
             nextHop = fibEntry->getDownstreamRelay();
             // Generate a random number
             double rand_num = ((double) rand() / (RAND_MAX));
-            PLOG(PL_DEBUG, "Smf::ProcessPackeT(): Flow Table look up -> Next hop = %s.\n", nextHop->GetAddress().GetHostString());
-            PLOG(PL_DEBUG, "Smf::ProcessPackeT(): Flow Table look up -> P(Unicast) = %f.\n", fibEntry->getUnicastProb());
+            PLOG(PL_DEBUG, "Smf::ProcessPackeT(): flow table look up -> next hop = %s.\n", nextHop->GetAddress().GetHostString());
+            PLOG(PL_DEBUG, "Smf::ProcessPackeT(): flow table look up -> P(unicast) = %f.\n", fibEntry->getUnicastProb());
             // Compute whether or not to broadcast, based on UnicastProbability of the fibEntry, and the generated random number
             broadcast = rand_num >= fibEntry->getUnicastProb();
             // debug.
             if (broadcast)
             {
-                PLOG(PL_DEBUG, "Smf::ProcessPacket(): Random Decision: broadcast.\n");
+                PLOG(PL_DEBUG, "Smf::ProcessPacket(): random decision: broadcast.\n");
             }
             else
             {
-                PLOG(PL_DEBUG, "Smf::ProcessPacket(): Random Decision: unicast\n");
+                PLOG(PL_DEBUG, "Smf::ProcessPacket(): random decision: unicast\n");
             }
         }
 
@@ -2060,14 +2056,14 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             {
                 ifaceForward = relay_enabled;
                 updateDupTree = ifaceForward;
-                PLOG(PL_DETAIL, "Smf::ProcessPacket(): Forward on interface?: %d\n", ifaceForward );
+                PLOG(PL_DETAIL, "Smf::ProcessPacket(): forward on interface?: %d\n", ifaceForward );
                 break;
             }
             case E_CDS:
             {
  		        if (dstIp.IsMulticast())
                 {
-		            PLOG(PL_MAX, "nrlsmf: E_CDS relay_enable:%d relay_selected:%d\n", relay_enabled, relay_selected);
+		            PLOG(PL_DETAIL, "nrlsmf: E_CDS relay_enable:%d relay_selected:%d\n", relay_enabled, relay_selected);
 		            ifaceForward = (relay_enabled && relay_selected);
 		        }
                 else
@@ -2132,7 +2128,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
         smart_controller->UpdateInterfaces(dstIface.GetInterfaceAddress(),dstIface.GetIndex());
 #endif // ADAPTIVE_ROUTING
         
-        if (GetDebugLevel() >= PL_MAX)
+        if (GetDebugLevel() >= PL_DETAIL)
         {
             char flowIdText[2048];
             char* ptr = flowIdText;
@@ -2153,7 +2149,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 slen += snprintf(ptr, 2048 - slen, "%02x", (unsigned char)pktId[i]);
                 ptr += 2;
             }
-            PLOG(PL_MAX, "nrlsmf: evaluating packet for forwarding: forward>%d flowIdSize>%u flowId>%s pktIdSize>%u pktId>%s\n",
+            PLOG(PL_DETAIL, "Smf::ProcessPacket(): evaluating packet for forwarding: forward>%d flowIdSize>%u flowId>%s pktIdSize>%u pktId>%s\n",
                          ifaceForward, flowIdSize, flowIdText, pktIdSize, pktIdText);
         }
         // For Elastic Multicast, we always need to do the duplicate check
@@ -2163,7 +2159,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
         {
             if (dstIface.IsDuplicatePkt(current_update_time, flowId, flowIdSize, pktId, pktIdSize))
             {
-                PLOG(PL_DETAIL, "nrlsmf: received duplicate IPv%d packet ...\n", version);
+                PLOG(PL_DETAIL, "Smf::ProcessPacket(): received duplicate IPv%d packet ...\n", version);
                 dups_count++;
                 dstIface.IncrementDuplicateCount();
 #ifdef ELASTIC_MCAST
@@ -2177,14 +2173,14 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 duplicate = true;   // Smart Routing pays attention to both duplicates and non-duplicates, but will not forward duplicates.
                 if (isARAck)
                 {
-                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): Duplicate ACK!! Dropping...\n");
+                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): duplicate ACK!! dropping...\n");
                     return 0;
                 }
                 if (duplicateMark)
                 {
                     // We do not ack or forward if we fail both DPD's
                     adaptive = false; // This shouldn't even be ack'd, SmartRouting can ignore this.
-                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): Duplicate Packet!! \n");
+                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): duplicate packet!! \n");
                 }
 #endif // ADAPTIVE_ROUTING
             }
@@ -2201,7 +2197,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 	    {
 #ifdef ADAPTIVE_ROUTING
                 int temp = 0;
-                PLOG(PL_DEBUG, "Smf::ProcessPacket(): Local packet, noop.\n");
+                PLOG(PL_DEBUG, "Smf::ProcessPacket(): local packet, noop.\n");
 #else
                 PLOG(PL_DETAIL, "Smf::ProcessPacket() skipping locally-generated IP pkt\n");
                 return 0;
@@ -2225,7 +2221,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
         // Mark forward bool based on broadcast and DPD result
         if (adaptive && isSmartPkt && !IsOwnAddress(dstIp) && !duplicate)
         {
-            PLOG(PL_DEBUG, "Smf::ProcessPacket(): adaptive Routing processing \n ");
+            PLOG(PL_DEBUG, "Smf::ProcessPacket(): adaptive routing processing \n ");
             if (broadcast)
             {
                 ifaceForward = true;
@@ -2377,17 +2373,17 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                                                 (UINT32)ipv4Pkt.GetFragmentOffset(),
                                                                 IsOwnAddress(dstIp),
                                                                 smartPkt.flagIsSet(SmartPkt::FLAG_BCAST));
-            //PLOG(PL_DEBUG, "Smf::ProcessPacket(): Ack Built \n ");
+            PLOG(PL_DEBUG, "Smf::ProcessPacket(): Ack Built \n ");
             if (0 != ackLength)
             {
 
                 if (GetDebugLevel() >= PL_DEBUG)
                 {
-                    PLOG(PL_ALWAYS, "nrlsmf: sending Smart ACK for flow \"");
+                    PLOG(PL_DEBUG, "Smf::ProcessPacket(): sending Smart ACK for flow \"");
                     fibEntry->GetFlowDescription().Print();  // to debug output or log
                     PLOG(PL_ALWAYS, " to mac address %s\n", dstMac.GetHostString());
-                    PLOG(PL_DEBUG, "Source IP = %s\n", srcIface.GetIpAddress().GetHostString());
-                    PLOG(PL_DEBUG, "Destination IP= %s.\n" , dstIpAddr.GetHostString());
+                    PLOG(PL_DEBUG, "   source IP = %s\n", srcIface.GetIpAddress().GetHostString());
+                    PLOG(PL_DEBUG, "   destination IP= %s.\n" , dstIpAddr.GetHostString());
                 }
                 // Send the ack.
                 // If its a unicast, or if its a broadcast, need to send differently.
@@ -2398,11 +2394,11 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                         // broadcast packet
                         unsigned int ackDstIfIndices[dstIfArraySize];
                         unsigned int numInterfaces = GetInterfaceList(srcIface,ackDstIfIndices,dstIfArraySize);
-                        PLOG(PL_DEBUG, "Number of interfaces: %d\n", numInterfaces);
+                        PLOG(PL_DEBUG, "   number of interfaces: %d\n", numInterfaces);
                         for (int i = 0; i < numInterfaces; i++)
                         {
 
-                            PLOG(PL_DEBUG, "Sending over Interface %d: ID: %d, Addr: %s\n", i+1, ackDstIfIndices[i], GetInterface(ackDstIfIndices[i])->GetInterfaceAddress().GetHostString());
+                            PLOG(PL_DEBUG, "   sending via interface %d: ID: %d, Addr: %s\n", i+1, ackDstIfIndices[i], GetInterface(ackDstIfIndices[i])->GetInterfaceAddress().GetHostString());
                             output_mechanism->SendFrame(ackDstIfIndices[i], ((char*)ackBuffer) + 2, ackLength);
                         }
 
@@ -2410,26 +2406,26 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     else // forward unicast acknowlegement
                     {
 
-                        PLOG(PL_DEBUG, "Unicast forwarding \n" , dstIpAddr.GetHostString());
+                        PLOG(PL_DEBUG, "   unicast forwarding \n" , dstIpAddr.GetHostString());
                         MulticastFIB::UpstreamRelayList relay_list = smart_controller->accessDownstreamRelayList();
-                        PLOG(PL_DEBUG, "Retrieved Downsream interface list .\n" , dstIpAddr.GetHostString());
+                        PLOG(PL_DEBUG, "   retrieved Downsream interface list .\n" , dstIpAddr.GetHostString());
 
                         MulticastFIB::UpstreamRelay * nextHopRelay_ptr = (MulticastFIB::UpstreamRelay *)relay_list.FindUpstreamRelay(dstMac);
                         if (NULL != nextHopRelay_ptr)
                         {
-                            PLOG(PL_DEBUG, "Relay found\n");
+                            PLOG(PL_DEBUG, "   relay found\n");
                             output_mechanism->SendFrame(nextHopRelay_ptr->GetInterfaceIndex(), ((char*)ackBuffer) + 2, ackLength);
                         }
                         else
                         {
-                            PLOG(PL_ERROR, "No Relay with MAc address %s.... Broadcasting\n" , dstMac.GetHostString());
-                             unsigned int ackDstIfIndices[dstIfArraySize];
+                            PLOG(PL_ERROR, "   no relay with MAC address %s ... broadcasting\n" , dstMac.GetHostString());
+                            unsigned int ackDstIfIndices[dstIfArraySize];
                             unsigned int numInterfaces = GetInterfaceList(srcIface,ackDstIfIndices,dstIfArraySize);
-                            PLOG(PL_DEBUG, "Number of interfaces: %d\n", numInterfaces);
+                            PLOG(PL_DEBUG, "   number of interfaces: %d\n", numInterfaces);
                             for (int i = 0; i < numInterfaces; i++)
                             {
 
-                                PLOG(PL_DEBUG, "Sending over Interface %d: ID: %d, Addr: %s\n", i+1, ackDstIfIndices[i], GetInterface(ackDstIfIndices[i])->GetInterfaceAddress().GetHostString());
+                                PLOG(PL_DEBUG, "   sending over Interface %d: ID: %d, Addr: %s\n", i+1, ackDstIfIndices[i], GetInterface(ackDstIfIndices[i])->GetInterfaceAddress().GetHostString());
                                 output_mechanism->SendFrame(ackDstIfIndices[i], ((char*)ackBuffer) + 2, ackLength);
                             }
                         }
@@ -2486,9 +2482,9 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             }
             if (GetDebugLevel() >= PL_DEBUG)
             {
-                PLOG(PL_ALWAYS, "nrlsmf: sending Smart Packet for flow \"");
+                PLOG(PL_DEBUG, "Smf::ProcessPacket(): sending Smart Packet for flow \"");
                 fibEntry->GetFlowDescription().Print();  // to debug output or log
-                PLOG(PL_ALWAYS, " to  mac dest, %s\n", nextHop->GetAddress().GetHostString());
+                PLOG(PL_ALWAYS, " to mac dest: %s\n", nextHop->GetAddress().GetHostString());
             }
         }
         else
@@ -2527,7 +2523,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     
     if ((dstCount > 0) && ((ttl <= 1) && !outbound && !is_tunnel))
     {
-        PLOG(PL_DEBUG, "nrlsmf: received ttl-expired packet (ttl = %d)...\n", ttl);
+        PLOG(PL_DEBUG, "Smf::ProcessPacket(): received ttl-expired packet (ttl = %d)...\n", ttl);
         dstCount = 0;
     }
     if (dstCount > 0)
@@ -2585,9 +2581,9 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 
 #ifdef ADAPTIVE_ROUTING
     PLOG(PL_DEBUG, "Smf::ProcessPacket(): Return Value: %d\n",dstCount);
-    PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): After Mark: New IP Length: Total: %d\n", ipPkt.GetLength());
-    PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): After Mark: New IPv4 Length: Total: %d, Payload: %d\n", ipv4Pkt.GetLength(), ipv4Pkt.GetPayloadLength());
-    PLOG(PL_DEBUG, "Smf::ProcessOutboundPacket(): After Mark: New Eth Length: Total: %d, Payload: %d\n", ethPkt.GetLength(), ethPkt.GetPayloadLength());
+    PLOG(PL_DEBUG, "Smf::ProcessPacket(): After Mark: New IP Length: Total: %d\n", ipPkt.GetLength());
+    PLOG(PL_DEBUG, "Smf::ProcessPacket(): After Mark: New IPv4 Length: Total: %d, Payload: %d\n", ipv4Pkt.GetLength(), ipv4Pkt.GetPayloadLength());
+    PLOG(PL_DEBUG, "Smf::ProcessPacket(): After Mark: New Eth Length: Total: %d, Payload: %d\n", ethPkt.GetLength(), ethPkt.GetPayloadLength());
 #endif // ADAPTIVE_ROUTING
     PLOG(PL_DETAIL, "Smf::ProcessPacket(): Preparing to forward! Returning = %d \n", dstCount);
     return dstCount;
@@ -2605,6 +2601,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                                                double                         advMetric)        
 {
     
+    // NOTE - if (advMetric >= 0) this indicates that "advertise" mode is running and
+    //        either hop-based or ETX metric-based routing can be used.
     // This should be called _once_ for non-duplicate flow events (packet or EM-ADV reception) and only when
     // the "srcIface" is part of an elastic multicast interface group.
     if (GetDebugLevel() >= PL_DETAIL)
@@ -2822,12 +2820,12 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
         if (advMetric >= 0.0)
             upstreamRelay->SetAdvMetric(advMetric);
-        
         if (sendAck)
         {
             char ifaceName[IF_NAME_MAX+1];
             ProtoNet::GetInterfaceName(srcIface.GetIndex(), ifaceName, IF_NAME_MAX);
-            if (srcIface.UseETX())
+            //if (srcIface.UseETX())
+            if (advMetric >= 0.0)  // this means we are in "advertise" mode handling an advertisement
             {
                 MulticastFIB::UpstreamRelay* bestRelay = fibEntry->GetBestUpstreamRelay(currentTick);
                 if (NULL != bestRelay)
@@ -2836,7 +2834,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                     {
                         if (GetDebugLevel() >= PL_DEBUG)
                         {
-                            PLOG(PL_DEBUG, "%s is not the best relay ", upstreamRelay->GetAddress().GetHostString());
+                            PLOG(PL_DEBUG, "Smf::UpdateElasticRouting() %s is not the best relay ", upstreamRelay->GetAddress().GetHostString());
                             PLOG(PL_ALWAYS, "(%s) ...\n", bestRelay->GetAddress().GetHostString());
                         }
                         sendAck = false;  // don't ack this relay if it's not the best one
@@ -2872,10 +2870,11 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
     {
         char ifaceName[IF_NAME_MAX+1];
         ProtoNet::GetInterfaceName(srcIface.GetIndex(), ifaceName, IF_NAME_MAX);
-        if (!SendAck(srcIface, relayAddr, fibEntry->GetFlowDescription()))
+        if (SendAck(srcIface, relayAddr, fibEntry->GetFlowDescription()))
+            PLOG(PL_DETAIL, "Sending EM_ACK to relay %s ...\n", relayAddr.GetHostString());
+        else
             PLOG(PL_ERROR, "Smf::UpdateElasticRouting() error: EM_ACK transmission failure\n");
     }  // end if (sendAck)
-    
     return fibEntry;
 }  // end MulticastFIB::Entry* Smf::UpdateElasticRouting()
                                              
@@ -2941,7 +2940,6 @@ void Smf::HandleAdv(unsigned int                    currentTick,
     
     const ProtoAddress& relayAddr = (NULL != upstreamHistory) ? upstreamHistory->GetAddress() : srcMac;
     
-    
     if (srcIface.IsDuplicatePkt(current_update_time, flowId, flowIdSize, pktId, pktIdSize))
     {
         PLOG(PL_DEBUG, "Smf::HandleAdv() duplicate EM_ADV\n");
@@ -2950,7 +2948,10 @@ void Smf::HandleAdv(unsigned int                    currentTick,
         MulticastFIB::Entry* fibEntry = mcast_fib.FindBestMatch(flowDescription);
         if (NULL == fibEntry) return; // do nothing
         MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->FindUpstreamRelay(relayAddr);
-        if (NULL == upstreamRelay) return;  // no upstream relay state
+        if (NULL == upstreamRelay) 
+        {
+            return;  // no upstream relay state
+        }
         //upstreamRelay->SetAdvMetric(elasticAdv.GetMetric());
         //upstreamRelay->SetAdvTTL(elasticAdv.GetTTL());
         //upstreamRelay->SetAdvHopCount(elasticAdv.GetHopCount());
@@ -2982,7 +2983,7 @@ void Smf::HandleAdv(unsigned int                    currentTick,
         {
             PLOG(PL_ERROR, "Smf::HandleAdv() error: no upstream relay state established?!\n");
         } 
-    }    
+    }
 }  // end Smf::HandleAdv()
 
 
@@ -3127,107 +3128,6 @@ unsigned int Smf::UpdateUpstreamHistory(unsigned int                   currentTi
     }
  }  // end Smf::SendNack()
 
-/*
-MulticastFIB::UpstreamRelay* Smf::GetBestUpstreamRelay(MulticastFIB::Entry& fibEntry, unsigned int currentTick)
-{
-    MulticastFIB::UpstreamRelay* bestPathRelay = NULL;  // upstream relay with best overall path quality (lowest ETX metric)
-    MulticastFIB::UpstreamRelay* bestLinkRelay = NULL;  // upstream relay with best one-hop link quality
-    double bestLinkQuality = -1.0; 
-    double bestPathMetric = -1.0;
-    unsigned int bestLinkAge = 0;  // how long since last activitiy for this upstream 
-    unsigned int bestPathAge = 0;
-    MulticastFIB::UpstreamRelayList::Iterator uperator(fibEntry.AccessUpstreamRelayList());
-    MulticastFIB::UpstreamRelay* nextRelay;
-    while (NULL != (nextRelay = uperator.GetNextItem()))
-    {
-        unsigned int deadTime = nextRelay->Age(currentTick);
-        if (deadTime > MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT)
-        {
-            // Prune this "dead" upstream relay
-            fibEntry.AccessUpstreamRelayList().Remove(*nextRelay);
-            delete nextRelay;
-            continue;
-        }
-        Interface* iface = GetInterface(nextRelay->GetInterfaceIndex());
-        if (NULL == iface)
-        {
-            PLOG(PL_WARN, "Smf::GetBestUpstreamRelay() warning: upstream with unknown itnerface index?!\n");
-            continue;
-        }
-        MulticastFIB::UpstreamHistory* upstreamHistory = iface->FindUpstreamHistory(nextRelay->GetAddress());
-        double linkQuality = (NULL != upstreamHistory) ? upstreamHistory->GetLinkQuality() : -1.0;
-        unsigned int upstreamAge = nextRelay->Age(currentTick);
-        if (NULL != bestLinkRelay)
-        {
-            if (bestLinkAge >= MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT)
-            {
-                if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) || (linkQuality > bestLinkQuality))
-                {
-                    bestLinkRelay = nextRelay;
-                    bestLinkQuality = linkQuality;
-                    bestLinkAge = upstreamAge;
-                }
-            }
-            else if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) && (linkQuality > bestLinkQuality))
-            {
-                bestLinkRelay = nextRelay;
-                bestLinkQuality = linkQuality;
-                bestLinkAge = upstreamAge;
-            }
-        }
-        else
-        {
-            // Only upstream relay assessed so far
-            bestLinkRelay = nextRelay;
-            bestLinkQuality = linkQuality;
-            bestLinkAge = upstreamAge;
-        }
-        double pathMetric = -1.0;
-        if (nextRelay->AdvMetricIsValid())
-        {
-            pathMetric = nextRelay->GetAdvMetric();
-            if (linkQuality >= 0.0)
-                pathMetric += 1.0 / linkQuality;
-            else
-                pathMetric += 1.0;  // assume a perfect link in absence of measurement?
-            if (NULL != bestPathRelay)
-            {
-                if (bestPathAge >= MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT)
-                {
-                    if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) || (pathMetric < bestPathMetric))
-                    {
-                        bestPathRelay = nextRelay;
-                        bestPathMetric = pathMetric;
-                        bestPathAge = upstreamAge;
-                    }
-                }
-                else if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) && (pathMetric < bestPathMetric))
-                {
-                    bestPathRelay = nextRelay;
-                    bestPathMetric = pathMetric;
-                    bestPathAge = upstreamAge;
-                }
-            }
-            else
-            {
-                // Only upstream relay assessed so far
-                bestPathRelay = nextRelay;
-                bestPathMetric = pathMetric;
-                bestPathAge = upstreamAge;
-            }
-        }
-    }
-    if (NULL != bestPathRelay)
-        return bestPathRelay;
-    else
-        return bestLinkRelay;
-    
-}  // end Smf::GetBestUpstreamRelay()
-*/
-#endif // ELASTIC_MCAST
-
-
-#ifdef ELASTIC_MCAST
 bool Smf::SendAck(unsigned int                  ifaceIndex,   // interface it goes out on
                   const ProtoAddress&           upstreamAddr, // upstream to address it to
                   const ProtoFlow::Description& flowDescription)
@@ -3716,21 +3616,21 @@ void Smf::SetRelaySelected(bool state)
         PLOG(PL_DEBUG, "Smf::SetRelaySelected(false): ");
         if(delay_time==0)
         {
-            PLOG(PL_DEBUG, "Turning off now.\n");
+            PLOG(PL_DEBUG, "   Turning off now.\n");
             relay_selected=false;
         }
         else
         {
             if(!delay_relay_off_timer.IsActive())//timer isn't active so set correct timeout time and activate it
             {
-                PLOG(PL_DEBUG, "Turning off in %f.\n",delay_time);
+                PLOG(PL_DEBUG, "   Turning off in %f.\n",delay_time);
                 delay_relay_off_timer.SetInterval((delay_time));
                 delay_relay_off_timer.SetRepeat(1);
                 timer_mgr.ActivateTimer(delay_relay_off_timer);
             }
             else
             {
-                PLOG(PL_DEBUG, "Timer is active. Turning off in less than %f\n",delay_time);
+                PLOG(PL_DEBUG, "   Timer is active. Turning off in less than %f\n",delay_time);
                 //timer is active do nothing
             }
         }
@@ -3820,7 +3720,7 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
             //else if (MulticastFIB::ALLOW == fibEntry->GetDefaultForwardingStatus())
             //    status = "ALLOW";
             else
-                status = MulticastFIB::GetForwardingStatusString(fibEntry->GetDefaultForwardingStatus());
+                status = "ALLOW"; //MulticastFIB::GetForwardingStatusString(fibEntry->GetDefaultForwardingStatus());
             PLOG(PL_ALWAYS, " status:%s", status);
             bool ackingStatus = fibEntry->GetAckingStatus();
             PLOG(PL_ALWAYS, " acking:%d", ackingStatus);
@@ -3837,6 +3737,28 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
                         etx = 1.0/etx;
                     etx += upstream->GetAdvMetric();
                     PLOG(PL_ALWAYS, " upstream:%s metric:%lf hops:%u quality:%lf", upstream->GetAddress().GetHostString(), etx, (unsigned int)upstream->GetAdvHopCount(), upstream->GetLinkQuality());
+                }
+                // Iterate over matching outbound interface memberships and display next hops
+                // To do this, create a FlowDescription with interface wildcarded
+                const ProtoFlow::Description& fd = fibEntry->GetFlowDescription();
+                ProtoAddress dstAddr, srcAddr;
+                fd.GetDstAddr(dstAddr);
+                fd.GetSrcAddr(srcAddr);
+                ProtoFlow::Description flowDescription(dstAddr, srcAddr, fd.GetTrafficClass(), fd.GetProtocol());
+                MulticastFIB::MembershipTable& membershipTable = mcast_controller->AccessMembershipTable();
+                MulticastFIB::MembershipTable::Iterator iterator(membershipTable, &flowDescription);
+                MulticastFIB::Membership* membership;
+                PLOG(PL_ALWAYS, " downstreams:");
+                bool first = true;
+                while (NULL != (membership = iterator.GetNextEntry()))
+                {
+                    if (!membership->FlagIsSet(MulticastFIB::Membership::ELASTIC))
+                        continue; // this is a managed membership (not forwarded)
+                    if (first) 
+                        first = false;
+                    else
+                        PLOG(PL_ALWAYS, ",");
+                    membership->PrintDownstreamRelayList();
                 }
             }
             PLOG(PL_ALWAYS, "\n");

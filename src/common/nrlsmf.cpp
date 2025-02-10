@@ -991,7 +991,7 @@ void SmfApp::Usage()
                     "              [forward {on|off}][relay {on|off}][delayoff <value>]\n"
                     "              [device <vifName>,<ifaceName>[/{t|r}][,<addr>[/<maskLen>][,<addr2>[/<maskLen>]...]]]\n"
                     "              [rate [<iface>,]<bits/sec>][queue [<iface>,]<limit>][filterDups {on | off}]\n"
-                    "              [layered <ifaceList>][reliable <ifaceList>][advertise]\n"
+                    "              [layered <ifaceList>][reliable <ifaceList>][advertise][etx]\n"
                     "              [unicast {<group> | <unicastPrefix> | off}][encapsulate <ifaceList>]\n"
                     "              [dscpCapture <dscpValue>,<dscpValueList>]\n"
                     "              [dscpRelease <dscpValue>,<dscpValueList>]\n"
@@ -1026,6 +1026,7 @@ const char* const SmfApp::CMD_LIST[] =
     "+reliable",    // <ifaceList> : experimental reliable hop-by-hop forwarding option (adds UMP option to IPv4 packets)
     "+utos",        // <trafficClass> : set IP traffic class to be ignored by reliable forwarding
     "-advertise",   //  Sets elastic multicast operation to advertise flows instead of token-bucket limited forwarding
+    "+etx",         // <iface> use IP_UMP header extension to measure link quality and build/use ETX metric
     "+allow",       // {<filterSpec> | all}: set filter for flows that nrlsmf elastic mcast is allowed to forward.
     "+deny",        // {<filterSpec> | all}: set filter for flows that nrlsmf elastic mcast should ignore
     "+adaptive",    // <ifaceGroup>: enable Smart Routing for specific interface group
@@ -1261,13 +1262,15 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
     dispatcher.SetPriorityBoost(priority_boost);
 
     // List "own" addresses (MAC & IP src addrs) for fun
-    /*
-    ProtoAddressList::Iterator it(smf.AccessOwnAddressList());
-    ProtoAddress nextAddr;
-    while (it.GetNextAddress(nextAddr))
-        PLOG(PL_INFO, "interface addr:%s %s\n", nextAddr.GetHostString(),
-                nextAddr.IsLinkLocal() ? "(link local)" : "");
-    */
+    if (GetDebugLevel() >= PL_INFO)
+    {
+        PLOG(PL_INFO, "SmfApp::OnStartup() Interface addresses:\n");
+        ProtoAddressList::Iterator it(smf.AccessOwnAddressList());
+        ProtoAddress nextAddr;
+        while (it.GetNextAddress(nextAddr))
+            PLOG(PL_INFO, "  interface addr:%s %s\n", nextAddr.GetHostString(),
+                    nextAddr.IsLinkLocal() ? "(link local)" : "");
+    }
     return true;
 }  // end SmfApp::OnStartup()
 
@@ -1700,7 +1703,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
 	                if(arrayDSCP[i] > 0)
                     {
 		                dscpflag = true;
-		                //PLOG(PL_INFO, "SmfApp::OnCommand(unicast) DSCP: %d\n", i);
+		                PLOG(PL_DETAIL, "SmfApp::OnCommand(unicast) DSCP: %d\n", i);
 		                hookUnicastFlags = detour_ipv4_unicast_flags | ProtoDetour::INPUT | ProtoDetour::OUTPUT;
 		                if (!SetupIPv4UnicastDetour(hookUnicastFlags, val, i))
                         {
@@ -1794,7 +1797,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         smf.SetDefaultForwardingStatus(MulticastFIB::HYBRID);
         mcast_controller.SetDefaultForwardingStatus(MulticastFIB::HYBRID);
 #else
-        PLOG(PL_ERROR, "SmfApp::OnCommand(advertise) error: 'advertise' option only supported elastic multicast build\n");
+        PLOG(PL_ERROR, "SmfApp::OnCommand(advertise) error: 'advertise' option only supported with 'elastic' multicast build\n");
 #endif
     }
     else if (!strncmp("etx", cmd, len))
@@ -1815,7 +1818,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             iface->SetETX(true);
         }
 #else
-        PLOG(PL_ERROR, "SmfApp::OnCommand(etx) error: 'etx' option only supported elastic multicast build\n");
+        PLOG(PL_ERROR, "SmfApp::OnCommand(etx) error: 'etx' option only supported with 'elastic' multicast build\n");
 #endif // if/else ELASTIC_MCAST
     }
     else if (!strncmp("reliable", cmd, len))
@@ -3053,7 +3056,7 @@ void SmfApp::ParseDSCPList(const char* strDSCPList, int cmd)
 void SmfApp::DisplayGroups()
 {
     if (GetDebugLevel() < PL_DEBUG) return;
-    PLOG(PL_DEBUG, "CURRENT GROUPS:\n");
+    PLOG(PL_DEBUG, "SmfApp::DisplayGroups()\n");
     Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
     Smf::InterfaceGroup* group;
     while (NULL != (group = grouperator.GetNextItem()))
@@ -4901,7 +4904,6 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 			                ipv4Pkt.GetSrcAddr(srcIP);
 			                UINT16 newseq = smf.IncrementIPv4LocalSequence(&srcIP);
 			                ipv4Pkt.SetID(newseq, true);
-			                //PLOG(PL_INFO, "SEQUENCE: %d IPID: %d\n", newseq, ipv4Pkt.GetID());
 			            }
 			            bufPtr = (UINT8*)(buffer+msgHdrLen+ethHdrLen + 16); // Points to the IP destination address
 			            if((*bufPtr & 0xf0) != 224)
@@ -5115,7 +5117,6 @@ bool SmfApp::OnIgmpQueryTimeout(ProtoTimer& theTimer)
 void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
 	                     ProtoChannel::Notification notifyType)
 {
-    //PLOG(PL_DEBUG, "SmfApp::OnPktOutput(): Function called.\n");
     // Read packets from IP stack and output to associated ProtoCap
     ProtoVif& vif = static_cast<ProtoVif&>(theChannel);
     Smf::Interface* iface = reinterpret_cast<Smf::Interface*>((void*)vif.GetUserData());
@@ -5470,7 +5471,10 @@ void SmfApp::OnPktCapture(ProtoChannel&              theChannel,
                 PLOG(PL_ERROR, "SmfApp::OnPktCapture() ProtoCap::Recv() error\n");
                 break;
             }
-            if (0 == numBytes) break;  // no more packets to receive
+            if (0 == numBytes) 
+            {
+                break;  // no more packets to receive
+            }
             if (ProtoCap::INBOUND != direction) continue;  // only handle inbound packets
             PLOG(PL_DETAIL, "SmfApp::OnPktCapture() calling HandleInboundPacket\n");
             HandleInboundPacket(alignedBuffer, numBytes, cap);
@@ -5868,7 +5872,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
                 PLOG(PL_WARN, "SmfApp::HandleInboundPacket() warning: invalid IGMP message?!\n");
         }
 
-        //PLOG(PL_DEBUG, "SmfApp::HandleInboundPacket(): Calling Process Packet \n" );
+        PLOG(PL_DETAIL, "SmfApp::HandleInboundPacket(): Calling Process Packet \n" );
         dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, dstMacAddr, *srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt, false, &isDuplicate);
         PLOG(PL_DETAIL, "SmfApp::HandleInboundPacket(): Called ProcessPacket, return value  = %d \n", dstCount);
         if (dstCount < 0) result = false;
@@ -5918,7 +5922,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
     ProtoVif* vif = mech->GetProtoVif();
     if ((NULL != vif) && (dstCount >= 0))  // A non-NULL vif indicates it's an SmfDevice interface
     {
-        //PLOG(PL_DEBUG, "SmfApp::HandleInboundPacket(): Non-Null VIF \n" );
+        //PLOG(PL_DEBUG, "SmfApp::HandleInboundPacket(): non-NULL VIF \n" );
         // Is it for me? (check for multicast/broadcast MAC dest or matching MAC address for us
         ProtoAddress dstMacAddr;
         ethPkt.GetDstAddr(dstMacAddr);
@@ -5980,7 +5984,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
     //  "nrlsmf device" option and the "tap" could be handled differently.
     if (dstCount > 0)
     {
-        //PLOG(PL_DEBUG, "SmfApp::HandleInboundPacket():Forwarding \n" );
+        //PLOG(PL_DETAIL, "SmfApp::HandleInboundPacket(): Forwarding \n" );
         // If the "tap" (diversion to another process) has been activated, pass the packet that
         // would have been forwarded this process.  That process may filter the packet and use
         // the "smfInject" command to return the packet to "nrlsmf" for final forwarding.
@@ -6514,18 +6518,15 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
 		        ip4Pkt.GetDstAddr(dstAddr);
  		        if(dstAddr.IsMulticast() || (!dstAddr.IsMulticast() && direction == ProtoDetour::OUTBOUND && tap_active))
                 {
-		            //PLOG(PL_INFO, "   !!! SmfApp::OnPktIntercept() Allow OUTBOUND || dstAddr.IsMulticast() !!!\n");
 		            detour.Allow((char*)ipBuffer, numBytes);
 		        }
                 else if (destPktFlag)
                 {
 		            // I am the destination for this packet
-		            //PLOG(PL_INFO, "   !!! SmfApp::OnPktIntercept() Allow destPktFlag; Packet sent to me !!!\n");
 		            detour.Allow((char*)ipBuffer, numBytes);
 		        }
                 else
                 {
-		            //PLOG(PL_INFO, "SmfApp::OnPktIntercept() Drop packet\n");
 		            detour.Drop();
 		        }
             }

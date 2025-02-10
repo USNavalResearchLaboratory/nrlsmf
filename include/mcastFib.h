@@ -465,14 +465,14 @@ class MulticastFIB
 
 
             private:
-				double 		     learning_rate;         // Maintains the learning-rate (gamma) parameter for the SRR algorithm
+				double           learning_rate;         // Maintains the learning-rate (gamma) parameter for the SRR algorithm
                 ProtoAddressList rl_metrics;            // A MAC-address-indexed table of RL_Metric_Tuples
                 ProtoAddressList sentPackets;           // A MAC_address-indexed table of sequence number lists -> used for C factor computation.
                 ProtoAddressList timeTable;             // A MAC address-indexed table of sequence number keyed maps, where values are times.
                 ProtoAddressList timeStats;             // A MAC address-indexed table of PacketTimer objects
 		};
 
-        // A per-flow talbe of RL_Data objects.
+        // A per-flow table of RL_Data objects.
 		class RL_Table : public ProtoFlow::TableTemplate<RL_Data, ProtoTree>
 		{
             public:
@@ -676,7 +676,7 @@ class MulticastFIB
 
         class MembershipTable;  // forward declaration to support friendship
         
-        // This is used to track downstream relays actively ACKing a membership
+        // This is used to track downstream relays actively ACKing a membership/flow
         // (this thus tracks "next hop" relays for a given flow.  Note that a 
         // "next hop" DownstreamRelay may be a destination and not necessarily a relay
         class DownstreamRelay : public ProtoList::Item
@@ -707,12 +707,12 @@ class MulticastFIB
                 unsigned int GetTimeoutTick() const
                     {return elastic_timeout_tick;}
                 
-                //void ResetIdleCount()
-                //    {idle_count.Reset();}
+                void ResetIdleCount()
+                    {idle_count.Reset();}
                 unsigned int IncrementIdleCount(unsigned int count = 1)
                     {return idle_count.Increment(count);}
-                //unsigned int GetIdleCount() const
-                //    {return idle_count.GetValue();}
+                unsigned int GetIdleCount() const
+                    {return idle_count.GetValue();}
                 bool IsIdle(unsigned int idleThreshold)
                     {return (idle_count.GetValue() >= idleThreshold);}
                 
@@ -721,16 +721,11 @@ class MulticastFIB
                 ProtoAddress    ip_addr;
                 ProtoAddress    mac_addr;
                 IdleCounter     idle_count;
-                unsigned int    elastic_timeout_tick;  
+                unsigned int    elastic_timeout_tick;
                 
         };  // end class MulticastFIB::DownstreamRelay
         
-        class DownstreamRelayList : public ProtoListTemplate<DownstreamRelay>
-        {
-            public:
-                //DownstreamRelay* FindRelay(const ProtoAddress& srcIp)
-                //    {return Find(srcIp.GetRawHostAddress(), srcIp.GetLength() << 3);}
-        };
+        class DownstreamRelayList : public ProtoListTemplate<DownstreamRelay> {};
 
         class Membership : public ProtoFlow::EntryTemplate<ProtoIndexedQueue>
         {
@@ -786,7 +781,7 @@ class MulticastFIB
                 bool ActivateDownstreamRelay(const ProtoAddress& srcIp, 
                                              const ProtoAddress& srcMac, 
                                              unsigned int        refreshTick,  // currentTick or last refreshTick
-                                             unsigned int        timeoutTick); // 
+                                             unsigned int        timeoutTick); //
                 bool UpdateDownstreamRelays(unsigned int pktCount);
                 bool DeactivateDownstreamRelay(unsigned int currentTick);
                 unsigned int GetNextElasticTimeoutTick() const
@@ -814,7 +809,7 @@ class MulticastFIB
                 unsigned int            elastic_timeout_tick;
                 unsigned int            elastic_timeout_active;
                 ForwardingStatus        default_forwarding_status;
-                DownstreamRelayList    downstream_relay_list;  // TBD - move idle_count into this???
+                DownstreamRelayList     downstream_relay_list;  // TBD - move idle_count into this???
                 unsigned int            downstream_relay_count;
 
         };  // end class MulticastFIB::Membership
@@ -1258,6 +1253,9 @@ class ElasticMulticastController
         
         bool HasPolicies() const
             {return !policy_table.IsEmpty();}
+        
+        MulticastFIB::MembershipTable& AccessMembershipTable() 
+            {return membership_table;}
         
         
         // NEXT STEP - IMPLEMENT MECHANISM TO SEND ACKS to UPSTREAM FORWARDERS

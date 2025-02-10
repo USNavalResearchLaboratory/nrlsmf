@@ -13,7 +13,7 @@
 #define USE_PREEMPTIVE_ACK 1
 
 const unsigned int MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT = (1 * 1000000);  // 1 seconds in microseconds (this is a short timeout since active relays should be sending traffic, too)
-                                                                                // (this short timeout lets us rapidly adapt to a secondary relay when the primary goes quiet)
+                                                                                // (this short timeout lets us rapidly adapt to a secondary upstream relay when the primary goes quiet)
                                                                                 
 const unsigned int MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT = (30 * 1000000);   // 30 seconds in microseconds
 
@@ -70,6 +70,7 @@ MulticastFIB::Membership::Membership(unsigned int           ifaceIndex,
 
 MulticastFIB::Membership::~Membership()
 {
+    downstream_relay_list.Destroy();
 }
 
 bool MulticastFIB::Membership::ActivateDownstreamRelay(const ProtoAddress&  srcIp, 
@@ -117,6 +118,7 @@ bool MulticastFIB::Membership::ActivateDownstreamRelay(const ProtoAddress&  srcI
     if (NULL != match)
     {
         match->SetTimeoutTick(timeoutTick);
+        match->ResetIdleCount();
         // Move to end of downstream_relay_list
         downstream_relay_list.Remove(*match);
         downstream_relay_list.Append(*match);
@@ -130,10 +132,11 @@ bool MulticastFIB::Membership::ActivateDownstreamRelay(const ProtoAddress&  srcI
         }
         else if (NULL == (cache = new DownstreamRelay(srcIp, srcMac)))
         {
-            PLOG(PL_FATAL, "MulticastFIB::Membership::ActivateDownstreamRelay() new DownstreamRelay error: %s\n", GetErrorString());
+            PLOG(PL_ERROR, "MulticastFIB::Membership::ActivateDownstreamRelay() new DownstreamRelay error: %s\n", GetErrorString());
             return false;
         }
         cache->SetTimeoutTick(timeoutTick);
+        cache->ResetIdleCount();
         downstream_relay_list.Append(*cache);
         downstream_relay_count++;
         relaysChanged = true;
@@ -179,7 +182,7 @@ bool MulticastFIB::Membership::UpdateDownstreamRelays(unsigned int pktCount)
     DownstreamRelay* next;
     while (NULL != (next = iterator.GetNextItem()))
     {
-        if (next->IncrementIdleCount() >= idle_count_threshold)
+        if (next->IncrementIdleCount(pktCount) >= idle_count_threshold)
         {
             downstream_relay_list.Remove(*next);
             downstream_relay_count--;
@@ -196,7 +199,10 @@ void MulticastFIB::Membership::PrintDownstreamRelayList(FILE* filePtr) // to Pro
     DownstreamRelayList::Iterator iterator(downstream_relay_list);
     DownstreamRelay* relay = iterator.GetNextItem();
     // Print first item without comma and remainder with leading comma delimiter
-    if (NULL != relay) fprintf(filePtr, "%s", relay->GetIpAddr().GetHostString());
+    if (NULL != relay) 
+        fprintf(filePtr, "%s", relay->GetIpAddr().GetHostString());
+    else
+        fprintf(filePtr, "(none)");
     while (NULL != (relay = iterator.GetNextItem()))
     {
         fprintf(filePtr, ",%s", relay->GetIpAddr().GetHostString());
@@ -797,6 +803,7 @@ void MulticastFIB::UpstreamRelay::UpdatePacketRate(unsigned int currentTick)
 
 void MulticastFIB::UpstreamRelay::Refresh(unsigned int currentTick)//, unsigned int count)
 {
+    //PLOG(PL_DETAIL, "UpstreamRelay::Refresh(relay:%s currentTick:%u delta:%lf) ...\n", relay_addr.GetHostString(), currentTick, delta);
     if (0 == update_count)
     {
         update_start = currentTick;
@@ -1528,16 +1535,23 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
         double linkQuality = nextRelay->GetLinkQuality();
         if (NULL != bestLinkRelay)
         {
-            if (bestLinkAge >= MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT)
+            bool bestLinkTimeout = bestLinkAge >= (IsActive() ? MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT :
+                                                               MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT);
+            bool upstreamRelayActive = upstreamAge < (IsActive() ? MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT :
+                                                                   MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT);
+            if (bestLinkTimeout)
+            //if (bestLinkAge >= MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT)
             {
-                if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) || (linkQuality > bestLinkQuality))
+                if (upstreamRelayActive || (linkQuality > bestLinkQuality))
+                //if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) || (linkQuality > bestLinkQuality))
                 {
                     bestLinkRelay = nextRelay;
                     bestLinkQuality = linkQuality;
                     bestLinkAge = upstreamAge;
                 }
             }
-            else if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) && (linkQuality > bestLinkQuality))
+            else if (upstreamRelayActive && (linkQuality > bestLinkQuality))
+            //else if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) && (linkQuality > bestLinkQuality))
             {
                 bestLinkRelay = nextRelay;
                 bestLinkQuality = linkQuality;
@@ -1555,6 +1569,8 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
         double pathMetric = -1.0;
         if (nextRelay->AdvMetricIsValid())
         {
+            // In this section, the DEFAULT_RELAY_ACTIVE_TIMEOUT (short timeout) is
+            // only considered when the flow is active.  
             pathMetric = nextRelay->GetPathMetric();
             lossMetric = pathMetric - nextRelay->GetAdvHopCount();
             if (NULL != bestPathRelay)
@@ -1566,9 +1582,15 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
                     thePathMetric = lossMetric;
                     theBestPathMetric = bestLossMetric;
                 }
-                if (bestPathAge >= MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT)
+                bool bestPathTimeout = bestPathAge >= (IsActive() ? MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT :
+                                                                    MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT);
+                bool upstreamRelayActive = upstreamAge < (IsActive() ? MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT :
+                                                                       MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT);
+                if (bestPathTimeout)
+                //if (bestPathAge >= MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT)
                 {
-                    if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) || (thePathMetric < theBestPathMetric))
+                    if (upstreamRelayActive || (thePathMetric < theBestPathMetric))
+                    //if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) || (thePathMetric < theBestPathMetric))
                     {
                         bestPathRelay = nextRelay;
                         bestPathMetric = pathMetric;
@@ -1576,7 +1598,8 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
                         bestLossMetric = lossMetric;
                     }
                 }
-                else if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) && (thePathMetric < theBestPathMetric))
+                else if (upstreamRelayActive && (thePathMetric < theBestPathMetric))
+                //else if ((upstreamAge < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT) && (thePathMetric < theBestPathMetric))
                 {
                     bestPathRelay = nextRelay;
                     bestPathMetric = pathMetric;
@@ -1596,8 +1619,16 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
     }
     if (NULL != bestPathRelay)
     {
-        if ((NULL != best_relay) && (best_relay->GetAdvMetric() >= 0.0) && (best_relay != bestPathRelay) && 
-            (best_relay->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT))
+        bool bestRelayActive = false;
+        if (NULL != best_relay)
+        {
+            bestRelayActive = best_relay->Age(currentTick) < (IsActive() ? MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT :
+                                                                           MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT);
+        }
+        if ((NULL != best_relay) && (best_relay->GetAdvMetric() >= 0.0) && 
+            (best_relay != bestPathRelay) && bestRelayActive)
+        //if ((NULL != best_relay) && (best_relay->GetAdvMetric() >= 0.0) && 
+        //    (best_relay != bestPathRelay) && (best_relay->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT))
         {
             // Only select a new upstream relay if > 10% improvement
             double priorPathMetric = best_relay->GetPathMetric();
@@ -1619,7 +1650,7 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
         {
             if (GetDebugLevel() >= PL_INFO)
             {
-                PLOG(PL_INFO, "nrlsmf: new upstream relay %s with metric>%lf for flow ", bestPathRelay->GetAddress().GetHostString(), bestPathMetric);
+                PLOG(PL_INFO, "nrlsmf: new upstream path relay %s with metric>%lf for flow ", bestPathRelay->GetAddress().GetHostString(), bestPathMetric);
                 GetFlowDescription().Print();
                 if (NULL != best_relay)
                 {
@@ -1650,10 +1681,7 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
     return best_relay;
     
 }  // end MulticastFIB::Entry::GetBestUpstreamRelay()
-
-
-
-
+        
 MulticastFIB::TokenBucket* MulticastFIB::Entry::GetBucket(unsigned int ifaceIndex)
 {
     TokenBucket* bucket = bucket_list.FindBucket(ifaceIndex);
@@ -2326,7 +2354,7 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
 
     if (GetDebugLevel() >= PL_DETAIL)
     {
-        PLOG(PL_DETAIL, "nrlsmf: recv'd EM_ACK for flow ");
+        PLOG(PL_DETAIL, "ElasticMulticastController::HandleAck() recv'd EM_ACK for flow ");
         membershipDescription.Print();
         PLOG(PL_ALWAYS, " from %s\n", ackSrcIp.GetHostString());
     }
@@ -2338,7 +2366,7 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
         // TBD - what if we already have a broader scope membership? 
         if (GetDebugLevel() >= PL_DEBUG)
         {
-            PLOG(PL_DEBUG, "nrlsmf: recv'd EM-ACK, adding membership: ");
+            PLOG(PL_DEBUG, "ElasticMulticastController::HandleAck() recv'd EM-ACK, adding membership: ");
             membershipDescription.Print();
             PLOG(PL_ALWAYS, "\n");
         }
@@ -2355,7 +2383,7 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
     // Activate (or refresh) ELASTIC membership
     if (GetDebugLevel() >= PL_DEBUG)
     {
-        PLOG(PL_DEBUG, "nrlsmf: recv'd EM-ACK, activating/refreshing membership: ");
+        PLOG(PL_DEBUG, "ElasticMulticastController::HandleAck() recv'd EM-ACK, activating/refreshing membership: ");
         membershipDescription.Print();
         PLOG(PL_ALWAYS, "\n");
     }
@@ -2463,10 +2491,10 @@ void ElasticMulticastController::DeactivateMembership(MulticastFIB::Membership& 
 
 void ElasticMulticastController::OnDownstreamRelayChange(MulticastFIB::Membership& membership, bool idle)
 {
-    if (GetDebugLevel() >= PL_INFO)
+    if (GetDebugLevel() >= PL_DEBUG)
     {
         // Note if "idle" is true, then the relay set changed due idle_count (no ACKs for threshold pkt count)
-        PLOG(PL_ALWAYS, "ElasticMulticastController::OnDownstreamRelayChange(%s) membership>", idle ? "idle" : "");
+        PLOG(PL_DEBUG, "ElasticMulticastController::OnDownstreamRelayChange(%s) membership>", idle ? "idle" : "");
         membership.GetFlowDescription().Print();
         PLOG(PL_ALWAYS, " nextHops>");
         membership.PrintDownstreamRelayList();
@@ -2488,7 +2516,7 @@ bool ElasticMulticastController::OnMembershipTimeout(ProtoTimer& theTimer)
             MulticastFIB::Membership::Flag timeoutFlag = leader->GetTimeoutFlag();
             if (GetDebugLevel() >= PL_DEBUG)
             {
-                PLOG(PL_DEBUG, "nrlsmf: %s membership timeout for flow ",
+                PLOG(PL_DEBUG, "ElasticMulticastController::OnMembershipTimeout() %s membership timeout for flow ",
                         (MulticastFIB::Membership::ELASTIC == timeoutFlag) ? "ELASTIC" : "IGMP");
                 leader->GetFlowDescription().Print();
                 PLOG(PL_ALWAYS, "\n");
@@ -2498,7 +2526,7 @@ bool ElasticMulticastController::OnMembershipTimeout(ProtoTimer& theTimer)
                 // At least one of DownstreamRelays for this interface-specific Membership has timed out
                 if (!leader->DeactivateDownstreamRelay(currentTick))
                 {
-                    OnDownstreamRelayChange(*leader, false);  // relay set changed due timeout
+                    OnDownstreamRelayChange(*leader, false);  // relay set changed due to timeout
                 }
                 // Need to check if this was actually the only remaining DownstreamRelay to confirm
                 // that the memberhip should be deactivated versus just updating it.
@@ -2577,7 +2605,7 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
 {
     if (GetDebugLevel() >= PL_DEBUG)
     {
-        PLOG(PL_DEBUG, "nrlsmf: controller update for flow: ");
+        PLOG(PL_DEBUG, "ElasticMulticastController::Update(): controller update for flow: ");
         flowDescription.Print();
         PLOG(PL_ALWAYS, " from upstream relay %s (pktCount: %u)\n", relayAddr.GetHostString(), pktCount);
     }
@@ -2603,7 +2631,7 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
                 // We haven't gotten an ACK recently enough for this membership/interface
                 if (GetDebugLevel() >= PL_DEBUG)
                 {
-                    PLOG(PL_DEBUG, "nrlsmf: ELASTIC membership idle for flow ");
+                    PLOG(PL_DEBUG, "ElasticMulticastController::Update(): ELASTIC membership idle for flow ");
                     flowDescription.Print();
                     PLOG(PL_ALWAYS, " totalCount:%u threshold:%u\n", totalPktCount,
                             membership->GetIdleCount());
@@ -2613,13 +2641,14 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
                                                      membership->GetInterfaceIndex(), 
                                                      membership->GetDefaultForwardingStatus(), 
                                                      oldAckingStatus, false);
-                OnDownstreamRelayChange(*membership, true);  // due to unacknowledge pkt count execeeding idle_threshold
-                TRACE("idle - membership flags: %d\n", membership->GetFlags());
+                // This should generally return true
+                if (membership->UpdateDownstreamRelays(pktCount))
+                    OnDownstreamRelayChange(*membership, true);  
                 if (0 == membership->GetFlags())
                 {
-                    //if (GetDebugLevel() >= PL_DEBUG)
+                    if (GetDebugLevel() >= PL_DEBUG)
                     {
-                        PLOG(PL_DEBUG, "nrlsmf: removing membership ");
+                        PLOG(PL_DEBUG, "ElasticMulticastController::Update(): removing membership ");
                         flowDescription.Print();
                         PLOG(PL_ALWAYS, "\n");
                     }
@@ -2635,9 +2664,7 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
             {
                 // Since the membership is still active, prune any idle downstream relays
                 if (membership->UpdateDownstreamRelays(pktCount))
-                {
                     OnDownstreamRelayChange(*membership, true);  // due to unacknowledge pkt count execeeding idle_threshold
-                }
                 ASSERT(0 != membership->GetDownstreamRelayCount());
                 ackingStatus = true;
             }
