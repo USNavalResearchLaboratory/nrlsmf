@@ -3963,7 +3963,7 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
                         if (&ifaceGroup != &assoc->GetInterfaceGroup())
                         {
                             PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() error: merge iface index %d already has a different association with index %d?!\n",
-                                       srcIface->GetIndex(), iface->GetIndex());
+                                            iface->GetIndex(), dstIface->GetIndex());
                             return false;
                         }
                     }
@@ -3997,7 +3997,7 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
                         if (&ifaceGroup != &assoc->GetInterfaceGroup())
                         {
                             PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() error: MANET iface index %d already has a different association with index %d?!\n",
-                                       srcIface->GetIndex(), iface->GetIndex());
+                                           iface->GetIndex(), dstIface->GetIndex());
                             return false;
                         }
                     }
@@ -6100,13 +6100,13 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
             // Get list of current addresses assigned to the interface to properly update our
             ProtoAddressList addrList;
             if (!ProtoNet::GetInterfaceAddressList(ifIndex, ProtoAddress::ETH, addrList))
-                PLOG(PL_WARN, "SmfApp::MonitorEventHandler() error: couldn't retrieve Ethernet address for iface: %s\n", ifName);
+                PLOG(PL_WARN, "SmfApp::MonitorEventHandler() warning: couldn't retrieve Ethernet address for iface: %s\n", ifName);
             if (!ProtoNet::GetInterfaceAddressList(ifIndex, ProtoAddress::IPv4, addrList))
-                PLOG(PL_WARN, "SmfApp::MonitorEventHandler() error: couldn't retrieve IPv4 address for iface: %s\n", ifName);
+                PLOG(PL_WARN, "SmfApp::MonitorEventHandler() warning: couldn't retrieve IPv4 address for iface: %s\n", ifName);
             if (!ProtoNet::GetInterfaceAddressList(ifIndex, ProtoAddress::IPv6, addrList))
-                PLOG(PL_WARN, "SmfApp::MonitorEventHandler() error: couldn't retrieve IPv6 address for iface: %s\n", ifName);
+                PLOG(PL_WARN, "SmfApp::MonitorEventHandler() warning: couldn't retrieve IPv6 address for iface: %s\n", ifName);
             if (addrList.IsEmpty())
-                PLOG(PL_WARN, "SmfApp::MonitorEventHandler() error: no IP addresses found for iface: %s\n", ifName);
+                PLOG(PL_WARN, "SmfApp::MonitorEventHandler() warning: no IP addresses found for iface: %s\n", ifName);
 
             // TBD - if an interface has no addresses left, should we consider it "down"?
             ProtoAddressList& localAddrList = smf.AccessOwnAddressList();
@@ -6140,13 +6140,24 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
                 smf.AddOwnAddress(addr, ifIndex);
             }
             if (!ifaceAddrList.AddList(addrList))
-                PLOG(PL_ERROR, "SmfApp::MonitorEventHandler() error: unable to add interface addresses!\n");
+            {
+                // TBD - This may be failing because there is an invalid address in the list (not sure how it got in there?)
+                PLOG(PL_ERROR, "SmfApp::MonitorEventHandler() error: unable to add interface addresses for index:%d!\n", ifIndex);
+                //continue;
+            }
             // Update Smf::Interface if_addr and ip_addr just in case
             ProtoAddress ifAddr;
             ProtoNet::GetInterfaceAddress(iface->GetIndex(), ProtoAddress::ETH, ifAddr);
-            smf.AddOwnAddress(ifAddr, iface->GetIndex());
-            iface->SetInterfaceAddress(ifAddr);
-            iface->UpdateIpAddress();
+            if (ProtoAddress::INVALID != ifAddr.GetType())
+            {
+                smf.AddOwnAddress(ifAddr, iface->GetIndex());
+                iface->SetInterfaceAddress(ifAddr);
+                iface->UpdateIpAddress();
+            }
+            else
+            {
+                PLOG(PL_WARN, "SmfApp::MonitorEventHandler() warning: interface index %d has no ETH address\n", iface->GetIndex());
+            }
         }  // end while()
         DisplayGroups();
     }
