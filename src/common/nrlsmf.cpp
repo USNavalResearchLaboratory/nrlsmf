@@ -4016,12 +4016,11 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
         }  // end switch(ifaceGroup.GetForwardingMode())
     }  // end while(ifacerator.GetNextInterface())
 
-
-    // This loop iterates through the group's interfaces and updates
-    // their ProtoCap status depending on if the interface is using
-    // the ProtoCap for packet capture and/or forwarding.  Even if the
-    // ProtoCap isn't used for capture, a ProtoCap may be needed
-    // to force the interface into promiscuous mode so that
+    // This loop iterates through the interface group's interfaces and 
+    // updates their ProtoCap status depending on if the interface is 
+    // using the ProtoCap for packet capture and/or forwarding.  Even 
+    // if the ProtoCap isn't used for capture, a ProtoCap may be 
+    // needed to force the interface into promiscuous mode so that
     // "firewallCapture" has a chance to get packets of interest.
     ifacerator.Reset();
     while (NULL != (iface = ifacerator.GetNextInterface()))
