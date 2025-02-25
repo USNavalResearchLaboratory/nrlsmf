@@ -1418,10 +1418,9 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             }
 
 #endif // ADAPTIVE_ROUTING
-
             // don't forward locally-generated packets // unless unicast enabled
             if (!outbound && IsOwnAddress(srcIp)) // && (dstIp.IsMulticast() || !GetUnicastEnabled()))
-	        {
+            {
                 // Locally generated packet
                 PLOG(PL_DEBUG, "Smf::ProcessPacket() skipping locally-generated IPv4 pkt\n");
                 if (NULL != recvDup) *recvDup = true; // so we don't receive our own unicast packets unnecessarily
@@ -3753,7 +3752,7 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
                 while (NULL != (membership = iterator.GetNextEntry()))
                 {
                     if (!membership->FlagIsSet(MulticastFIB::Membership::ELASTIC))
-                        continue; // this is a managed membership (not forwarded)
+                        continue; // this is a locally managed membership (not forwarded)
                     if (first) 
                         first = false;
                     else
