@@ -399,7 +399,7 @@ class SmfApp : public ProtoApp
 #endif // ELASTIC_MCAST
 #ifdef ADAPTIVE_ROUTING
         SmartController             smart_controller;
-#endif
+#endif // ADAPTIVE_ROUTING
         bool                        elastic_mcast;    // set to "true" when Elastic Multicast is active
         bool                        adaptive_routing;
 
@@ -1027,6 +1027,9 @@ const char* const SmfApp::CMD_LIST[] =
     "+utos",        // <trafficClass> : set IP traffic class to be ignored by reliable forwarding
     "-advertise",   //  Sets elastic multicast operation to advertise flows instead of token-bucket limited forwarding
     "+etx",         // <iface> use IP_UMP header extension to measure link quality and build/use ETX metric
+    "+flow",        // [<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)
+    "+join",        // [<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)
+    "+leave",       // [<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)
     "+allow",       // {<filterSpec> | all}: set filter for flows that nrlsmf elastic mcast is allowed to forward.
     "+deny",        // {<filterSpec> | all}: set filter for flows that nrlsmf elastic mcast should ignore
     "+adaptive",    // <ifaceGroup>: enable Smart Routing for specific interface group
@@ -1639,7 +1642,8 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                 while (iterator.GetNextAddress(addr))
                 {
                     if (addr.IsLinkLocal()) continue;
-                    if (!mcast_controller.AddManagedMembership(iface->GetIndex(), addr))
+                    ProtoFlow::Description flowDescription(addr, PROTO_ADDR_NONE, 0x03, ProtoPktIP::RESERVED, iface->GetIndex());
+                    if (!mcast_controller.AddManagedMembership(flowDescription))
                     {
                         PLOG(PL_ERROR, "SmfApp::OnCommand(unicast) error: unable to add unicast membership\n");
                         return false;
@@ -1778,7 +1782,8 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             while (iterator.GetNextAddress(groupAddr))
             {
                 if (groupAddr.IsLinkLocal()) continue;
-                if (!mcast_controller.AddManagedMembership(iface->GetIndex(), groupAddr))
+                ProtoFlow::Description flowDescription(groupAddr, PROTO_ADDR_NONE, 0x03, ProtoPktIP::RESERVED, iface->GetIndex());
+                if (!mcast_controller.AddManagedMembership(flowDescription))
                 {
                     PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: unable to add group membership\n");
                     return false;
@@ -1918,6 +1923,77 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         smf.SetAdaptiveRouting(true);
     }
 #ifdef ELASTIC_MCAST
+    else if (!strncmp("join", cmd, len))
+    {
+        // This creates a "managed" Membership entry
+        // syntax: "join [<srcAddr>,]<dstAddr>[,<protocol>[,<class>]]]"ProtoFlow::Description description;
+        ProtoFlow::Description description;
+        if (!description.InitFromText(val))
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(join) error: invalid flow description!\n");
+            return false;
+        }
+        PLOG(PL_ALWAYS, "join "); description.Print(); PLOG(PL_ALWAYS, "\n");
+        if (!mcast_controller.AddManagedMembership(description))
+        {
+            if (GetDebugLevel() >= PL_ERROR)
+            {
+                PLOG(PL_ERROR, "SmfApp::OnCommand(join) error: unable to add group membership: ");
+                description.Print();
+                PLOG(PL_ALWAYS, "\n");
+            }
+            return false;
+        }
+    }
+    else if (!strncmp("leave", cmd, len))
+    {
+        // This removes a "managed" Membership entry
+        // syntax: "leave [<srcAddr>,]<dstAddr>[,<protocol>[,<class>]]]"ProtoFlow::Description description;
+        ProtoFlow::Description description;
+        if (!description.InitFromText(val))
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(leave) error: invalid flow description!\n");
+            return false;
+        }
+        PLOG(PL_ALWAYS, "leave "); description.Print(); PLOG(PL_ALWAYS, "\n");
+        if (!mcast_controller.RemoveManagedMembership(description))
+        {
+            if (GetDebugLevel() >= PL_ERROR)
+            {
+                PLOG(PL_ERROR, "SmfApp::OnCommand(leave) error: unable to add remove membership: ");
+                description.Print();
+                PLOG(PL_ALWAYS, "\n");
+            }
+            return false;
+        }
+    }
+    else if (!strncmp("flow", cmd, len))
+    {
+        // To be used with "advertise" option of Elastic Multicast
+        // format: [<srcAddr>[/maskLen]->]<dstAddr>[/maskLen][,<protocol>[,<class>]] (also can use X or * to wildcard fields)
+        // Notes:
+        // 1) <srcAddr> can an interface name
+        // 2) Can consist of just a single destination address with no delimiters (e.g., "224.1.2.3")
+        // (The ProtoFlow::Description::InitFromText() expects that format so we can use that directly here.)
+        // TBD - support start/stop directive
+        ProtoFlow::Description description;
+        if (!description.InitFromText(val))
+        {
+            PLOG(PL_ERROR, "SmfApp::OnCommand(flow) error: invalid flow description!\n");
+            return false;
+        }
+        PLOG(PL_ALWAYS, "flow "); description.Print(); PLOG(PL_ALWAYS, "\n");
+        if (!mcast_controller.AddManagedFlow(description))
+        {
+            if (GetDebugLevel() >= PL_ERROR)
+            {
+                PLOG(PL_ERROR, "SmfApp::OnCommand(flow) error: unable to add managed flow: ");
+                description.Print();
+                PLOG(PL_ALWAYS, "\n");
+            }
+            return false;
+        }
+    }
     else if (!strncmp("allow", cmd, len))
     {
         // syntax: "allow <addr1>[,<addr2>, ...] with "all" as a wildcard address
@@ -3714,7 +3790,8 @@ bool SmfApp::AddInterfaceToGroup(Smf::InterfaceGroup& ifaceGroup, Smf::Interface
             while (iterator.GetNextAddress(groupAddr))
             {
                 if (groupAddr.IsLinkLocal()) continue;
-                if (!mcast_controller.AddManagedMembership(iface.GetIndex(), groupAddr))
+                ProtoFlow::Description flowDescription(groupAddr, PROTO_ADDR_NONE, 0x03, ProtoPktIP::RESERVED, iface.GetIndex());
+                if (!mcast_controller.AddManagedMembership(flowDescription))
                 {
                     PLOG(PL_ERROR, "SmfApp::AddInterfaceToGroup(%s) error: unable to add group membership\n", ifaceName);
                     return false;

@@ -43,7 +43,7 @@ class Smf
 #endif // ELASTIC_MCAST
 #ifdef ADAPTIVE_ROUTING
   : public SmartForwarder
-#endif
+#endif // ADAPTIVE_ROUTING
 {
     public:
         enum RelayType
@@ -52,8 +52,8 @@ class Smf
             CF,
             S_MPR,
             E_CDS,
-            MPR_CDS,        
-            NS_MPR     
+            MPR_CDS,
+            NS_MPR
         };
             
         // Forwarding "modes" for a given interface group
@@ -734,6 +734,9 @@ class Smf
                                            Interface&                     srcIface, 
                                            MulticastFIB::UpstreamHistory& upstreamHistory,
                                            UINT16                         upstreamSeq);
+        
+        void AdvertiseActiveFlows();  // override of ElasticMulticastForwarder::AdvertiseActiveFlows()
+        
         // Only call if nackCount > 0
         void SendNack(Interface&                     srcIface, 
                       MulticastFIB::UpstreamHistory& upstreamHistory,
@@ -755,9 +758,7 @@ class Smf
         static const unsigned int DEFAULT_REPAIR_CACHE_SIZE;
         bool CreatePacketCache(Interface& iface, unsigned int cacheSize);
         bool CachePacket(const Interface& iface, UINT16 sequence, char* frameBuffer, unsigned int frameLength);
-        void OnAdvTimeout(ProtoTimer& theTimer);
         
-        //MulticastFIB::UpstreamRelay* GetBestUpstreamRelay(MulticastFIB::Entry& fibEntry, unsigned int currentTick);
 #endif // ELASTIC_MCAST
         
     private:
@@ -807,7 +808,6 @@ class Smf
         unsigned int        update_age_max;  // max staleness allowed for flows
         unsigned int        current_update_time;
 #ifdef ELASTIC_MCAST
-        ProtoTimer          adv_timer;
         UINT8               unreliable_tos;
 #endif // ELASTIC_MCAST
         

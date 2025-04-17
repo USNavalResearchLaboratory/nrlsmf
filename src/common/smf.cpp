@@ -383,9 +383,6 @@ Smf::Smf(ProtoTimerMgr& timerMgr)
     prune_timer.SetListener(this, &Smf::OnPruneTimeout);
     
 #ifdef ELASTIC_MCAST
-    adv_timer.SetInterval(0.0);
-    adv_timer.SetRepeat(-1);
-    adv_timer.SetListener(this, &Smf::OnAdvTimeout);
     unreliable_tos = 0;
 #endif // ELASTIC_MCAST
     
@@ -1725,17 +1722,6 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 
     mrcv_count++;  // increment multicast received count
     srcIface.IncrementMcastCount();
-    
-    // This is the _old_ location of code that has been moved to _after_
-    // the elastic multicast processing section.  The code that was
-    // here made a entry in "srcIface" DPD table under a couple of 
-    // different conditions.  This comment is left here in case moving
-    // that code caused a problem (It shouldn't - fingers crossed).  The
-    // code moved is here in this comment block:
-    /*if (srcIface.GetResequence() || (!outbound && srcIface.IsLayered()))
-    {
-        srcIface.IsDuplicatePkt(current_update_time, flowId, flowIdSize, pktId, pktIdSize);
-    }*/
 
 #ifdef ADAPTIVE_ROUTING
 
@@ -2264,7 +2250,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     return 0;
                 }
                 // Cache the ttl for potential advertisement
-                fibEntry->SetTTL(ttl);
+                if (!fibEntry->IsManaged()) fibEntry->SetTTL(ttl);  // 'managed' flows have preset ttl
                 if (MulticastFIB::DENY == fibEntry->GetDefaultForwardingStatus())
                 {
                     // If outbound, pass through (only to current interface), else ignore
@@ -2743,19 +2729,15 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             return NULL;   
     }
     
+    bool activateAdvertisements = false;
     if (updateController)
     {
         // New or reactivated flow ...
         MulticastFIB::ForwardingStatus fstatus = fibEntry->GetDefaultForwardingStatus();
         if ((MulticastFIB::HYBRID == fstatus) || (MulticastFIB::BLOCK == fstatus))
         {
-            // We're advertising, so make sure adv_timer is activated
-            if (!adv_timer.IsActive())
-            {
-                adv_timer.SetInterval(0.0);
-                timer_mgr.ActivateTimer(adv_timer);
-                PLOG(PL_DEBUG, "Smf::UpdateElasticRouting() activated adv_timer ...\n");
-            }
+            // We're advertising, so make sure controller advertisement_timer is activated
+            activateAdvertisements = true;
         }
         pktCount = fibEntry->GetUpdateCount() - 1;
         updateInterval = fibEntry->GetUpdateInterval();
@@ -2863,7 +2845,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
     {
         // Report how many packets seen for this flow and interval from this upstream relay since last update
         // (TBD - if controller and forwarder have shared FIB, this could be economized)
-        mcast_controller->Update(fibEntry->GetFlowDescription(), srcIface.GetIndex(), srcMac, pktCount, updateInterval, fibEntry->GetAckingStatus());
+        mcast_controller->Update(fibEntry->GetFlowDescription(), srcIface.GetIndex(), srcMac, pktCount, updateInterval, fibEntry->GetAckingStatus(), activateAdvertisements);
     }
     if (sendAck)
     {
@@ -3221,7 +3203,7 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
     
     if (GetDebugLevel() >= PL_DEBUG)
     {
-        PLOG(PL_DEBUG, "nrlsmf: sending  EM_ACK (len:%u) for flow \"", ethPkt.GetLength());
+        PLOG(PL_DEBUG, "nrlsmf: sending EM_ACK (len:%u) for flow \"", ethPkt.GetLength());
         flowDescription.Print();  // to debug output or log
         PLOG(PL_ALWAYS, " to relay %s via interface index %d\n", upstreamAddr.GetHostString(), iface.GetIndex());
     }
@@ -3308,8 +3290,12 @@ bool Smf::CachePacket(const Interface& iface, UINT16 sequence, char* frameBuffer
     return true;
 }  // end Smf::CachePacket()
 
-void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
+void Smf::AdvertiseActiveFlows()
 {
+    PLOG(PL_DEBUG, "Smf::AdvertiseActiveFlows() ...\n");
+    // TBD - for improved controller/forward separation, this method should only use controller state with
+    // "active" flows to be advertised tracked by the controller separate from forwarder mcast_fib ???
+    
     unsigned int currentTick = time_ticker.Update();
     // Build up EM_ADV message(s) for each interface pending EM_ADV transmission
     UINT32 buffer[1416/4];
@@ -3357,7 +3343,13 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
         unsigned int bufferIndex = 0;
         while (NULL != (fibEntry = fiberator.GetNextEntry()))
         {
-            if (!fibEntry->IsActive()) continue;
+            if (GetDebugLevel() >= PL_DEBUG)
+            {
+                PLOG(PL_ALWAYS, "  iterated to fibEntry ");
+                fibEntry->PrintDescription();
+                PLOG(PL_ALWAYS, " active:%d managed:%d\n", fibEntry->IsActive(), fibEntry->IsManaged());
+            }
+            if (!fibEntry->IsActive() && !fibEntry->IsManaged()) continue;
             
             // Send info on all flows so we can include metric info
             ProtoAddress::Type atype = fibEntry->GetAddressType();
@@ -3365,7 +3357,7 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
             unsigned int msgLen = ElasticAdv::ComputeLength(atype, vtype);
             if (msgLen > (msgLenMax - bufferIndex))
             {
-                // Full ElasticAdv message, so send it out iface
+                // Full ElasticAdv message, so go ahead and send it out iface
                 // 1) send message after filling in iface source addressing
                 udpPkt.SetPayloadLength(bufferIndex);
                 ip4Pkt.SetPayloadLength(udpPkt.GetLength());
@@ -3378,11 +3370,11 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                     {
                         ethPkt.SetPayloadLength(ip4Pkt.GetLength());
                         // Cache the packet for possible repair if NACKed
-                        /*if (iface->IsReliable())
-                        {
-                            UINT16 umpSequence = iface->GetUmpSequence();
-                            CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
-                        }*/
+                        //if (iface->IsReliable())
+                        //{
+                        //    UINT16 umpSequence = iface->GetUmpSequence();
+                        //    CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+                        //}
                     }
                     else
                     {
@@ -3444,7 +3436,8 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                 advAddr = upstreamRelay->GetAdvAddr();
                 advId = upstreamRelay->GetAdvId();
             }
-            else if (fibEntry->IsActive() && (fibEntry->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT))
+            else if (fibEntry->IsManaged() ||
+                     (fibEntry->IsActive() && (fibEntry->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT)))
             {  
                 // We must be the source (advMetric will be zero) of the flow
                 advTTL = fibEntry->GetTTL();
@@ -3456,6 +3449,9 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
             else
             {
                 // Not an active flow (probably pruned its upstream relays to end up here)
+                unsigned int age = fibEntry->Age(currentTick);
+                if (GetDebugLevel() >= PL_DEBUG)
+                    PLOG(PL_ALWAYS, "  inactive flow? actv:%d age:%lu managed:%d\n", fibEntry->IsActive(), age, fibEntry->IsManaged());
                 continue;
             }
             if (advTTL >= 1) 
@@ -3465,10 +3461,7 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                 // else locally generated packet
                 advHopCount += 1;
             }
-            if (0 == advTTL)
-            {
-                continue;  // don't advertise flows that have reached ttl limit 
-            }
+            if (0 == advTTL) continue;  // don't advertise flows that have reached ttl limit 
             const ProtoFlow::Description& flowDescription = fibEntry->GetFlowDescription();
 	        adv.SetId(advId);
             adv.SetProtocol(flowDescription.GetProtocol());
@@ -3483,12 +3476,12 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                     addrType = ElasticAck::ADDR_IPV6;
                     break;
                 default:
-                    PLOG(PL_ERROR, "Smf::OnAdvTimeout() error: invalid flow dst address\n");
+                    PLOG(PL_ERROR, "Smf::AdvertiseActiveFlows() error: invalid flow dst address\n");
                     continue;
             }
             if (flowDescription.GetSrcLength() != flowDescription.GetDstLength())
             {
-                PLOG(PL_ERROR, "Smf::OnAdvTimeout() error: non-matching flow dst/src address types\n");
+                PLOG(PL_ERROR, "Smf::AdvertiseActiveFlows() error: non-matching flow dst/src address types\n");
                 continue;
             }
             adv.SetDstAddr(addrType, flowDescription.GetDstPtr(), flowDescription.GetDstLength());
@@ -3500,7 +3493,7 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
             
             if (GetDebugLevel() >= PL_DEBUG)  
             {
-                PLOG(PL_DEBUG, "Smf::OnAdvTimeout() sending EM_ADV adv>%s id>%hu ttl>%u hopCount>%u metric>%lf (%lf) flow>",
+                PLOG(PL_DEBUG, "Smf::AdvertiseActiveFlows() sending EM_ADV adv>%s id>%hu ttl>%u hopCount>%u metric>%lf (%lf) flow>",
                         advAddr.GetHostString(), advId, advTTL, advHopCount, advMetric, adv.GetMetric());
                 flowDescription.Print();
                 PLOG(PL_ALWAYS, "\n");
@@ -3512,7 +3505,6 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
             // Init adv to next msgBuffer location
             adv.InitIntoBuffer(msgBuffer + bufferIndex, msgLenMax - bufferIndex);
         }  // end while GetNextEntry()
-        
         
         if (bufferIndex > 0)
         {
@@ -3529,11 +3521,11 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
                 {
                     ethPkt.SetPayloadLength(ip4Pkt.GetLength());
                     // Cache the packet for possible retransmission if NACKed
-                    /*if (iface->IsReliable()) 
-                    {
-                        UINT16 umpSequence = iface->GetUmpSequence();
-                        CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
-                    }*/
+                    //if (iface->IsReliable()) 
+                    //{
+                    //    UINT16 umpSequence = iface->GetUmpSequence();
+                    //    CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
+                    //}
                 }
                 else
                 {
@@ -3562,11 +3554,11 @@ void Smf::OnAdvTimeout(ProtoTimer& /*theTimer*/)
         }
         else if (fibEntry->IsActive() && (fibEntry->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT))
         {
-            fibEntry->SetTTL(0);  // reset so we won't advertise again if no more packets
+            if (!fibEntry->IsManaged()) fibEntry->SetTTL(0);  // reset so we won't advertise again if no more packets
         }
     }
-    adv_timer.SetInterval(1.0);  // TBD - jitter
-}  // end Smf::OnAdvTimeout()
+    return;
+}  // end Smf::AdvertiseActiveFlows()
 
 #endif // ELASTIC_MCAST
 

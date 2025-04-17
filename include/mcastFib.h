@@ -145,6 +145,7 @@ class MulticastFIB
                     age_max = false;
                     active = activate;
                 }
+                
                 void Deactivate()
                     {active = false;}
                 
@@ -481,6 +482,15 @@ class MulticastFIB
 
 #endif // ADAPTIVE_ROUTING
         
+        enum FlowStatus
+        {
+            NONE    = 0x00,
+            IDLE    = 0x01,
+            ACTIVE  = 0x02,
+            MANAGED = 0x04,
+            POLICY  = 0x08    
+        };
+
         // The MulticastFIB::Entry class is used to keep state for flows detected
         class Entry : public ProtoFlow::EntryTemplate<ProtoTree>
         {
@@ -542,21 +552,39 @@ class MulticastFIB
                 unsigned int GetAckingIntervalMin() const
                     {return acking_interval_min;}
 
-                void SetManaged(bool status)
-                    {flow_managed = status;}
-                bool IsManaged() const
-                    {return flow_managed;}
-                void Activate()
-                    {flow_active = true;}
-                void Deactivate()
-                    {flow_active = false;}
+                // This following methods get/set flow_status information    
                 bool IsActive() const
-                    {return flow_active;}
-                void SetIdle(bool status)
-                    {flow_idle = status;}
+                    {return (0 != (FlowStatus::ACTIVE & flow_status));}
                 bool IsIdle() const
-                    {return flow_idle;}
+                    {return (0 != (FlowStatus::IDLE & flow_status));}
+                bool IsManaged() const
+                    {return (0 != (FlowStatus::MANAGED & flow_status));}
+                bool IsPolicy() const
+                    {return (0 != (FlowStatus::POLICY & flow_status));}
                 
+                int GetFlowStatus() const
+                    {return flow_status;}
+                
+                void Activate()
+                    {flow_status |= FlowStatus::ACTIVE;}
+                void Deactivate()
+                    {flow_status &= ~FlowStatus::ACTIVE;}
+                void SetIdle(bool isIdle)
+                {
+                    flow_status = isIdle ? (flow_status | FlowStatus::IDLE) :
+                                           (flow_status & ~FlowStatus::IDLE);
+                }
+                void SetManaged(bool isManaged)
+                {
+                    flow_status = isManaged ? (flow_status | FlowStatus::MANAGED) :
+                                              (flow_status & ~FlowStatus::MANAGED);
+                }
+                void SetPolicy(bool isPolicy)
+                {
+                    flow_status = isPolicy ? (flow_status | FlowStatus::POLICY) :
+                                             (flow_status & ~FlowStatus::POLICY);
+                }
+               
                 void Reset(unsigned int currentTick);  // resets of update count/interval
                 void Refresh(unsigned int currentTick);
                 unsigned int Age(unsigned int currentTick);
@@ -598,9 +626,7 @@ class MulticastFIB
                 Entry* GetNext() {return active_next;}
 
             private:
-                bool                    flow_managed;       // true when created on command from controller
-                bool                    flow_active;
-                bool                    flow_idle;
+                int                     flow_status;        // comprised of FlowStatus flags
                 ForwardingStatus        default_forwarding_status;
                 unsigned int            forwarding_count;   // how many interfaces forwarding to ...
                 
@@ -731,11 +757,12 @@ class MulticastFIB
         {
             public:
                 // invalid/none src addr means dst only
-                Membership(unsigned int         ifaceIndex,
+                Membership(const ProtoFlow::Description& flowDescription);
+                /*Membership(unsigned int         ifaceIndex,
                            const ProtoAddress&  dst,
                            const ProtoAddress&  src = PROTO_ADDR_NONE,
                            UINT8                trafficClass = 0x03,
-                           ProtoPktIP::Protocol protocol = ProtoPktIP::RESERVED);
+                           ProtoPktIP::Protocol protocol = ProtoPktIP::RESERVED);*/
                 ~Membership();
 
                 enum Flag
@@ -821,17 +848,9 @@ class MulticastFIB
                 ~MembershipTable();
 
                 // invalid/none src addr means dst only
-                Membership* AddMembership(unsigned int         ifaceIndex,
-                                          const ProtoAddress&  dst,
-                                          const ProtoAddress&  src = PROTO_ADDR_NONE,
-                                          UINT8                trafficClass = 0x03,
-                                          ProtoPktIP::Protocol protocol = ProtoPktIP::RESERVED);
+                Membership* AddMembership(const ProtoFlow::Description& flowDescription);
 
-                void RemoveMembership(unsigned int          ifaceIndex,
-                                      const ProtoAddress&   dst,
-                                      const ProtoAddress&   src = PROTO_ADDR_NONE,
-                                      UINT8                 trafficClass = 0x03,
-                                      ProtoPktIP::Protocol  protocol = ProtoPktIP::RESERVED);
+                void RemoveMembership(const ProtoFlow::Description& flowDescription);
 
                 bool IsMember(const ProtoAddress&   dst,
                               const ProtoAddress&   src = PROTO_ADDR_NONE,
@@ -1063,11 +1082,18 @@ class MulticastFIB
             active_list.Prepend(entry);
         }
         
+        bool AddFlowStatus(const ProtoFlow::Description&    flowDescription,
+                           FlowStatus                       flowStatus, 
+                           MulticastFIB::ForwardingStatus   forwardingStatus);
+        
+        void RemoveFlowStatus(const ProtoFlow::Description& flowDescription, 
+                              FlowStatus                    flowStatus);
 
         void PruneFlowList(unsigned int currentTick, ElasticMulticastController* controller = NULL);
 
+#ifdef ADAPTIVE_ROUTING
         bool ParseFlowList( ProtoPktIP& pkt, Entry*& fibEntry, unsigned int currentTick, bool& sendAck,const ProtoAddress& srcMac);
-
+#endif // ADAPTIVE_ROUTING
 
     private:
         EntryTable          flow_table;         // Table of detected flows (updated by forwarding plane)
@@ -1148,19 +1174,25 @@ class ElasticMulticastForwarder
 
         void SetController(ElasticMulticastController* controller)
             {mcast_controller = controller;}
+        
+        // These functions support addition and removal of administrative flows
+        // that provide either a default policy and/or a "managed" entry. Managed 
+        // entries are advertised, regardless of actual flow activity (allows for 
+        // discovery of src->group trees including *->* membership information)
+        bool AddFlowStatus(const ProtoFlow::Description&  flowDescription, 
+                           MulticastFIB::FlowStatus       flowStatus,
+                           MulticastFIB::ForwardingStatus forwardingStatus)
+            {return mcast_fib.AddFlowStatus(flowDescription, flowStatus, forwardingStatus);}
+        
+        void RemoveFlowStatus(const ProtoFlow::Description& flowDescription, MulticastFIB::FlowStatus flowStatus)
+            {mcast_fib.RemoveFlowStatus(flowDescription, flowStatus);}
 
-        // set forwarding status to BLOCK, LIMIT, HYBRID, FORWARD, or DENY
-        // TBD - need to add option to add "managed" entry that doesn't
-        //       affect pre-existing entries?  Would make stacking policies easier,
-        //       and more forgiving of the order in which they were entered.
-        //       Need to think about what to do with pre-existing flows
-        //      anyway if managed policies are loaded "on-the-fly".
+        // set forwarding status to BLOCK, LIMIT, HYBRID, FORWARD, or DENY along with acking status
         bool SetForwardingStatus(const  ProtoFlow::Description&         flowDescription,
                                  unsigned int                           ifaceIndex,
                                  MulticastFIB::ForwardingStatus         forwardingStatus,
-                                 bool                                   ackingStatus,
-                                 bool                                   managed);
-
+                                 bool                                   ackingStatus);
+        
         bool SetAckingStatus(const  ProtoFlow::Description& flowDescription,
                              bool                           ackingStatus);
         /*
@@ -1178,6 +1210,9 @@ class ElasticMulticastForwarder
         virtual bool SendAck(unsigned int                   ifaceIndex,
                              const ProtoAddress&            upstreamAddr,
                              const  ProtoFlow::Description& flowDescription) = 0;
+        
+        virtual void AdvertiseActiveFlows() = 0;  // TBD - natively implement this within ElasticMulticastForwarder ???
+        
         class OutputMechanism
         {
             public:
@@ -1229,12 +1264,13 @@ class ElasticMulticastController
                     const ProtoAddress&             relayAddr,          
                     unsigned int                    pktCount,           
                     unsigned int                    pktInterval,        
-                    bool                            ackingStatus);      
+                    bool                            ackingStatus,
+                    bool                            activateAdvertisements);   
 
         void HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAddress& srcIp, unsigned int ifaceIndex, bool inbound);
 
-        bool AddManagedMembership(unsigned int ifaceIndex, const ProtoAddress& groupAddr);
-        void RemoveManagedMembership(unsigned int ifaceIndex, const ProtoAddress& groupAddr);
+        bool AddManagedMembership(const ProtoFlow::Description& flowDescription);
+        bool RemoveManagedMembership(const ProtoFlow::Description& flowDescription);
 
         void HandleAck(const ElasticAck& ack, unsigned int ifaceIndex, const ProtoAddress& srcIp, const ProtoAddress& srcMac);
         
@@ -1249,10 +1285,14 @@ class ElasticMulticastController
         // callback function when membership/flow downstream relay set(next hop(s)) changes
         void OnDownstreamRelayChange(MulticastFIB::Membership& membership, bool idle);
         
+        bool AddManagedFlow(const ProtoFlow::Description& flowDescription);
+        void RemoveManagedFlow(const ProtoFlow::Description& flowDescription);
         bool SetPolicy(const ProtoFlow::Description& description, bool allow);
         
         bool HasPolicies() const
             {return !policy_table.IsEmpty();}
+        
+        
         
         MulticastFIB::MembershipTable& AccessMembershipTable() 
             {return membership_table;}
@@ -1274,13 +1314,15 @@ class ElasticMulticastController
             {return time_ticker.Update();}
 
         bool OnMembershipTimeout(ProtoTimer& theTimer);
+        void OnAdvertisementTimeout(ProtoTimer& theTimer);
         
         MulticastFIB::ForwardingStatus  default_forwarding_status;
 
         ProtoTimerMgr&                  timer_mgr;
         ElasticTicker                   time_ticker;
         ProtoTimer                      membership_timer;
-
+        ProtoTimer                      advertisement_timer;
+        
         MulticastFIB::MembershipTable   membership_table;
         MulticastFIB::PolicyTable       policy_table;
 
