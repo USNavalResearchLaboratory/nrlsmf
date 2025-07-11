@@ -2805,9 +2805,11 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
         {
             char ifaceName[IF_NAME_MAX+1];
             ProtoNet::GetInterfaceName(srcIface.GetIndex(), ifaceName, IF_NAME_MAX);
+            MulticastFIB::UpstreamRelay* prevUpstream = fibEntry->GetCurrentUpstreamRelay();
             //if (srcIface.UseETX())
             if (advMetric >= 0.0)  // this means we are in "advertise" mode handling an advertisement
             {
+                
                 MulticastFIB::UpstreamRelay* bestRelay = fibEntry->GetBestUpstreamRelay(currentTick);
                 if (NULL != bestRelay)
                 { 
@@ -2838,7 +2840,11 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             else
             {
                 upstreamRelay->SetStatus(MulticastFIB::UpstreamRelay::PRIMARY);  // all relays are primary in this mode
+                fibEntry->SetCurrentUpstreamRelay(upstreamRelay);
             }
+            MulticastFIB::UpstreamRelay* currentUpstream = fibEntry->GetCurrentUpstreamRelay();
+            if (currentUpstream != prevUpstream)
+                mcast_controller->OnUpstreamRelayChange(flowDescription, currentUpstream->GetAddress(), currentUpstream->GetAdvAddr());
         }
     }  // end if (!outbound)   
     if (updateController)  
@@ -3395,6 +3401,7 @@ void Smf::AdvertiseActiveFlows()
             UINT16 advId;
             UINT8 advTTL, advHopCount;
             double advMetric = 0.0;
+            MulticastFIB::UpstreamRelay* prevUpstream = fibEntry->GetCurrentUpstreamRelay();
             MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->GetBestUpstreamRelay(currentTick);
             if (NULL != upstreamRelay)
             {
@@ -3504,6 +3511,9 @@ void Smf::AdvertiseActiveFlows()
             bufferIndex += adv.GetLength();
             // Init adv to next msgBuffer location
             adv.InitIntoBuffer(msgBuffer + bufferIndex, msgLenMax - bufferIndex);
+            // Update controller if change in upstream relay for this flow
+            if (prevUpstream != upstreamRelay)
+                mcast_controller->OnUpstreamRelayChange(flowDescription, upstreamRelay->GetAddress(), upstreamRelay->GetAdvAddr());
         }  // end while GetNextEntry()
         
         if (bufferIndex > 0)
@@ -3547,7 +3557,7 @@ void Smf::AdvertiseActiveFlows()
     MulticastFIB::EntryTable::Iterator fiberator(mcast_fib.AccessFlowTable());
     while (NULL != (fibEntry = fiberator.GetNextEntry()))
     {
-    	MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->GetBestUpstreamRelay(currentTick);
+    	MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->GetCurrentUpstreamRelay();
         if (NULL != upstreamRelay)
         {
             upstreamRelay->ClearAdvAddr(); // so we don't duplicatively advertise this flow
@@ -3717,7 +3727,8 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
             PLOG(PL_ALWAYS, " acking:%d", ackingStatus);
             if (ackingStatus)
             {
-                MulticastFIB::UpstreamRelay* upstream = fibEntry->GetBestUpstreamRelay(currentTick);
+                //MulticastFIB::UpstreamRelay* upstream = fibEntry->GetBestUpstreamRelay(currentTick);
+                MulticastFIB::UpstreamRelay* upstream = fibEntry->GetCurrentUpstreamRelay();
                 if (NULL != upstream)
                 {
                     // ETX metric
@@ -3728,6 +3739,10 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
                         etx = 1.0/etx;
                     etx += upstream->GetAdvMetric();
                     PLOG(PL_ALWAYS, " upstream:%s metric:%lf hops:%u quality:%lf", upstream->GetAddress().GetHostString(), etx, (unsigned int)upstream->GetAdvHopCount(), upstream->GetLinkQuality());
+                }
+                else
+                {
+                    PLOG(PL_ALWAYS, " upstream:none");
                 }
                 // Iterate over matching outbound interface memberships and display next hops
                 // To do this, create a FlowDescription with interface wildcarded

@@ -600,6 +600,11 @@ class MulticastFIB
                 MulticastFIB::UpstreamRelay* GetBestUpstreamRelay(unsigned int currentTick);
                 UpstreamRelayList& AccessUpstreamRelayList()
                     {return upstream_list;}
+
+                void SetCurrentUpstreamRelay(MulticastFIB::UpstreamRelay* relay)
+                    {best_relay = relay;}
+                UpstreamRelay* GetCurrentUpstreamRelay() const
+                    {return best_relay;}
                 
                 // Use to cache observed TTL for advertising 
                 // locally discovered flows
@@ -820,6 +825,16 @@ class MulticastFIB
                     {return downstream_relay_count;}
                 
                 void PrintDownstreamRelayList(FILE* filePtr = NULL);  // to ProtoDebug by default
+                
+                void SetUpstreamRelayAddress(const ProtoAddress& relayAddr, const ProtoAddress& advAddr)
+                {
+                    upstream_relay_addr = relayAddr;
+                    upstream_adv_addr = advAddr;
+                }
+                const ProtoAddress& GetUpstreamRelayAddr() 
+                    {return upstream_relay_addr;}
+                const ProtoAddress& GetUpstreamAdvAddr() 
+                    {return upstream_adv_addr;}
 
             private:
                 const unsigned int* GetTimeoutTickPtr() const
@@ -836,6 +851,8 @@ class MulticastFIB
                 unsigned int            elastic_timeout_tick;
                 unsigned int            elastic_timeout_active;
                 ForwardingStatus        default_forwarding_status;
+                ProtoAddress            upstream_relay_addr;
+                ProtoAddress            upstream_adv_addr;
                 DownstreamRelayList     downstream_relay_list;  // TBD - move idle_count into this???
                 unsigned int            downstream_relay_count;
 
@@ -1282,8 +1299,12 @@ class ElasticMulticastController
         void DeactivateMembership(MulticastFIB::Membership&      membership,
                                   MulticastFIB::Membership::Flag flag);
                                   
-        // callback function when membership/flow downstream relay set(next hop(s)) changes
+        // callback function upon membership/flow upstream relay (previous hop)
+        // or downstream relay set(next hop(s)) changes
         void OnDownstreamRelayChange(MulticastFIB::Membership& membership, bool idle);
+        void OnUpstreamRelayChange(const ProtoFlow::Description&  flowDescription,
+                                   const ProtoAddress&            relayAddr,
+                                   const ProtoAddress&            advAddr);
         
         bool AddManagedFlow(const ProtoFlow::Description& flowDescription);
         void RemoveManagedFlow(const ProtoFlow::Description& flowDescription);
@@ -1292,8 +1313,7 @@ class ElasticMulticastController
         bool HasPolicies() const
             {return !policy_table.IsEmpty();}
         
-        
-        
+     
         MulticastFIB::MembershipTable& AccessMembershipTable() 
             {return membership_table;}
         

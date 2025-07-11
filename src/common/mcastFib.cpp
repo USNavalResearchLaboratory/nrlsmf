@@ -236,6 +236,7 @@ void MulticastFIB::Membership::PrintDownstreamRelayList(FILE* filePtr) // to Pro
     DownstreamRelayList::Iterator iterator(downstream_relay_list);
     DownstreamRelay* relay = iterator.GetNextItem();
     // Print first item without comma and remainder with leading comma delimiter
+    /* This commented code included relay timeout information for debugging
     if (NULL != relay) 
         fprintf(filePtr, "%s/%u", relay->GetIpAddr().GetHostString(), relay->GetTimeoutTick());
     else
@@ -243,6 +244,14 @@ void MulticastFIB::Membership::PrintDownstreamRelayList(FILE* filePtr) // to Pro
     while (NULL != (relay = iterator.GetNextItem()))
     {
         fprintf(filePtr, ",%s/%u", relay->GetIpAddr().GetHostString(), relay->GetTimeoutTick());
+    }*/
+    if (NULL != relay) 
+        fprintf(filePtr, "%s", relay->GetIpAddr().GetHostString());
+    else
+        fprintf(filePtr, "(none)");
+    while (NULL != (relay = iterator.GetNextItem()))
+    {
+        fprintf(filePtr, ",%s", relay->GetIpAddr().GetHostString());
     }
 }  // end MulticastFIB::Membership::PrintDownstreamRelayList()
 
@@ -2082,6 +2091,7 @@ bool ElasticMulticastForwarder::SetAckingStatus(const ProtoFlow::Description& fl
                     // If ackingStatus, flow already exists, has active upstream relays, and current
                     // flow ackingStatus is "false", then send an EM-ACK right away
                     MulticastFIB::UpstreamRelayList::Iterator upserator(entry->AccessUpstreamRelayList());
+                    MulticastFIB::UpstreamRelay* prevUpstream = entry->GetCurrentUpstreamRelay();
                     MulticastFIB::UpstreamRelay* upstream = entry->GetBestUpstreamRelay(currentTick);
                     // TBD - only NACK "best upstream" in reliable mode and all upstreams if not reliable ..
                     //while (NULL != (upstream = upserator.GetNextItem()))
@@ -2096,6 +2106,7 @@ bool ElasticMulticastForwarder::SetAckingStatus(const ProtoFlow::Description& fl
                             upstream->Reset(currentTick);
                         }
                     }
+                    if (upstream != prevUpstream) mcast_controller->OnUpstreamRelayChange(flowDescription, upstream->GetAddress(), upstream->GetAdvAddr());
                 }
 #endif // USE_PREEMPTIVE_ACK
             }
@@ -2146,6 +2157,7 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const ProtoFlow::Description
                     // If ackingStatus, flow already exists, has active upstream relays, and current
                     // flow ackingStatus is "false", then send and EM-ACK right away
                     //MulticastFIB::UpstreamRelayList::Iterator upserator(entry->AccessUpstreamRelayList());
+                    MulticastFIB::UpstreamRelay* prevUpstream = entry->GetCurrentUpstreamRelay();
                     MulticastFIB::UpstreamRelay* upstream = entry->GetBestUpstreamRelay(currentTick);
                     // TBD - only NACK "best upstream" in reliable mode
                     //while (NULL != (upstream = upserator.GetNextItem()))
@@ -2159,6 +2171,8 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const ProtoFlow::Description
                             upstream->Reset(currentTick);
                         }
                     }
+                    if (upstream != prevUpstream) 
+                        mcast_controller->OnUpstreamRelayChange(flowDescription, upstream->GetAddress(), upstream->GetAdvAddr());
                 }
 #endif // USE_PREEMPTIVE_ACK
             }
@@ -2615,19 +2629,37 @@ void ElasticMulticastController::DeactivateMembership(MulticastFIB::Membership& 
     }
 }  // end ElasticMulticastController::DeactivateMembership()
 
-
 void ElasticMulticastController::OnDownstreamRelayChange(MulticastFIB::Membership& membership, bool idle)
 {
-    if (GetDebugLevel() >= PL_DEBUG)
+    ProtoDebugLevel dlevel = PL_INFO;
+    if (GetDebugLevel() >= dlevel)
     {
-        // Note if "idle" is true, then the relay set changed due idle_count (no ACKs for threshold pkt count)
-        PLOG(PL_DEBUG, "ElasticMulticastController::OnDownstreamRelayChange(%s) membership>", idle ? "idle" : "");
+        // Note if "idle" is true, then the relay set changed due to idle_count (no ACKs for threshold pkt count)
+        PLOG(dlevel, "ElasticMulticastController::OnDownstreamRelayChange(%s) flow>", idle ? "idle" : "");
         membership.GetFlowDescription().Print();
         PLOG(PL_ALWAYS, " nextHops>");
         membership.PrintDownstreamRelayList();
         PLOG(PL_ALWAYS, "\n");
     }
 }  // end ElasticMulticastController::OnDownstreamRelayChange()
+
+void ElasticMulticastController::OnUpstreamRelayChange(const ProtoFlow::Description&  flowDescription,
+                                                       const ProtoAddress&            relayAddr, 
+                                                       const ProtoAddress&            advAddr)
+{
+    ProtoDebugLevel dlevel = PL_INFO;
+    if (GetDebugLevel() >= dlevel)
+    {
+        PLOG(dlevel, "ElasticMulticastController::OnUpstreamRelayChange(%s) flow>");
+        flowDescription.Print();
+        if (advAddr.IsValid())
+            PLOG(PL_ALWAYS, " prevHop>%s\n", advAddr.GetHostString());
+        else if (relayAddr.IsValid())
+            PLOG(PL_ALWAYS, " prevHop>%s\n", relayAddr.GetHostString());
+        else
+            PLOG(PL_ALWAYS, " prevHop>(none)\n");
+    }
+}  // end ElasticMulticastController::OnUpstreamRelayChange()
 
 bool ElasticMulticastController::OnMembershipTimeout(ProtoTimer& theTimer)
 {
