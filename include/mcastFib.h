@@ -826,7 +826,7 @@ class MulticastFIB
                 
                 void PrintDownstreamRelayList(FILE* filePtr = NULL);  // to ProtoDebug by default
                 
-                void SetUpstreamRelayAddress(const ProtoAddress& relayAddr, const ProtoAddress& advAddr)
+                /*void SetUpstreamRelayAddress(const ProtoAddress& relayAddr, const ProtoAddress& advAddr)
                 {
                     upstream_relay_addr = relayAddr;
                     upstream_adv_addr = advAddr;
@@ -834,7 +834,7 @@ class MulticastFIB
                 const ProtoAddress& GetUpstreamRelayAddr() 
                     {return upstream_relay_addr;}
                 const ProtoAddress& GetUpstreamAdvAddr() 
-                    {return upstream_adv_addr;}
+                    {return upstream_adv_addr;}*/
 
             private:
                 const unsigned int* GetTimeoutTickPtr() const
@@ -851,8 +851,8 @@ class MulticastFIB
                 unsigned int            elastic_timeout_tick;
                 unsigned int            elastic_timeout_active;
                 ForwardingStatus        default_forwarding_status;
-                ProtoAddress            upstream_relay_addr;
-                ProtoAddress            upstream_adv_addr;
+                //ProtoAddress            upstream_relay_addr;
+                //ProtoAddress            upstream_adv_addr;
                 DownstreamRelayList     downstream_relay_list;  // TBD - move idle_count into this???
                 unsigned int            downstream_relay_count;
 

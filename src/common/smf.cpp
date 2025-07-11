@@ -3697,7 +3697,7 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
     }
     current_update_time += (unsigned int)prune_timer.GetInterval();
 #ifdef ELASTIC_MCAST
-    mcast_fib.PruneFlowList(currentTick);
+    mcast_fib.PruneFlowList(currentTick, mcast_controller);
     if (outputReport)
     {
         // Report some flow status information

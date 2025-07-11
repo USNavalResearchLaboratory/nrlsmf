@@ -1916,7 +1916,7 @@ void MulticastFIB::DeactivateFlow(Entry& entry, unsigned int currentTick)
     idle_list.Prepend(entry);
 }  // end MulticastFIB::DeactivateFlow()
 
-void MulticastFIB::PruneFlowList(unsigned int currentTick, ElasticMulticastController* /*controller*/)
+void MulticastFIB::PruneFlowList(unsigned int currentTick, ElasticMulticastController* controller)
 {
     // Demote any sufficiently aged flows from "active_list" to "idle_list"
     // By removing them from the "active_list" (and moving them back in again
@@ -1939,6 +1939,7 @@ void MulticastFIB::PruneFlowList(unsigned int currentTick, ElasticMulticastContr
                 PLOG(PL_ALWAYS, "\n");
             }
             DeactivateFlow(*entry, currentTick);
+            controller->OnUpstreamRelayChange(entry->GetFlowDescription(), PROTO_ADDR_NONE, PROTO_ADDR_NONE);
         }
         else
         {
