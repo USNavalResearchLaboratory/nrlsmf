@@ -21,6 +21,7 @@
 #include "protoPipe.h"
 #include "protoCap.h"
 #include "protoVif.h"
+#include "protoNet.h"
 #include "protoPktETH.h"
 #include "protoPktIP.h"
 #include "protoPktIGMP.h"
@@ -188,7 +189,7 @@ class SmfApp : public ProtoApp
                     
                 unsigned int GetInterfaceIndex() const
                     {return proto_cap.GetInterfaceIndex();}
-
+                
                 bool FlagIsSet(Flag flag) const
                     {return (0 != (flag & cid_flags));}
                     
@@ -202,8 +203,8 @@ class SmfApp : public ProtoApp
                     {cid_flags &= ~flag;}
 
             private:
-                ProtoCap&       proto_cap;
-                int             cid_flags;
+                ProtoCap&               proto_cap;
+                int                     cid_flags;
         };  // end class SmfApp::CidElement
 
         class CidElementList : public ProtoListTemplate<CidElement> {};
@@ -459,8 +460,6 @@ void SmfApp::InterfaceMechanism::CloseDevice()
 
 void SmfApp::InterfaceMechanism::Close()
 {
-    // TBD - move this stuff to a ::Close() method?
-    PLOG(PL_DEBUG, "SmfApp::InterfaceMechanism::Close() was called\n");
     CloseDevice();
     
 #ifdef _PROTO_DETOUR
@@ -636,6 +635,12 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
             success = false;
             numBytes = 0;  // will end up setting TX_BLOCK for this interface until a CID_TX element is available
         }
+        else if (ProtoNet::IFACE_GRE == elem->GetProtoCap().GetInterfaceType())
+        {
+            // Just send the IP payload portion
+            numBytes -= 14;
+            success = elem->GetProtoCap().Send(frame + 14, numBytes);
+        }
         else if ((NULL != proto_vif) && !is_shadowing)
         {
             // Send frame using vif MAC addr as source address for frame
@@ -662,10 +667,19 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
             {
                 numBytes = frameLength;
                 bool mirrorSuccess;
-                if (is_shadowing)
+                if (ProtoNet::IFACE_GRE == elem->GetProtoCap().GetInterfaceType())
+                {
+                    numBytes -= 14;
+                    mirrorSuccess = elem->GetProtoCap().Send(frame + 14, numBytes);
+                }
+                else if (is_shadowing)
+                {
                     mirrorSuccess = elem->GetProtoCap().Forward(frame, numBytes);
+                }
                 else
+                {
                     mirrorSuccess = elem->GetProtoCap().ForwardFrom(frame, numBytes, proto_vif->GetHardwareAddress());
+                }
                 if (0 == numBytes) mirrorSuccess = false;
                 success |= mirrorSuccess;  // 'success' will be true if _any_ interface works
                 elem = GetNextTxElement(false);
@@ -686,10 +700,19 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
             while (true)
             {
                 numBytes = frameLength;
-                if (is_shadowing)
+                if (ProtoNet::IFACE_GRE == elem->GetProtoCap().GetInterfaceType())
+                {
+                    numBytes -= 14;
+                    success = elem->GetProtoCap().Send(frame + 14, numBytes);
+                }
+                else if (is_shadowing)
+                {
                     success = elem->GetProtoCap().Forward(frame, numBytes);
+                }
                 else
+                {
                     success = elem->GetProtoCap().ForwardFrom(frame, numBytes, proto_vif->GetHardwareAddress());
+                }
                 if (0 == numBytes) success = false;
                 if (success) break;
                 elem = GetNextTxElement(true);
@@ -1271,8 +1294,8 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
         ProtoAddressList::Iterator it(smf.AccessOwnAddressList());
         ProtoAddress nextAddr;
         while (it.GetNextAddress(nextAddr))
-            PLOG(PL_INFO, "  interface addr:%s %s\n", nextAddr.GetHostString(),
-                    nextAddr.IsLinkLocal() ? "(link local)" : "");
+            PLOG(PL_INFO, "  interface addr:%s %s index:%d\n", nextAddr.GetHostString(),
+                    nextAddr.IsLinkLocal() ? "(link local)" : "", smf.GetInterfaceIndex(nextAddr));
     }
     return true;
 }  // end SmfApp::OnStartup()
@@ -3704,7 +3727,11 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
         unsigned int flags = CidElement::CID_TX | CidElement::CID_RX;
         mech->AddCidElement(*cap, flags);
     }  // end if (mech->GetElementList().IsEmpty())
-
+    
+    // if the ProtoVif "device" is associated with a GRE ProtoCap, record its tunnel local addr for SMF operations
+    if (ProtoNet::IFACE_GRE == mech->GetPrincipalElement()->GetProtoCap().GetInterfaceType())
+        iface->SetTunnelLocalAddress(mech->GetPrincipalElement()->GetProtoCap().GetTunnelLocalAddr());
+    
 #ifdef _PROTO_DETOUR
     if (firewall_forward || smf.GetUnicastEnabled())
     {
@@ -4477,6 +4504,12 @@ unsigned int SmfApp::OpenDevice(const char* vifName, const char* ifaceNameAndFla
         ProtoNet::GetInterfaceAddress(ifaceName, ProtoAddress::ETH, hwAddr);
         smf.AddOwnAddress(hwAddr, vifIndex);
     }
+    // If the ProtoCap is a GRE tunnel, disable ARP
+    if (ProtoNet::IFACE_GRE == mech->GetPrincipalElement()->GetProtoCap().GetInterfaceType())
+    {
+        mech->GetProtoVif()->SetARP(false);
+    }
+    
     mech->SetShadowing(shadow);
     mech->SetBlockIGMP(blockIGMP);
     ProtoNet::GetInterfaceAddressList(vifName, ProtoAddress::IPv4, iface->AccessAddressList());
@@ -4547,6 +4580,10 @@ Smf::Interface* SmfApp::AddDevice(const char* vifName, const char* ifaceNameAndF
         delete[] ifaceName;
         return NULL;
     }
+    // if the ProtoVif "device" is associated with a GRE ProtoCap, record its tunnel local addr for SMF operations
+    InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
+    if (ProtoNet::IFACE_GRE == mech->GetPrincipalElement()->GetProtoCap().GetInterfaceType())
+        iface->SetTunnelLocalAddress(mech->GetPrincipalElement()->GetProtoCap().GetTunnelLocalAddr());
     delete[] ifaceName;
     return iface;
 }  // end SmfApp::AddDevice()
@@ -5378,9 +5415,9 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                     // TBD - support ARP interception instead? (i.e. do our own ARP cache)
                     // TBD - do this _after_ smf.ProcessPacket() is called???
                     char addrBuffer[6];
-			        memset(addrBuffer, 0XFF, 6);
+                    memset(addrBuffer, 0XFF, 6);
                     ProtoAddress bcastAddr;
-			        bcastAddr.SetRawHostAddress(ProtoAddress::ETH, addrBuffer, 6);        
+                    bcastAddr.SetRawHostAddress(ProtoAddress::ETH, addrBuffer, 6);        
                     ethPkt.SetDstAddr(bcastAddr);
                 }
                 // Use Smf::ProcessPacket() to decide if packet should be sent instead of default packet transmission behavior
@@ -5541,8 +5578,15 @@ void SmfApp::OnPktCapture(ProtoChannel&              theChannel,
         {
             // Read in and handle all inbound captured packets
             unsigned int numBytes = ETHER_BYTES_MAX;
+            char* recvBuffer = (char*)ethBuffer;
+            if (ProtoNet::IFACE_GRE == cap.GetInterfaceType())
+            {
+                recvBuffer += 14;
+                numBytes -= 14;
+                
+            }
             ProtoCap::Direction direction;
-            if (!cap.Recv((char*)ethBuffer, numBytes, &direction))
+            if (!cap.Recv((char*)recvBuffer, numBytes, &direction))
             {
                 PLOG(PL_ERROR, "SmfApp::OnPktCapture() ProtoCap::Recv() error\n");
                 break;
@@ -5551,7 +5595,21 @@ void SmfApp::OnPktCapture(ProtoChannel&              theChannel,
             {
                 break;  // no more packets to receive
             }
-            if (ProtoCap::INBOUND != direction) continue;  // only handle inbound packets
+            if (ProtoCap::INBOUND != direction) 
+            {
+                continue;  // only handle inbound packets
+            }
+            if (ProtoNet::IFACE_GRE == cap.GetInterfaceType())
+            {
+                // Create placeholder Ethernet header for packet received via GRE tunnel
+                // Note the src/dst MAC addresses will be null for now
+                // Note HandleInboundPacket() will populate Ethernet src/dst header fields later as needed
+                ProtoPktETH ethPkt;
+                ethPkt.InitIntoBuffer(ethBuffer, 14);
+                ethPkt.SetType(ProtoPktETH::IP);
+                ethPkt.SetPayloadLength(numBytes);
+                numBytes += 14;
+            }
             PLOG(PL_DETAIL, "SmfApp::OnPktCapture() calling HandleInboundPacket\n");
             HandleInboundPacket(alignedBuffer, numBytes, cap);
         }  // end while(1)  (reading ProtoTap device loop)
@@ -5859,37 +5917,45 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
     const unsigned int IP_BYTES_MAX = (ETHER_BYTES_MAX - 14);
     ProtoPktIP ipPkt(ipBuffer, IP_BYTES_MAX);
     bool result = false;
-    ProtoAddress srcMacAddr;
+    
     
         // Here is where the SMF forwarding process is done
     //unsigned int srcIfIndex = srcIface.GetIndex();
     unsigned int dstIfIndices[IF_COUNT_MAX];
     int dstCount = 0;
-
+    ProtoAddress prevHopAddr;
+    ProtoAddress dstMacAddr;
     if (!ethPkt.InitFromBuffer(numBytes))
     {
         PLOG(PL_ERROR, "SmfApp::HandleInboundPacket() error: bad Ether frame\n");
         return false;
     }
-    ethPkt.GetSrcAddr(srcMacAddr);   
-    // This check is needed because the ProtoCap may falsely report 
-    // outbound packets as inbound when using the SMF "device" construct
-    // because the virtual "device" MAC addr is not the same as the
-    // physical interface that ProtoCap is reading ???
-    
     Smf::Interface* srcIface = reinterpret_cast<Smf::Interface*>((void*)srcCap.GetUserData());
-    unsigned int srcIfIndex = srcIface->GetIndex();
-    
-    if (srcMacAddr.IsEqual(srcIface->GetInterfaceAddress()))
+    unsigned int srcIfIndex = srcIface->GetIndex();    
+    bool srcCapIsGRE = (ProtoNet::IFACE_GRE == srcCap.GetInterfaceType());
+    if (srcCapIsGRE)
     {
-        return false;
+        prevHopAddr = srcCap.GetTunnelRemoteAddr();  // this will be IP instead of ETH
     }
-    ProtoAddress dstMacAddr;
-    ethPkt.GetDstAddr(dstMacAddr);
+    else
+    {
+        // This check is needed because the ProtoCap may falsely report 
+        // outbound packets as inbound when using the SMF "device" construct
+        // because the virtual "device" MAC addr is not the same as the
+        // physical interface that ProtoCap is reading ???
+        ethPkt.GetSrcAddr(prevHopAddr);
+        ethPkt.GetDstAddr(dstMacAddr);
+        if (prevHopAddr.IsEqual(srcIface->GetInterfaceAddress()))
+        {
+            return false;
+        }
+    }
+    
 #ifdef ELASTIC_MCAST
     UINT8 trafficClass = 0;
 #endif // ELASTIC_MCAST
     bool isDuplicate = false; // used to check for duplicate receptions for "device" interfaces
+    bool isUnicast = false;
     ProtoPktIP::Protocol protocol = ProtoPktIP::RESERVED;  // will be set if IP packet
     ProtoPktETH::Type ethType = (ProtoPktETH::Type)ethPkt.GetType();
     if (ethType == ProtoPktETH::ARP)
@@ -5930,12 +5996,19 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
             PLOG(PL_ERROR, "SmfApp::HandleInboundPacket() error: invalid IP version?!\n");
             return false;
         }
-        if (!dstAddr.IsMulticast() && !smf.GetUnicastEnabled() && !smf.GetAdaptiveRouting())
+        if (dstAddr.IsUnicast()) isUnicast = true;
+        if (srcCapIsGRE)
         {
-            // Don't process unicast unless enabled
-            return true;
+            // This packet came in from a GRE tunnel instead of Ethernet
+            // so we can set the dst MAC addr if it's multicast
+            if (!isUnicast)
+            {
+                dstMacAddr.GetEthernetMulticastAddress(dstAddr);
+                ethPkt.SetDstAddr(dstMacAddr);
+            }
+            // else dstMacAddr remains invalid for unicast packet received via GRE
         }
-
+        
         // Some IGMP snooping test code (TBD - handle IPv6 too)
         bool igmpSnoop = false;
         if (igmpSnoop && (ProtoPktIP::IGMP == protocol))
@@ -5949,7 +6022,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
         }
 
         PLOG(PL_DETAIL, "SmfApp::HandleInboundPacket(): Calling Process Packet \n" );
-        dstCount = smf.ProcessPacket(ipPkt, srcMacAddr, dstMacAddr, *srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt, false, &isDuplicate);
+        dstCount = smf.ProcessPacket(ipPkt, prevHopAddr, dstMacAddr, *srcIface, dstIfIndices, IF_COUNT_MAX, ethPkt, false, &isDuplicate);
         PLOG(PL_DETAIL, "SmfApp::HandleInboundPacket(): Called ProcessPacket, return value  = %d \n", dstCount);
         if (dstCount < 0) result = false;
         if (srcIface->IsEncapsulating() && (4 == ipPkt.GetVersion()))
@@ -5988,8 +6061,9 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
                 }
             }
         }  // end if (srcIFace.IsEncapsulating() ...
-    }
-    // Check if this is an "SMF Device" interface (i.e., coupled with a vif)
+    }  // end if/else ARP/IP
+   
+     // Check if this is an "SMF Device" interface (i.e., coupled with a vif)
     // If this "srcIface" is part of an "SMF Device" (i.e., is a "vif"), we need to write a copy up to the
     // kernel as a received packet via our virtual interface (vif) mechanism
     // (Note we do this _before_ forwarding, since forwarding modifies the Ethernet frame / IP packet
@@ -6004,16 +6078,26 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
         ethPkt.GetDstAddr(dstMacAddr);
         // Note ProtoAddress::IsMulticast() for ETH addrs includes broadcast addr as multicast
         // TBD - we could look at the dst IP addr and opportunistically get packets destined for us?
-        bool match = dstMacAddr.IsMulticast() || 
+        bool match;
+        if (srcCapIsGRE) 
+        {
+            match = true;  // assume anything in the tunnel is for me?
+            //match = dstMacAddr.IsMulticast() || dstMacAddr.HostIsEqual(srcCap.GetTunnelLocalAddr());
+            if (isUnicast) ethPkt.SetDstAddr(vif->GetHardwareAddress());  // doesn't seem to be necessary to fix
+        }
+        else
+        {
+            match = dstMacAddr.IsMulticast() || 
                      dstMacAddr.HostIsEqual(vif->GetHardwareAddress()) ||
                      dstMacAddr.HostIsEqual(srcCap.GetInterfaceAddr());
+        }
         if (match)
         {
             // TBD - Do not write duplicate packets up to kernel
             if (!isDuplicate || !filter_duplicates)
             {
                 
-                // This "hack" blocks ICMP messages from being written up to the virtual
+                // This "hack" (if uncommented) blocks ICMP messages from being written up to the virtual
                 // interface, because the "device" PCAP interface already sends them up to the kernel,
                 // (Even though IP is disabled on that physical interface!)
                 // such that duplicate Ping response would be generated if we also write the request
@@ -6022,10 +6106,18 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
                 {
                     if (!vif->Write((char*)ethPkt.GetBuffer(), ethPkt.GetLength()))
                         PLOG(PL_ERROR, "SmfApp::HandleInboundPacket() error: unable to write incoming packet to kernel!\n");
+                    
                 }
             }
         }
     }
+    
+    if (isUnicast && !smf.GetUnicastEnabled() && !smf.GetAdaptiveRouting())
+    {
+        // Don't process unicast unless enabled
+        return true;
+    }
+    
 #ifdef ELASTIC_MCAST   
     for (int i = 0; i < dstCount; i++)
     {
@@ -6085,7 +6177,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
 #endif // _PROTO_DETOUR
         else
         {
-            if (!ForwardFrame(dstCount, dstIfIndices, (char *)ethPkt.GetBuffer(), ethPkt.GetLength()))
+            if (!ForwardFrame(dstCount, dstIfIndices, (char*)ethPkt.GetBuffer(), ethPkt.GetLength()))
             {
                 PLOG(PL_ERROR, "SmfApp::HandleInboundPacket() error: unable to forward packet via ProtoCap device\n");
             }
@@ -6403,7 +6495,6 @@ void SmfApp::OnPktIntercept(ProtoChannel&               theChannel,
 				                ip4Pkt.SetID(newseq, true);
                             }
                             if (ttl_set >= 0) ip4Pkt.SetTTL((UINT8)ttl_set, true);
-
 
                             // If the "tap" (diversion to another process) has been activated, pass the packet
                             // to this process, also. That process may filter the packet

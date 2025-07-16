@@ -84,7 +84,7 @@ MulticastFIB::Membership::~Membership()
 }
 
 bool MulticastFIB::Membership::ActivateDownstreamRelay(const ProtoAddress&  srcIp, 
-                                                       const ProtoAddress&  srcMac, 
+                                                       const ProtoAddress&  prevHopAddr, 
                                                        unsigned int         refreshTick,
                                                        unsigned int         timeoutTick)
 {
@@ -137,9 +137,9 @@ bool MulticastFIB::Membership::ActivateDownstreamRelay(const ProtoAddress&  srcI
     {
         if (NULL != cache)
         {
-            cache->SetAddresses(srcIp, srcMac);
+            cache->SetAddresses(srcIp, prevHopAddr);
         }
-        else if (NULL == (cache = new DownstreamRelay(srcIp, srcMac)))
+        else if (NULL == (cache = new DownstreamRelay(srcIp, prevHopAddr)))
         {
             PLOG(PL_ERROR, "MulticastFIB::Membership::ActivateDownstreamRelay() new DownstreamRelay error: %s\n", GetErrorString());
             return false;
@@ -692,7 +692,7 @@ void MulticastFIB::TokenBucket::Refresh(unsigned int currentTick)
         // when the bucket would have been logically credited.
         // (If bucket overflow, we let the "currentTick" time ride
         unsigned int tickRemainder = age - (tokens * token_interval);
-        //if (HYBRID != forwarding_status) 
+        if (HYBRID != forwarding_status) // "HYBRID" is limited to one bucket of forwarding
             bucket_count += tokens;
         if (bucket_count > bucket_depth)
             bucket_count = bucket_depth;
@@ -2483,13 +2483,13 @@ void ElasticMulticastController::HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAd
 // The external input mechanism passes these in
 void ElasticMulticastController::HandleAck(const ElasticAck& ack, 
                                            unsigned int ifaceIndex, 
-                                           const ProtoAddress& ackSrcIp,
-                                           const ProtoAddress& ackSrcMac)  // ackSrcIp/ackSrcMac is source of EM_ACK
+                                           const ProtoAddress& ackSrcIp,   // ackSrcIp is source of EM_ACK
+                                           const ProtoAddress& ackPrevHop) // ackPrevHop may be MAC or IP (tunnel) addr
 {
     // TBD - confirm that it's for me
     ProtoAddress dstIp, srcIp;
     ack.GetDstAddr(dstIp);
-    ack.GetSrcAddr(srcIp);
+    ack.GetSrcAddr(srcIp); // This is the source IP address of the ACK
     UINT8 trafficClass = ack.GetTrafficClass();
     ProtoPktIP::Protocol protocol = ack.GetProtocol();
     ProtoFlow::Description membershipDescription(dstIp, srcIp, trafficClass, protocol, ifaceIndex);
@@ -2536,7 +2536,8 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
     // Important to update the downstream_relay_list _first_ so "ActivateMemberhip" sets the proper timeout
     // (TBD - perhaps the two steps here should be consolidated for more straightforward code?)
     unsigned int timeoutTick = currentTick + (unsigned int)(MulticastFIB::DEFAULT_ACK_TIMEOUT*TICK_RATE);
-    if (membership->ActivateDownstreamRelay(ackSrcIp, ackSrcMac, currentTick, timeoutTick))
+ 
+    if (membership->ActivateDownstreamRelay(ackSrcIp, ackPrevHop, currentTick, timeoutTick))
     {
         OnDownstreamRelayChange(*membership, false);  // change due to arriving EM_ACK or other relay timeouts
     }

@@ -727,8 +727,8 @@ class MulticastFIB
                 
                 const ProtoAddress& GetIpAddr() const
                     {return ip_addr;}
-                const ProtoAddress& GetMacAddr() const
-                    {return mac_addr;}
+                //const ProtoAddress& GetMacAddr() const
+                //    {return mac_addr;}
                     
                 void Refresh(unsigned int timeoutTick)
                 {

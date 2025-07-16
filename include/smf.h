@@ -151,11 +151,18 @@ class Smf
                 unsigned int GetIndex() const
                     {return if_index;}
                 
-                // These are the hardware address
+                // These is the hardware MAC address (if GRE this will also be GRE tunnel local addr)
                 void SetInterfaceAddress(const ProtoAddress& ifAddr)
                     {if_addr = ifAddr;}
                 const ProtoAddress& GetInterfaceAddress() const
                     {return if_addr;}
+                
+                void SetTunnelLocalAddress(const ProtoAddress& addr)
+                    {tunnel_local_addr = addr;}
+                bool IsGRE() const
+                    {return tunnel_local_addr.IsValid();}
+                const ProtoAddress& GetTunnelLocalAddress() const
+                    {return tunnel_local_addr;}
                 
                 ProtoAddressList& AccessAddressList()
                     {return addr_list;}
@@ -397,10 +404,11 @@ class Smf
             private:
                 unsigned int                          if_index;                                                                 
                 ProtoAddress                          if_addr;                                                                  
-                ProtoAddressList                      addr_list;     // list of IP addresses of the interface                   
-                ProtoAddress                          ip_addr;       // used as source addr for IPIP encapsulation              
+                ProtoAddressList                      addr_list;     // list of IP addresses of the interface    
+                ProtoAddress                          tunnel_local_addr;  // valid when Smf::Interface is GRE endpoint            
+                ProtoAddress                          ip_addr;       // used as source addr for nrlsmf IPIP encapsulation              
                 bool                                  resequence;                                                               
-                bool                                  is_tunnel;                                                                
+                bool                                  is_tunnel;     // _not_ GRE tunnel, but indicates nrlsmf IPIP encapsulation                                                          
                 bool                                  is_layered;                                                               
                 bool                                  is_reliable;  
                 bool                                  use_etx; 
@@ -416,7 +424,7 @@ class Smf
                 SmfQueue                              pkt_queue;           // interface output queue
 #ifdef ELASTIC_MCAST                
                 MulticastFIB::UpstreamHistoryTable    upstream_history_table;
-                double                                repair_window;  // in secs (max retransmit packet age)
+                double                                repair_window;      // in secs (max retransmit packet age)
                 UINT16                                local_adv_id;
 #endif // ELASTIC_MCAST
                                
