@@ -30,6 +30,8 @@ NOTES:
 
 #include <stdint.h>  // for intptr_t
 
+#define INT2VOIDP(i) (void*)(uintptr_t)(i)
+
 #define SET_DSCP   1
 #define RESET_DSCP 0
 
@@ -41,7 +43,7 @@ class Smf
 #endif // ELASTIC_MCAST
 #ifdef ADAPTIVE_ROUTING
   : public SmartForwarder
-#endif
+#endif // ADAPTIVE_ROUTING
 {
     public:
         enum RelayType
@@ -50,8 +52,8 @@ class Smf
             CF,
             S_MPR,
             E_CDS,
-            MPR_CDS,        
-            NS_MPR     
+            MPR_CDS,
+            NS_MPR
         };
             
         // Forwarding "modes" for a given interface group
@@ -93,9 +95,9 @@ class Smf
         
         // Manage/Query a list of the node's local MAC/IP addresses
         // (Also cache interface index so we can look that up by address)
-        bool AddOwnAddress(const ProtoAddress& addr, intptr_t ifaceIndex)
+        bool AddOwnAddress(const ProtoAddress& addr, unsigned int ifaceIndex)
         {
-            bool result = local_addr_list.Insert(addr, (void*)ifaceIndex);
+            bool result = local_addr_list.Insert(addr, INT2VOIDP(ifaceIndex));
             ASSERT(result);
             return result;
         }
@@ -149,11 +151,18 @@ class Smf
                 unsigned int GetIndex() const
                     {return if_index;}
                 
-                // These are the hardware address
+                // These is the hardware MAC address (if GRE this will also be GRE tunnel local addr)
                 void SetInterfaceAddress(const ProtoAddress& ifAddr)
                     {if_addr = ifAddr;}
                 const ProtoAddress& GetInterfaceAddress() const
                     {return if_addr;}
+                
+                void SetTunnelLocalAddress(const ProtoAddress& addr)
+                    {tunnel_local_addr = addr;}
+                bool IsGRE() const
+                    {return tunnel_local_addr.IsValid();}
+                const ProtoAddress& GetTunnelLocalAddress() const
+                    {return tunnel_local_addr;}
                 
                 ProtoAddressList& AccessAddressList()
                     {return addr_list;}
@@ -210,20 +219,7 @@ class Smf
                     {is_layered = state;}
                 bool IsLayered() const
                     {return is_layered;}
-                
-                // If "is_shadowing", the snmf "device" uses the underlying
-                // interface addressing (MAC and IP) for its transmissions
-                void SetShadowing(bool state)
-                    {is_shadowing = state;}
-                bool IsShadowing() const
-                    {return is_shadowing;}
-                
-                // Controls blocking of outbound IGMP messages
-                // (Only applies to nrlsmf "device" interfaces running elastic mcast)
-                void SetBlockIGMP(bool state)
-                    {block_igmp = state;}
-                bool BlockIGMP() const
-                    {return block_igmp;}
+               
                 // These enable/disable reliable forwarding for the interface
                 void SetReliable(bool state)
                 {
@@ -408,15 +404,14 @@ class Smf
             private:
                 unsigned int                          if_index;                                                                 
                 ProtoAddress                          if_addr;                                                                  
-                ProtoAddressList                      addr_list;     // list of IP addresses of the interface                   
-                ProtoAddress                          ip_addr;       // used as source addr for IPIP encapsulation              
+                ProtoAddressList                      addr_list;     // list of IP addresses of the interface    
+                ProtoAddress                          tunnel_local_addr;  // valid when Smf::Interface is GRE endpoint            
+                ProtoAddress                          ip_addr;       // used as source addr for nrlsmf IPIP encapsulation              
                 bool                                  resequence;                                                               
-                bool                                  is_tunnel;                                                                
+                bool                                  is_tunnel;     // _not_ GRE tunnel, but indicates nrlsmf IPIP encapsulation                                                          
                 bool                                  is_layered;                                                               
                 bool                                  is_reliable;  
                 bool                                  use_etx; 
-                bool                                  is_shadowing;  // nrlsmf vif 'device' interfaces only   
-                bool                                  block_igmp;    // nrlsmf vif 'device' elastic mcast interfaces only                                            
                 UINT16                                ump_sequence;                                                             
                 bool                                  ip_encapsulate;                                                           
                 ProtoAddress                          encapsulation_link;  // MAC addr of next hop for encapsulated packets     
@@ -429,7 +424,7 @@ class Smf
                 SmfQueue                              pkt_queue;           // interface output queue
 #ifdef ELASTIC_MCAST                
                 MulticastFIB::UpstreamHistoryTable    upstream_history_table;
-                double                                repair_window;  // in secs (max retransmit packet age)
+                double                                repair_window;      // in secs (max retransmit packet age)
                 UINT16                                local_adv_id;
 #endif // ELASTIC_MCAST
                                
@@ -474,6 +469,7 @@ class Smf
         InterfaceList& AccessInterfaceList()
             {return iface_list;}
         void RemoveInterface(unsigned int ifIndex);
+        void RemoveInterface(Interface* iface);
         void DeleteInterface(Interface* iface);
         
         bool IsInGroup(Interface& iface)
@@ -746,6 +742,9 @@ class Smf
                                            Interface&                     srcIface, 
                                            MulticastFIB::UpstreamHistory& upstreamHistory,
                                            UINT16                         upstreamSeq);
+        
+        void AdvertiseActiveFlows();  // override of ElasticMulticastForwarder::AdvertiseActiveFlows()
+        
         // Only call if nackCount > 0
         void SendNack(Interface&                     srcIface, 
                       MulticastFIB::UpstreamHistory& upstreamHistory,
@@ -767,9 +766,7 @@ class Smf
         static const unsigned int DEFAULT_REPAIR_CACHE_SIZE;
         bool CreatePacketCache(Interface& iface, unsigned int cacheSize);
         bool CachePacket(const Interface& iface, UINT16 sequence, char* frameBuffer, unsigned int frameLength);
-        void OnAdvTimeout(ProtoTimer& theTimer);
         
-        //MulticastFIB::UpstreamRelay* GetBestUpstreamRelay(MulticastFIB::Entry& fibEntry, unsigned int currentTick);
 #endif // ELASTIC_MCAST
         
     private:
@@ -819,7 +816,6 @@ class Smf
         unsigned int        update_age_max;  // max staleness allowed for flows
         unsigned int        current_update_time;
 #ifdef ELASTIC_MCAST
-        ProtoTimer          adv_timer;
         UINT8               unreliable_tos;
 #endif // ELASTIC_MCAST
         
