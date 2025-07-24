@@ -48,6 +48,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <iomanip>
 
 class SmfApp : public ProtoApp
 #ifdef ELASTIC_MCAST
@@ -5430,19 +5431,20 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                 {
                     Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
                     Smf::Interface* nextIface;
+                    ss << "Interface        Flows      Receives   MReceives  Sends      ReXmits    Forwards   Duplicates Asyms      QueueLen\n";
+                    ss << "---------------- ---------- ---------- ---------- ---------- ---------- ---------- ---------- ---------- ----------\n";
                     while (NULL != (nextIface = iterator.GetNextItem()))
                     {
-                        ss <<  "interface:" << nextIface->GetNameStr();
-                        ss <<  " flows:" << nextIface->GetFlowCount();
-                        ss <<  " recv:" << nextIface->GetRecvCount();
-                        ss <<  " mrcv:" << nextIface->GetMcastCount();
-                        ss <<  " sent:" << nextIface->GetSentCount();
-                        ss <<  " retr:" << nextIface->GetRetransmissionCount();
-                        ss <<  " fwd:" << nextIface->GetForwardCount();
-                        ss <<  " dups:" << nextIface->GetDuplicateCount();
-                        ss <<  " asym:" << nextIface->GetAsymCount();
-                        ss <<  " queue:" << nextIface->GetQueueLength();
-                        ss << "\n";
+                        ss << std::left << std::setw(16) <<  nextIface->GetNameStr() << " ";
+                        ss << std::right << std::setw(10) << nextIface->GetFlowCount() << " ";
+                        ss << std::setw(10) << nextIface->GetRecvCount() << " ";
+                        ss << std::setw(10) << nextIface->GetMcastCount() << " ";
+                        ss << std::setw(10) << nextIface->GetSentCount() << " ";
+                        ss << std::setw(10) << nextIface->GetRetransmissionCount() << " ";
+                        ss << std::setw(10) << nextIface->GetForwardCount() << " ";
+                        ss << std::setw(10) << nextIface->GetDuplicateCount() << " ";
+                        ss << std::setw(10) << nextIface->GetAsymCount() << " ";
+                        ss << std::setw(10) << nextIface->GetQueueLength() << "\n";
                     }
                     unsigned int numBytes = ss.str().size();
                     if (!server_pipe.Send(ss.str().c_str(), numBytes))
@@ -5535,6 +5537,8 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                 Smf::InterfaceGroup* group;
                 std::ostringstream ss;
                 ss << "";
+                ss << "GroupName    GroupType RelayType ForwardingMode Interfaces\n";
+                ss << "------------ --------- --------- -------------- ----------\n";
                 while (NULL != (group = grouperator.GetNextItem()))
                 {
                     char ifaceName[Smf::IF_NAME_MAX + 1];
@@ -5545,8 +5549,8 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                     // If we don't want to see PUSH groups, uncomment following two lines ...
                     // if (Smf::PUSH == group->GetForwardingMode()) // I think we want to skip these ...
                     //     continue;
-                    ss << "GroupName:" << group->GetName();
-                    ss << " GroupType:" << (group->IsTemplateGroup() ? "Template" : "Regular");
+                    ss << std::left << std::setw(13) << group->GetName();
+                    ss << std::setw(9) << (group->IsTemplateGroup() ? "Template" : "Regular") << " ";
                     std::string relayType;
                     switch (group->GetRelayType())
                     {
@@ -5557,15 +5561,14 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                         case Smf::MPR_CDS: relayType="mpr_cds"; break;
                         case Smf::NS_MPR: relayType="ns_mpr"; break;
                     }
-                    ss << " RelayType:" << relayType;
+                    ss << std::setw(9) << relayType << " ";
                     switch (group->GetForwardingMode())
                     {
                         case Smf::PUSH: relayType="Push"; break;
                         case Smf::MERGE: relayType="Merge"; break;
                         case Smf::RELAY: relayType="Relay"; break;
                     }
-                    ss << " ForwardingMode:" << relayType;
-                    ss << " Interfaces:";
+                    ss << std::setw(14) << relayType << " ";
                     bool firstInterface = true;
                     while (NULL != (iface = ifacerator.GetNextInterface()))
                     {
