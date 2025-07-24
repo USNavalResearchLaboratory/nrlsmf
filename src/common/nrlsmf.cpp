@@ -5656,8 +5656,10 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                 if (!OnCommand(cmd, arg))
                 {
                     if (!(!strncmp(cmd, "help",cmdLen) || !strncmp(cmd, "version",cmdLen)))
+                    {
                         PLOG(PL_ERROR, "SmfApp::OnControlMsg() invalid command: \"%s\"\n", cmd);
                         passed = false;
+                    }
                 }
                 // clientStart has already replied back to the server
                 if (!strncmp(cmd, "smfClientStart",cmdLen))
