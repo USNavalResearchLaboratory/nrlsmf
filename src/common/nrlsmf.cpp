@@ -5591,8 +5591,8 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                 Smf::InterfaceGroup* group;
                 std::ostringstream ss;
                 ss << "";
-                ss << "GroupName    GroupType RelayType ForwardingMode Interfaces\n";
-                ss << "------------ --------- --------- -------------- ----------\n";
+                ss << "GroupName            GroupType RelayType ForwardingMode Interfaces\n";
+                ss << "-------------------- --------- --------- -------------- ----------\n";
                 while (NULL != (group = grouperator.GetNextItem()))
                 {
                     char ifaceName[Smf::IF_NAME_MAX + 1];
@@ -5603,7 +5603,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                     // If we don't want to see PUSH groups, uncomment following two lines ...
                     // if (Smf::PUSH == group->GetForwardingMode()) // I think we want to skip these ...
                     //     continue;
-                    ss << std::left << std::setw(13) << group->GetName();
+                    ss << std::left << std::setw(21) << group->GetName();
                     ss << std::setw(9) << (group->IsTemplateGroup() ? "Template" : "Regular") << " ";
                     std::string relayType;
                     switch (group->GetRelayType())
@@ -5691,7 +5691,40 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                     return;
                 }
             }
-
+            else if (!strncmp("interfaces", cmd, len)) // checking interfaces
+            {
+                std::ostringstream ss;
+                ss << "interfaces\n";
+                unsigned int numBytes = ss.str().size();
+                if (!server_pipe.Send(ss.str().c_str(), numBytes))
+                {
+                    PLOG(PL_ERROR, "SmfApp::OnCommand(interfaces) error sending interfaces to smf server\n");
+                    return;
+                }
+            }
+            else if (!strncmp("brfgroups", cmd, len)) // checking groups brief
+            {
+                std::ostringstream ss;
+                mcast_controller.DumpGroups(true, ss);
+                unsigned int numBytes = ss.str().size();
+                if (!server_pipe.Send(ss.str().c_str(), numBytes))
+                {
+                    PLOG(PL_ERROR, "SmfApp::OnCommand(brfgroups) error sending brfgroups to smf server\n");
+                    return;
+                }
+            }
+            else if (!strncmp("groups", cmd, len)) // checking stats groups
+            {
+                std::ostringstream ss;
+                mcast_controller.DumpGroups(false, ss);
+                unsigned int numBytes = ss.str().size();
+                if (!server_pipe.Send(ss.str().c_str(), numBytes))
+                {
+                    PLOG(PL_ERROR, "SmfApp::OnCommand(groups) error sending groups to smf server\n");
+                    return;
+                }
+            }
+          
 #ifdef MNE_SUPPORT
             else if (!strncmp(cmd, "mneBlockMac", cmdLen))
             {

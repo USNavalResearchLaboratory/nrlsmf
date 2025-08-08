@@ -7,7 +7,8 @@
 #include <math.h>
 #include <algorithm>
 #include <iostream>
-
+#include <iomanip>
+#include <sstream>
 #include <smf.h> // for Smf::Interface
 
 #define USE_PREEMPTIVE_ACK 1
@@ -1987,6 +1988,88 @@ void MulticastFIB::PruneFlowList(unsigned int currentTick, ElasticMulticastContr
     }
 }  // end MulticastFIB::PruneFlowList()
 
+void MulticastFIB::DumpFlowList(bool brief, std::ostringstream& ss)
+{
+    // pass over the flow_table and dump text suitable for command output
+    MulticastFIB::Entry* entry = NULL;
+    MulticastFIB::EntryTable::Iterator fiberator(flow_table);
+
+    if (brief) {
+        ss << "MCast Address    SRC Interface\n";
+        ss << "---------------- -------------\n";
+    } else {
+        ss << "MCast Address    SRC Address      Status Fwd Status ACK SRC Interface\n";
+        ss << "---------------- ---------------- ------ ---------- --- -------------\n";
+    }
+
+   while (NULL != (entry = fiberator.GetNextEntry()))
+    {
+        ProtoFlow::Description flow;
+        ProtoAddress dst, src;
+        char ifaceName[Smf::IF_NAME_MAX+1] = "<None>";
+        UpstreamRelay *up;
+
+        flow = entry->GetFlowDescription();
+        up = entry->GetCurrentBestUpstreamRelay();
+        entry->GetDstAddr(dst);
+        ss <<  std::left << std::setw(17) << dst.GetHostString();
+        if (!brief) {
+            char srcHostString[256] = "*"; // initialize this, as GetHostString() is a bad actor
+
+            entry->GetSrcAddr(src);
+            src.GetHostString(srcHostString,255);
+            ss << std::left << std::setw(17) << srcHostString;
+            ss << (entry->IsActive() ? "ACTIVE " : "IDLE   ");
+            ss << std::left << std::setw(11)  << MulticastFIB::GetForwardingStatusString(entry->GetDefaultForwardingStatus());
+            ss << (entry->GetAckingStatus() ? " x  " : "    ");
+        }
+        if (up) ProtoNet::GetInterfaceName(up->GetInterfaceIndex(), ifaceName, Smf::IF_NAME_MAX);
+        ss << ifaceName;
+        ss << "\n";
+    }
+
+}   // end MulticastFIB::DumpFlowList()
+
+void MulticastFIB::DumpFlowListJson(bool brief, std::ostringstream& ss)
+{
+    // pass over the flow_table and dump text suitable for json output
+    MulticastFIB::Entry* entry = NULL;
+    MulticastFIB::EntryTable::Iterator fiberator(flow_table);
+    bool comma = false;
+
+    ss << "[";
+    while (NULL != (entry = fiberator.GetNextEntry()))
+    {
+        ProtoFlow::Description flow;
+        ProtoAddress dst, src;
+        char ifaceName[Smf::IF_NAME_MAX+1] = "<None>";
+        UpstreamRelay *up;
+
+        ss << (comma ? "," : "") << "{";
+
+        flow = entry->GetFlowDescription();
+        up = entry->GetCurrentBestUpstreamRelay();
+        entry->GetDstAddr(dst);
+        ss <<  "\"MCastAddr\" : \"" << dst.GetHostString() << "\",";
+        if (!brief) {
+            char srcHostString[256] = "*"; // initialize this, as GetHostString() is a bad actor
+
+            entry->GetSrcAddr(src);
+            src.GetHostString(srcHostString,255);
+            ss << "\"SrcAddr\" : \"" << srcHostString << "\",";
+            ss << "\"Status\" : \"" << (entry->IsActive() ? "ACTIVE" : "IDLE") << "\",";
+            ss << "\"FwdStatus\" : \""  << MulticastFIB::GetForwardingStatusString(entry->GetDefaultForwardingStatus()) << "\",";
+            ss << "\"Ack\" : \""  << (entry->GetAckingStatus() ? "yes" : "no") << "\",";
+        }
+        if (up) ProtoNet::GetInterfaceName(up->GetInterfaceIndex(), ifaceName, Smf::IF_NAME_MAX);
+        ss << "\"SrcInterface\" : \""  << ifaceName << "\"";
+        ss << "}";
+        comma = true;
+    }
+    ss << "]\n";
+
+}   // end MulticastFIB::DumpFlowListJson()
+
 bool MulticastFIB::AddFlowStatus(const ProtoFlow::Description&  flowDescription, 
                                  FlowStatus                     flowStatus, 
                                  MulticastFIB::ForwardingStatus defaultStatus)
@@ -2190,6 +2273,11 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const ProtoFlow::Description
     return true;
 }  // end ElasticMulticastForwarder::SetForwardingStatus()
 
+
+void ElasticMulticastForwarder::DumpGroups(bool brief, std::ostringstream& ss)
+{
+    mcast_fib.DumpFlowList(brief, ss);
+}
 
 ///////////////////////////////////////////////////////////////////////////////////
 // class ElasticMulticastController implementation
@@ -2948,4 +3036,10 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
     }
     
 }  // end ElasticMulticastController::Update()
+
+
+void ElasticMulticastController::DumpGroups(bool brief, std::ostringstream& ss)
+{
+    mcast_forwarder->DumpGroups(brief, ss);
+}
 

@@ -605,7 +605,9 @@ class MulticastFIB
                     {best_relay = relay;}
                 UpstreamRelay* GetCurrentUpstreamRelay() const
                     {return best_relay;}
-                
+                                UpstreamRelay* GetCurrentBestUpstreamRelay()
+                    {return best_relay;}
+
                 // Use to cache observed TTL for advertising 
                 // locally discovered flows
                 void SetTTL(UINT8 ttl)
@@ -1111,6 +1113,8 @@ class MulticastFIB
 #ifdef ADAPTIVE_ROUTING
         bool ParseFlowList( ProtoPktIP& pkt, Entry*& fibEntry, unsigned int currentTick, bool& sendAck,const ProtoAddress& srcMac);
 #endif // ADAPTIVE_ROUTING
+        void DumpFlowList(bool brief, std::ostringstream& ss);
+        void DumpFlowListJson(bool brief, std::ostringstream& ss);
 
     private:
         EntryTable          flow_table;         // Table of detected flows (updated by forwarding plane)
@@ -1238,6 +1242,8 @@ class ElasticMulticastForwarder
         void SetOutputMechanism(OutputMechanism* mech)
             {output_mechanism = mech;}
 
+        void DumpGroups(bool brief, std::ostringstream& ss);
+
     protected:
        // Our "ticker" is a count of microseconds that is used for our
         // membership timeouts.  The forwarder is responsible for
@@ -1317,7 +1323,8 @@ class ElasticMulticastController
         MulticastFIB::MembershipTable& AccessMembershipTable() 
             {return membership_table;}
         
-        
+                void DumpGroups(bool brief, std::ostringstream& ss);
+
         // NEXT STEP - IMPLEMENT MECHANISM TO SEND ACKS to UPSTREAM FORWARDERS
         // 1) When do we send an ACK?
         //    a) upon newly active flow
