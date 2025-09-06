@@ -2306,6 +2306,9 @@ bool ElasticMulticastController::AddManagedMembership(const ProtoFlow::Descripti
     auto& il = smf->AccessInterfaceList();
     Smf::InterfaceList::Iterator il_it(il);
     Smf::Interface* iface;
+    std::uint32_t ifaceIndex = flowDescription.GetInterfaceIndex();
+    ProtoAddress groupAddr;
+    flowDescription.GetDstAddr(groupAddr);
     while (NULL != (iface = il_it.GetNextItem()))
     {
         if (iface->IsIgmpProxy())
@@ -2343,11 +2346,10 @@ bool ElasticMulticastController::AddManagedMembership(const ProtoFlow::Descripti
     if (0 == membership->GetFlags())
     {
         mcast_forwarder->SetAckingStatus(membership->GetFlowDescription(), true);
-        mcast_forwarder->SetForwardingStatus(membership->GetFlowDescription(), ifaceIndex, MulticastFIB::FORWARD, true, true);
+        mcast_forwarder->SetForwardingStatus(membership->GetFlowDescription(), ifaceIndex, MulticastFIB::FORWARD, true);
     }
     // Set MANAGED status for  _all_ matching memberships for this "ifaceIndex"
     MulticastFIB::MembershipTable::Iterator iterator(membership_table, &membership->GetFlowDescription());
-    unsigned int ifaceIndex = flowDescription.GetInterfaceIndex();
     while (NULL != (membership = iterator.GetNextEntry()))
     {
         // TBD - "activate" MANAGED membership with timeout instead?
@@ -2383,12 +2385,14 @@ bool ElasticMulticastController::RemoveManagedMembership(const ProtoFlow::Descri
     if (match && !ackingStatus)
     {
         mcast_forwarder->SetAckingStatus(flowDescription, false);
-        mcast_forwarder->SetForwardingStatus(flowDescription, ifaceIndex, default_forwarding_status, false, false);
+        mcast_forwarder->SetForwardingStatus(flowDescription, ifaceIndex, default_forwarding_status, false);
         //FIXME: this only works with elastic
         auto smf=reinterpret_cast<Smf*>(mcast_forwarder);
         auto& il = smf->AccessInterfaceList();
         Smf::InterfaceList::Iterator il_it(il);
         Smf::Interface* iface;
+        ProtoAddress groupAddr;
+        flowDescription.GetDstAddr(groupAddr);
         while (NULL != (iface = il_it.GetNextItem()))
         {
         if (iface->IsIgmpProxy())

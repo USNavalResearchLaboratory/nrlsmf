@@ -5869,14 +5869,15 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
                 continue;
             }
 
+            ProtoFlow::Description flowDescription(group, PROTO_ADDR_NONE, 0x03, ProtoPktIP::RESERVED, iface->GetIndex());
             if (added)
             {
-                mcast_controller.AddManagedMembership(index, group);
+                mcast_controller.AddManagedMembership(flowDescription);
                 iface->AddManagedMembership(group);
             }
             else
             {
-                mcast_controller.RemoveManagedMembership(index, group);
+                mcast_controller.RemoveManagedMembership(flowDescription);
                 iface->RemoveManagedMembership(group);
             }
         }

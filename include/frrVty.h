@@ -4,6 +4,7 @@
 #include <string>
 #include <stdexcept>
 #include <vector>
+#include <cstdint>
 #include "protoPipe.h"
 
 // This file contains a collection of functions to help with communicating
