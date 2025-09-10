@@ -1059,10 +1059,11 @@ const char* const SmfApp::CMD_LIST[] =
     "+boost",           "{on | off}  : boost process priority (default = on)",
     "+cf",              "<ifaceList>  : CF relay among all iface's listed",
     "+cid",             "<vifName>,<iface1>[/{t|r|d}][,<iface2>[/{t|r|d}][,<iface3>[/{t|r|d}],...]] to add/delete elements to composite interface device",
+    "+debug",           "<debugLevel>   : set debug level [0..6]",
+    //"+defaultForward",  "{on | off}  : same as \"relay\" (for backwards compatibility)",
     "+delayoff",        "<double>    : number of microseconds delay before executing a relay off command (default = 0)",
     "+deny",            "{<vrfLeakSpec> | <filterSpec> | all} : set VRF route leak policy or filter for flows that nrlsmf elastic mcast should ignore",
     "+device",          "<vifName>,<ifaceName>[/{t|r|d}][,<addr1>[,addr2, ...]] to create virtual interface 'device' associated with one or more physical interfaces",
-
     "+dscpCapture",     "<dscpValue>,<dscpValueList> : set the DSCP values(s) for unicast capture.",
     "+dscpRelease",     "<dscpValue>,<dscpValueList> : unset DSCP values(s) for unicast capture.",
     "+ecds",            "<ifaceList>  : E_CDS relay among all iface's listed",
@@ -1498,7 +1499,7 @@ bool SmfApp::ProcessCommands(int argc, const char*const* argv)
     int i = 1;
     while ( i < argc)
     {
-        fprintf(stderr, "Arg[%d] = %s\n", i, argv[i]);
+        // fprintf(stderr, "Arg[%d] = %s\n", i, argv[i]);
         // Is it a class SmfApp command?
         switch (GetCmdType(argv[i]))
         {
