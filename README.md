@@ -24,16 +24,24 @@ operating systems:  Linux, MacOS, BSD, Win32, and WinCE.
 
 Build Instructions 
 
-Requires Protolib:
-    https://www.nrl.navy.mil/itd/ncs/products/protolib
-    https://github.com/USNavalResearchLaboratory/protolib
+Note that nrlsmf uses NRL "protolib" (https://github.com/USNavalResearchLaboratory/protolib) 
+as a submodule.  So use the following command to clone the nrlsmf repository and automatically
+pull in the correct version of the protolib source tree:
+
+git clone --recurse-submodules https://github.com/USNavalResearchLaboratory/nrlsmf.git
 
 For Unix platforms, the "nrlsmf/makefiles" directory in the source
-tree contains Makefiles for different platforms.  Type:
+tree contains Makefiles for different platforms. So, to build nrlsmf,
+do the following:
 
-make Makefile.<ostype> nrlsmf 
+cd makefiles;
+make -f Makefile.<ostype> nrlsmf 
 
 to build the nrlsmf binary executable.   
+
+As an example for Linux, the 'make' command would be:
+
+make -f Makefile.linux nrlsmf
 
 For Win32 platforms, a distribution of "winpcap" is
 required to build the nrlsmf.exe executable.  A Visual C++
