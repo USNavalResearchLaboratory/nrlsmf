@@ -50,6 +50,11 @@
 #include <stdio.h>
 #include <iomanip>
 
+#include <sys/file.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#define FRR_PID_FILE_PATH "/var/run/frr/nrlsmf.pid"
 class SmfApp : public ProtoApp
 #ifdef ELASTIC_MCAST
     , public ElasticMulticastForwarder::OutputMechanism
@@ -98,6 +103,9 @@ class SmfApp : public ProtoApp
         class InterfaceMatcher;
 
         void ParseDSCPList(const char* strDSCPList, int cmd);
+
+        bool CreatePidFile(const std::string& pid_filepath);
+        void DeletePidFile(const std::string& pid_filepath);
 
         Smf::InterfaceGroup* GetInterfaceGroup(const char*         groupName,
                                                Smf::Mode           mode,
@@ -1231,6 +1239,15 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
     smf.GetVRFs()->SetPolicies(smf.GetVRFPolicies());
     smf.GetVRFs()->EnableFRRUpdates(smf.withFRR());
 
+    if (smf.withFRR())
+    {
+        if (!CreatePidFile(FRR_PID_FILE_PATH))
+        {
+            OnShutdown();
+            return false;
+        }
+    }
+
     // Check to see if any ifaces were configured
     // (or if outbound resequencing is set up)
     if (!resequence && (ttl_set < 0))
@@ -1491,6 +1508,9 @@ void SmfApp::OnShutdown()
     }
 #endif // HAVE_IPV6
 #endif // _PROTO_DETOUR
+
+    if (smf.withFRR())
+        DeletePidFile(FRR_PID_FILE_PATH);
 
 }  // end SmfApp::OnShutdown()
 
@@ -3408,6 +3428,37 @@ void SmfApp::ParseDSCPList(const char* strDSCPList, int cmd)
 
 }  // end SmfApp::ParseDSCPList()
 
+bool SmfApp::CreatePidFile(const std::string& pid_filepath) {
+    int pid_file = open(pid_filepath.c_str(), O_CREAT | O_WRONLY, 0666);
+    if (pid_file == -1) {
+        PLOG(PL_FATAL,"SmfApp::CreatePidFile(): Failed to open PID file\n");
+        return false;
+    }
+
+    // Place an exclusive lock on the file
+    if (flock(pid_file, LOCK_EX | LOCK_NB) == -1) {
+        PLOG(PL_FATAL, "SmfApp::CreatePidFile(): Another instance is already running.\n");
+        close(pid_file);
+        return false;
+    }
+
+    // Write the PID to the file
+    std::string pid_str = std::to_string(getpid());
+    if (write(pid_file, pid_str.c_str(), pid_str.length()) == -1) {
+        PLOG(PL_FATAL, "SmfApp::CreatePidFile(): Failed to write PID to file.\n");
+        close(pid_file);
+        // The lock is automatically released when the process exits
+        return false;
+    }
+
+    return true;
+}
+
+void SmfApp::DeletePidFile(const std::string& pid_filepath) {
+    if (unlink(pid_filepath.c_str()) == -1) {
+        PLOG(PL_ERROR,"SmfApp::DeletePidFile():Failed to delete PID file\n");
+    }
+}
 
 // print current groups to log output
 void SmfApp::DisplayGroups()
@@ -5415,6 +5466,9 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                         PLOG(PL_ERROR, "SmfApp::OnCommand(instance) error sending heartbeat to smf server\n");
                         return;
                     }
+                    else
+                        PLOG(PL_DEBUG, "SmfApp::OnCommand(instance) sent heartbeat to smf server\n");
+
                     // following line sends json format back, probably not needed
                     // ServerSend("ping", "pong");
                 }       
