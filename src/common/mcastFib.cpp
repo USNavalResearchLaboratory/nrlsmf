@@ -179,7 +179,7 @@ bool MulticastFIB::Membership::ActivateDownstreamRelay(const ProtoAddress&  srcI
     }
     
     return relaysChanged;
-};  // end MulticastFIB::Membership::ActivateDownstreamRelay()
+}  // end MulticastFIB::Membership::ActivateDownstreamRelay()
 
 bool MulticastFIB::Membership::DeactivateDownstreamRelay(unsigned int currentTick)
 {
