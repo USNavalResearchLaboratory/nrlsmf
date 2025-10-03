@@ -5694,7 +5694,34 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
             else if (!strncmp("interfaces", cmd, len)) // checking interfaces
             {
                 std::ostringstream ss;
-                ss << "interfaces\n";
+                if (server_pipe.IsOpen())
+                {
+                    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
+                    Smf::Interface* nextIface;
+                    ss << "Flags: L = Layered, T = Tunnel, I = IGMP Proxy, S = Shadowing\n\n";
+                    ss << "Interface        Fwd Method Flags\n";
+                    ss << "---------------- ---------- -----\n";
+                    while (NULL != (nextIface = iterator.GetNextItem()))
+                    {
+                        ss << std::left << std::setw(16) <<  nextIface->GetNameStr() << " ";
+                        ss << std::setw(12);
+                        if (nextIface->GetElasticMulticast()) {
+
+                            if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
+                                ss << "Advertise";
+                            else
+                                ss << "Elastic";
+                        } else  ss << "Flood";
+                        
+                        std::setw(1);
+                        if (nextIface->IsLayered()) ss << "L";
+                        if (nextIface->IsTunnel()) ss << "T";
+                        if (nextIface->IsIgmpProxy()) ss << "I";
+                        InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(nextIface->GetExtension());
+                        if ((NULL != mech) && mech->IsShadowing()) ss << "S";
+                        ss << "\n";
+                    }
+                }
                 unsigned int numBytes = ss.str().size();
                 if (!server_pipe.Send(ss.str().c_str(), numBytes))
                 {
