@@ -53,6 +53,9 @@
 #include <sys/file.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <sstream>
+#include <vector>
+#include <tuple>
 
 #define FRR_PID_FILE_PATH "/var/run/frr/nrlsmf.pid"
 class SmfApp : public ProtoApp
@@ -5705,6 +5708,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                     {
                         ss << std::left << std::setw(16) <<  nextIface->GetNameStr() << " ";
                         ss << std::setw(12);
+#ifdef ELASTIC_MCAST
                         if (nextIface->GetElasticMulticast()) {
 
                             if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
@@ -5712,6 +5716,9 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                             else
                                 ss << "Elastic";
                         } else  ss << "Flood";
+#else
+                        ss << "Flood";
+#endif // ELASTIC_MCAST
                         
                         std::setw(1);
                         if (nextIface->IsLayered()) ss << "L";
@@ -5729,10 +5736,58 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                     return;
                 }
             }
-            else if (!strncmp("brfgroups", cmd, len)) // checking groups brief
+            else if (!strncmp("interfacesj", cmd, len)) // checking interfaces
             {
                 std::ostringstream ss;
-                mcast_controller.DumpGroups(true, ss);
+                if (server_pipe.IsOpen())
+                {
+                    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
+                    Smf::Interface* nextIface;
+                    bool comma = false;
+
+                    ss << "[";
+                    while (NULL != (nextIface = iterator.GetNextItem()))
+                    {
+                        ss << (comma ? "," : "") << "{";
+                        ss << "\"Interface\" : \"" <<  nextIface->GetNameStr()  << "\",";
+                        ss << "\"FwdMethod\" : \"";
+#ifdef ELASTIC_MCAST
+                        if (nextIface->GetElasticMulticast()) {
+                            if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
+                                ss << "Advertise";
+                            else
+                                ss << "Elastic";
+                        } else  ss << "Flood";
+#else
+                        ss << "Flood";
+#endif // ELASTIC_MCAST
+                        ss << "\",";
+
+                        ss << "\"Flags\" : \"";
+                        if (nextIface->IsLayered()) ss << "L";
+                        if (nextIface->IsTunnel()) ss << "T";
+                        if (nextIface->IsIgmpProxy()) ss << "I";
+                        InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(nextIface->GetExtension());
+                        if ((NULL != mech) && mech->IsShadowing()) ss << "S";
+                        ss << "\"}";
+                        comma = true;
+                    }
+                    ss << "]\n";
+                }
+                unsigned int numBytes = ss.str().size();
+                if (!server_pipe.Send(ss.str().c_str(), numBytes))
+                {
+                    PLOG(PL_ERROR, "SmfApp::OnCommand(interfaces) error sending interfaces to smf server\n");
+                    return;
+                }
+            }
+#ifdef ELASTIC_MCAST
+            else if (!strncmp("brfgroups", cmd, len) || !strncmp("brfgroupsj", cmd, len)) // checking groups brief
+            {
+                std::ostringstream ss;
+                bool useJson = cmd[len-1] == 'j';
+
+                mcast_controller.DumpGroups(true, useJson, ss);
                 unsigned int numBytes = ss.str().size();
                 if (!server_pipe.Send(ss.str().c_str(), numBytes))
                 {
@@ -5740,10 +5795,12 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                     return;
                 }
             }
-            else if (!strncmp("groups", cmd, len)) // checking stats groups
+            else if (!strncmp("groups", cmd, len) || !strncmp("groupsj", cmd, len)) // checking stats groups
             {
                 std::ostringstream ss;
-                mcast_controller.DumpGroups(false, ss);
+                bool useJson = cmd[len-1] == 'j';
+
+                mcast_controller.DumpGroups(false, useJson, ss);
                 unsigned int numBytes = ss.str().size();
                 if (!server_pipe.Send(ss.str().c_str(), numBytes))
                 {
@@ -5751,6 +5808,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                     return;
                 }
             }
+#endif // ELASTIC_MCAST
           
 #ifdef MNE_SUPPORT
             else if (!strncmp(cmd, "mneBlockMac", cmdLen))

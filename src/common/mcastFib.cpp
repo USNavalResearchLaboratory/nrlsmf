@@ -2069,7 +2069,6 @@ void MulticastFIB::DumpFlowListJson(bool brief, std::ostringstream& ss)
     ss << "]\n";
 
 }   // end MulticastFIB::DumpFlowListJson()
-
 bool MulticastFIB::AddFlowStatus(const ProtoFlow::Description&  flowDescription, 
                                  FlowStatus                     flowStatus, 
                                  MulticastFIB::ForwardingStatus defaultStatus)
@@ -2274,9 +2273,10 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const ProtoFlow::Description
 }  // end ElasticMulticastForwarder::SetForwardingStatus()
 
 
-void ElasticMulticastForwarder::DumpGroups(bool brief, std::ostringstream& ss)
+void ElasticMulticastForwarder::DumpGroups(bool brief, bool useJson, std::ostringstream& ss)
 {
-    mcast_fib.DumpFlowList(brief, ss);
+    if (useJson) mcast_fib.DumpFlowListJson(brief, ss);
+    else mcast_fib.DumpFlowList(brief, ss);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -3038,8 +3038,9 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
 }  // end ElasticMulticastController::Update()
 
 
-void ElasticMulticastController::DumpGroups(bool brief, std::ostringstream& ss)
+
+ void ElasticMulticastController::DumpGroups(bool brief, bool useJson, std::ostringstream& ss)
 {
-    mcast_forwarder->DumpGroups(brief, ss);
+    mcast_forwarder->DumpGroups(brief, useJson, ss);
 }
 

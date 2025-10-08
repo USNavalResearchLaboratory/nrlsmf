@@ -1242,7 +1242,7 @@ class ElasticMulticastForwarder
         void SetOutputMechanism(OutputMechanism* mech)
             {output_mechanism = mech;}
 
-        void DumpGroups(bool brief, std::ostringstream& ss);
+        void DumpGroups(bool brief, bool useJson, std::ostringstream& ss);
 
     protected:
        // Our "ticker" is a count of microseconds that is used for our
@@ -1323,7 +1323,7 @@ class ElasticMulticastController
         MulticastFIB::MembershipTable& AccessMembershipTable() 
             {return membership_table;}
         
-                void DumpGroups(bool brief, std::ostringstream& ss);
+                void DumpGroups(bool brief, bool useJson, std::ostringstream& ss);
 
         // NEXT STEP - IMPLEMENT MECHANISM TO SEND ACKS to UPSTREAM FORWARDERS
         // 1) When do we send an ACK?
