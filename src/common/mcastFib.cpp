@@ -2273,6 +2273,29 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const ProtoFlow::Description
 }  // end ElasticMulticastForwarder::SetForwardingStatus()
 
 
+bool ElasticMulticastForwarder::SetManagedStatus(const ProtoFlow::Description& flowDescription,
+                                                bool                   managedStatus)
+{
+    // Sets managed status for all matching entries for the given "flowDescription"
+    MulticastFIB::EntryTable& flowTable = mcast_fib.AccessFlowTable();
+    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, ProtoFlow::Description::FLAG_ALL, false);  // non bimatch iterator
+    MulticastFIB::Entry* entry = iterator.GetNextEntry();
+    if (NULL != entry)
+    {
+        do
+        {
+            if (GetDebugLevel() >= PL_DEBUG)
+            {
+                PLOG(PL_DEBUG, "nrlsmf: setting ManagedStatus to %d for existing flow ", managedStatus);
+                entry->GetFlowDescription().Print();
+                PLOG(PL_ALWAYS, "\n");
+            }
+            entry->SetManaged(managedStatus);
+        } while (NULL != (entry = iterator.GetNextEntry()));
+    }
+    return true;
+}  // end ElasticMulticastForwarder::SetManagedStatus()
+
 void ElasticMulticastForwarder::DumpGroups(bool brief, bool useJson, std::ostringstream& ss)
 {
     if (useJson) mcast_fib.DumpFlowListJson(brief, ss);
@@ -2452,6 +2475,11 @@ bool ElasticMulticastController::RemoveManagedMembership(const ProtoFlow::Descri
 {
     bool match = false;
     bool ackingStatus = false;
+    ProtoAddress groupAddr;
+    flowDescription.GetDstAddr(groupAddr);
+    if (GetDebugLevel() >= PL_DEBUG)
+        PLOG(PL_DEBUG, "ElasticMulticastController::RemoveManagedMembership(%s) ...\n", groupAddr.GetHostString());
+
     MulticastFIB::MembershipTable::Iterator iterator(membership_table, &flowDescription);
     MulticastFIB::Membership* membership;
     unsigned int ifaceIndex = flowDescription.GetInterfaceIndex();
@@ -2462,6 +2490,7 @@ bool ElasticMulticastController::RemoveManagedMembership(const ProtoFlow::Descri
             membership->ClearFlag(MulticastFIB::Membership::MANAGED);
         if (0 == membership->GetFlags())
         {
+            PLOG(PL_DEBUG, "ElasticMulticastController::RemoveManagedMembership(%s): Entry removed\n", groupAddr.GetHostString());
             membership_table.RemoveEntry(*membership);
             delete membership;
         }
@@ -2472,6 +2501,7 @@ bool ElasticMulticastController::RemoveManagedMembership(const ProtoFlow::Descri
     }
     if (match && !ackingStatus)
     {
+        mcast_forwarder->SetManagedStatus(flowDescription, false);
         mcast_forwarder->SetAckingStatus(flowDescription, false);
         mcast_forwarder->SetForwardingStatus(flowDescription, ifaceIndex, default_forwarding_status, false);
         //FIXME: this only works with elastic

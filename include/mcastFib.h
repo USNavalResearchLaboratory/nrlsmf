@@ -1216,6 +1216,9 @@ class ElasticMulticastForwarder
         
         bool SetAckingStatus(const  ProtoFlow::Description& flowDescription,
                              bool                           ackingStatus);
+
+        bool SetManagedStatus(const ProtoFlow::Description& flowDescription,
+                             bool                   managedStatus);
         /*
         bool SetAckingCondition(const  ProtoFlow::Description&  flowDescription,
                                 unsigned int                    count,
