@@ -2681,6 +2681,19 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
                                            const ProtoAddress& ackSrcIp,   // ackSrcIp is source of EM_ACK
                                            const ProtoAddress& ackPrevHop) // ackPrevHop may be MAC or IP (tunnel) addr
 {
+    auto smf=reinterpret_cast<Smf*>(mcast_forwarder);
+    Smf::Interface* iface = smf->GetInterface(ifaceIndex);
+    if (NULL == iface)
+    {
+        PLOG(PL_ERROR, "ElasticMulticastController::HandleAck() unknown interface index %d!\n", ifaceIndex);
+        return;
+    }
+    if (iface->GetIpAddress().GetType() == ProtoAddress::INVALID)
+    {
+        PLOG(PL_WARN, "ElasticMulticastController::HandleAck() no IP address on interface %s!\n", iface->GetNameStr());
+        return;
+    }
+
     // TBD - confirm that it's for me
     ProtoAddress dstIp, srcIp;
     ack.GetDstAddr(dstIp);

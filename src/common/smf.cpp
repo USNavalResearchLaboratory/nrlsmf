@@ -3195,6 +3195,12 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
 {
     // Buid Elastic Ack message (IPv4 only at moment)
     const ProtoAddress& dstMac = (ProtoAddress::ETH == upstreamAddr.GetType()) ? upstreamAddr : ElasticNack::ELASTIC_MAC;  
+
+    if (iface.GetIpAddress().GetType() == ProtoAddress::INVALID)
+    {
+        PLOG(PL_WARN, "Smf::SendAck()  no IP address on interface %s!\n", iface.GetNameStr());
+        return false;
+    }
     UINT32 buffer[1416/4];
     unsigned int bufferLen = 1416;
     unsigned int frameMax = bufferLen - 2;  // offset by 2 bytes to maintain alignment for ProtoPktIP
