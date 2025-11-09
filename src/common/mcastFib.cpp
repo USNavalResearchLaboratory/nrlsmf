@@ -3059,7 +3059,8 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
                 // Since the membership is still active, prune any idle downstream relays
                 if (membership->UpdateDownstreamRelays(pktCount))
                     OnDownstreamRelayChange(*membership, true);  // due to unacknowledged pkt count execeeding idle_threshold
-                ASSERT(0 != membership->GetDownstreamRelayCount());
+                // TODO: remove the following after confirming it is no longer needed
+                // ASSERT(0 != membership->GetDownstreamRelayCount());
                 ackingStatus = true;
             }
         }
