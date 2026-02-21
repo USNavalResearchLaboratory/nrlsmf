@@ -93,24 +93,143 @@ class Smf
             {return unreliable_tos;}
 #endif // ELASTIC_MCAST
         
+        // This class supports lookup of interface index from interface address information
+        // The address information includes a local address and _optional_ remote address
+        // to help identify interfaces associated with tunnel address information 
+        // (i.e., local/remote endpoint addresses)
+        class InterfaceInfo : public ProtoTree::Item
+        {
+            public:
+                InterfaceInfo(unsigned int ifaceIndex, const ProtoAddress& localAddr, const ProtoAddress* remoteAddr = NULL)
+                  : iface_index(ifaceIndex), local_addr(localAddr), remote_addr(remoteAddr)
+                {
+                    TRACE("remote: %p\n", remoteAddr);
+                    unsigned int len = localAddr.GetLength();
+                    memcpy(address_info_key, localAddr.GetRawHostAddress(), len);
+                    if (NULL != remoteAddr)
+                    {
+                        memcpy(address_info_key+len, remoteAddr->GetRawHostAddress(), remoteAddr->GetLength());
+                        len += remoteAddr->GetLength();
+                    }
+                    address_info_size = 8*len;
+                }
+                ~InterfaceInfo() {}
+                void SetIndex(unsigned int index) {iface_index = index;}
+                unsigned int GetIndex() const {return iface_index;}
+                const ProtoAddress& GetLocalAddress() const {return local_addr;}
+                const ProtoAddress& GetRemoteAddress() const {return remote_addr;}
+
+            private:
+               // Required ProtoTreeItem overrides
+                const char* GetKey() const {return address_info_key;}
+                unsigned int GetKeysize() const {return address_info_size;}
+
+                unsigned int iface_index;
+                ProtoAddress local_addr;
+                ProtoAddress remote_addr;             // invalid for non-tunnels, INADDR_ANY for mGRE tunnels
+                char         address_info_key[16+16]; // big enough for IPv6
+                unsigned int address_info_size;       // in bits
+        };  // end class Smf::InterfaceInfo
+        
+        class InterfaceInfoTable : public ProtoTreeTemplate<InterfaceInfo> 
+        {
+            public:
+                bool InsertIndex(unsigned int ifaceIndex, const ProtoAddress& localAddr, const ProtoAddress* remoteAddr = NULL)
+                {
+                    TRACE("InsertIndex() remote:%s\n", remoteAddr ? remoteAddr->GetHostString() : "(null)");
+                    InterfaceInfo* info = new InterfaceInfo(ifaceIndex, localAddr, remoteAddr);
+                    if (NULL == info)
+                    {
+                        PLOG(PL_ERROR, "InterfaceInfoTable::InsertIndex() new InterfaceInfo error: %s\n", GetErrorString());
+                        return false;
+                    }
+                    return Insert(*info);
+                }
+                InterfaceInfo* FindInfo(const ProtoAddress& addr) const
+                    {return Find(addr.GetRawHostAddress(), 8*addr.GetLength());}
+                InterfaceInfo* FindInfo(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr) const
+                {
+                    char addrInfo[16 + 16];
+                    memcpy(addrInfo, localAddr.GetRawHostAddress(), localAddr.GetLength());
+                    memcpy(addrInfo+localAddr.GetLength(), remoteAddr.GetRawHostAddress(), remoteAddr.GetLength());
+                    return Find(addrInfo, 8*(localAddr.GetLength() + remoteAddr.GetLength()));
+                }
+                unsigned int GetIndex(const ProtoAddress& addr) const
+                {
+                    InterfaceInfo* info = FindInfo(addr);
+                    return (NULL != info) ? info->GetIndex() : 0;
+                }
+                unsigned int GetIndex(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr) const
+                {
+                    
+                    InterfaceInfo* info = FindInfo(localAddr, remoteAddr);
+                    return (NULL != info) ? info->GetIndex() : 0;
+                }
+                void RemoveIndex(unsigned int ifaceIndex)
+                {
+                    InterfaceInfoTable::Iterator iterator(*this);
+                    InterfaceInfo* info;
+                    while (NULL != (info = iterator.GetNextItem()))
+                    {
+                        if (info->GetIndex() == ifaceIndex)
+                            Remove(*info);
+                    }
+                }
+                void RemoveAddress(const ProtoAddress& localAddr, const ProtoAddress* remoteAddr = NULL)
+                {
+                    char addrInfo[16 + 16];
+                    unsigned int len = localAddr.GetLength();
+                    memcpy(addrInfo, localAddr.GetRawHostAddress(), len);
+                    if (NULL != remoteAddr)
+                    {
+                        memcpy(addrInfo+len, remoteAddr->GetRawHostAddress(), remoteAddr->GetLength());
+                        len += remoteAddr->GetLength();
+                    }
+                    InterfaceInfo* info = Find(addrInfo, 8*len);
+                    if (NULL != info) Remove(*info);
+                }
+                void RemoveList(ProtoAddressList& addrList)
+                {
+                    ProtoAddressList::Iterator iterator(addrList);
+                    ProtoAddress addr;
+                    while (iterator.GetNextAddress(addr))
+                        RemoveAddress(addr);
+                }
+        };  // end Smf::InterfaceInfoTable
+        
         // Manage/Query a list of the node's local MAC/IP addresses
         // (Also cache interface index so we can look that up by address)
         bool AddOwnAddress(const ProtoAddress& addr, unsigned int ifaceIndex)
         {
-            bool result = local_addr_list.Insert(addr, INT2VOIDP(ifaceIndex));
+            // Check if it exists in case address is moved to different ifaceIndex
+            InterfaceInfo* info = iface_info_table.FindInfo(addr);
+            if (NULL != info)
+            {
+                info->SetIndex(ifaceIndex);
+                return true;
+            }
+            bool result = iface_info_table.InsertIndex(ifaceIndex, addr);
             ASSERT(result);
             return result;
         }
-            
-        bool IsOwnAddress(const ProtoAddress& addr) const
-            {return local_addr_list.Contains(addr);}
-        unsigned int GetInterfaceIndex(const ProtoAddress& addr) const
-            {return  (unsigned int)((intptr_t)local_addr_list.GetUserData(addr));}
-        
         void RemoveOwnAddress(const ProtoAddress& addr)
-            {local_addr_list.Remove(addr);}
-        ProtoAddressList& AccessOwnAddressList() 
-            {return local_addr_list;}
+            {iface_info_table.RemoveAddress(addr);}      
+        bool IsOwnAddress(const ProtoAddress& addr) const
+            {return (0 != iface_info_table.GetIndex(addr));}
+        unsigned int GetInterfaceIndex(const ProtoAddress& addr) const
+            {return iface_info_table.GetIndex(addr);}
+        
+        bool AddTunnelAddress(unsigned int ifaceIndex, const ProtoAddress& localAddr, const ProtoAddress& remoteAddr)
+        {
+            TRACE("adding tunnel addrs local:%s", localAddr.GetHostString());
+            TRACE(" remote:%s\n", remoteAddr.GetHostString());
+            return iface_info_table.InsertIndex(ifaceIndex, localAddr, &remoteAddr);
+        }
+        void RemoveTunnelAddress(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr)
+            {iface_info_table.RemoveAddress(localAddr, &remoteAddr);}
+        
+         InterfaceInfoTable& AccessInterfaceInfoTable() 
+            {return iface_info_table;}
         
         UINT16 GetIPv4LocalSequence(const ProtoAddress* dstAddr,
                                     const ProtoAddress* srcAddr = NULL)
@@ -442,6 +561,7 @@ class Smf
                     
         };  // end class Smf::Interface
         
+        // This interface list is indexed by an integer interface index value
         class InterfaceList : public ProtoIndexedQueueTemplate<Interface>
         {
             public:
@@ -795,23 +915,23 @@ class Smf
         InterfaceList       iface_list;
         InterfaceGroupList  iface_group_list;
         
-        ProtoAddressList    local_addr_list;  // list of local interface addresses
+        InterfaceInfoTable  iface_info_table;  // list of local interface addresses and indices
         
         bool                relay_enabled;
         bool                relay_selected;
         bool                unicast_enabled;
         bool                adaptive_routing;
-	    char                unicast_prefix[24];
-	    char                dscp[256];
-       
+        char                unicast_prefix[24];
+        char                dscp[256];
+
         ProtoTimer          delay_relay_off_timer;  // used to delay timeout for a given amount of time;
         double              delay_time;             // amount of time to delay turning off relays;
- 
+
         // (TBD) update "SmfSequenceMgr" to optionally also use internal hash ???
         SmfSequenceMgr      ip4_seq_mgr;    // gives a per [src::]dst sequence space // (TBD) make proto:src:dst
         SmfSequenceMgr      ip6_seq_mgr;    // gives a per [src::]dst sequence space // (TBD) make src:dst
-        SmfDpdTable         hash_stash;     // used for source and gateway HAV application 
-        
+        SmfDpdTable         hash_stash;     // used for source and gateway HAV application
+
         ProtoTimer          prune_timer;     // to timeout stale flows
         unsigned int        update_age_max;  // max staleness allowed for flows
         unsigned int        current_update_time;

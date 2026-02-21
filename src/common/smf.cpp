@@ -551,6 +551,8 @@ void Smf::DeleteInterface(Interface* iface)
     if (NULL != iface)
     {
         iface_list.Remove(*iface);
+        // Remove interface index/address from our InterfaceInfoTable
+        iface_info_table.RemoveIndex(iface->GetIndex());
         delete iface;
     }
 }  // end Smf::DeleteInterface()
@@ -2860,7 +2862,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
     {
         // Report how many packets seen for this flow and interval from this upstream relay since last update
         // (TBD - if controller and forwarder have shared FIB, this could be economized)
-        mcast_controller->Update(fibEntry->GetFlowDescription(), srcIface.GetIndex(), prevHopAddr, pktCount, updateInterval, fibEntry->GetAckingStatus(), activateAdvertisements);
+        mcast_controller->Update(fibEntry->GetFlowDescription(), srcIface.GetIndex(), prevHopAddr, pktCount, 
+                                 updateInterval, fibEntry->GetAckingStatus(), activateAdvertisements);
     }
     if (sendAck)
     {

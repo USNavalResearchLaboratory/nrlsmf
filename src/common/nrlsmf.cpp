@@ -1073,6 +1073,7 @@ const char* const SmfApp::CMD_LIST[] =
     "+device",      // <vifName>,<ifaceName>[/{t|r|d}][,<addr1>[,addr2, ...]] to create virtual interface 'device' associated with one or more physical interfaces
     "+cid",         // <vifName>,<iface1>[/{t|r|d}][,<iface2>[/{t|r|d}][,<iface3>[/{t|r|d}],...]] to add/delete elements to composite interface device
     "+rate",        // [<ifaceName>,]<bitsPerSecond> : impose forwarding/transmit rate limit
+    "+address",     // <iface>,<localAddr>[,<remoteAddr>] to add tunnel endpoint information for a GRE interface (or other ancillary iface->address assocation)
     "+queue",       // perform SMF packet queuing ...
     "+layered",     // <ifaceList> : mark interface(s) as "layered", where it has its own underlying multicast distribution mechanism
     //"+firewall",  // {on | off} : use firewall instead of ProtoCap to capture _and_ forward packets
@@ -1187,7 +1188,6 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
             smf.AddOwnAddress(addr, ifIndex); // TBD - check result
         }
     }
-
     smf.SetRelayEnabled(true);
     smf.SetRelaySelected(true);
     smf.SetUnicastEnabled(false);
@@ -1290,12 +1290,24 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
     // List "own" addresses (MAC & IP src addrs) for fun
     if (GetDebugLevel() >= PL_INFO)
     {
-        PLOG(PL_INFO, "SmfApp::OnStartup() Interface addresses:\n");
-        ProtoAddressList::Iterator it(smf.AccessOwnAddressList());
-        ProtoAddress nextAddr;
-        while (it.GetNextAddress(nextAddr))
-            PLOG(PL_INFO, "  interface addr:%s %s index:%d\n", nextAddr.GetHostString(),
-                    nextAddr.IsLinkLocal() ? "(link local)" : "", smf.GetInterfaceIndex(nextAddr));
+        // TBD - sort the information output here by interface index
+        PLOG(PL_INFO, "SmfApp::OnStartup() local interface information:\n");
+        Smf::InterfaceInfoTable::Iterator it(smf.AccessInterfaceInfoTable());
+        Smf::InterfaceInfo* info;
+        while (NULL != (info = it.GetNextItem()))
+        {
+            char ifaceName[256];
+            ProtoNet::GetInterfaceName(info->GetIndex(), ifaceName, 256);
+            PLOG(PL_INFO, "  interface>%s index>%d", ifaceName, info->GetIndex());
+            const ProtoAddress& addr = info->GetLocalAddress();
+            PLOG(PL_ALWAYS, " addr>%s%s", addr.GetHostString(), addr.IsLinkLocal() ? " (link local)" : "");
+            const ProtoAddress& remoteAddr = info->GetRemoteAddress();
+            if (remoteAddr.IsValid())
+            {
+                PLOG(PL_ALWAYS, " remote>%s", remoteAddr.GetHostString());
+            }
+            PLOG(PL_ALWAYS, "\n");
+        }
     }
     return true;
 }  // end SmfApp::OnStartup()
@@ -2449,6 +2461,44 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             SetTxRateLimit(txRate);
         }
     }
+    else if (!strncmp("address", cmd, len))
+    {
+        // Associate an address with the given <iface> (for ancillary GRE tunnel info)
+        // address <iface>,<localAddr>[,<remoteAddr>]
+        ProtoTokenator tk(val, ',');
+        const char* ifaceName = tk.GetNextItem();
+        unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(ifaceName);
+        Smf::Interface* iface = smf.GetInterface(ifaceIndex);
+        if (NULL == iface)
+        {
+            PLOG(PL_ERROR, "OnCommand(address) error: invalid interface \"%s\"\n", ifaceName);
+            return false;
+        }
+        const char* addrText = tk.GetNextItem();
+        if (NULL == addrText)
+        {
+            PLOG(PL_ERROR, "OnCommand(address) error: missing address\n");
+            return false;
+        }
+        ProtoAddress localAddr;
+        if (!localAddr.ResolveFromString(addrText))
+        {
+            PLOG(PL_ERROR, "OnCommand(address) error: invalid local address \"%s\"\n", addrText);
+            return false;
+        }
+        iface->SetTunnelLocalAddress(localAddr);
+        addrText = tk.GetNextItem();
+        ProtoAddress remoteAddr;
+        if (!remoteAddr.ResolveFromString(addrText))
+        {
+            PLOG(PL_ERROR, "OnCommand(address) error: invalid remote address \"%s\"\n", addrText);
+            return false;
+        }
+        if (remoteAddr.IsValid())
+            smf.AddTunnelAddress(iface->GetIndex(), localAddr, remoteAddr);
+        else
+            smf.AddOwnAddress(localAddr, iface->GetIndex());
+    }
     else if (!strncmp("queue", cmd, len))
     {
         // [<iface>,]<limit> zero limit means no queuing, -1 means unlimited queue depth
@@ -2945,6 +2995,7 @@ bool SmfApp::ProcessInterfaceConfig(ProtoJson::Object& ifaceConfig)
             return false;
         }
         smf.AddOwnAddress(addr, ifaceIndex);
+        // TBD - need to allow for GRE tunnel stuff in config!
     }
     Smf::Interface* iface = smf.GetInterface(ifaceIndex);
     ASSERT(NULL != iface);
@@ -3637,11 +3688,13 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
         return NULL;
     }
     Smf::Interface* iface = smf.GetInterface(ifIndex);
-    if (NULL != iface) return iface;
-
-    // TBD - Check if the interface is up here???
-    if (NULL == iface)
+    if (NULL != iface) 
     {
+        return iface;
+    }
+    else  
+    {
+        // TBD - Check if the interface is up here???
         if (NULL == (iface = smf.AddInterface(ifIndex)))
         {
             PLOG(PL_ERROR, "SmfApp::GetInterface(): new Smf::Interface error: %s\n", GetErrorString());
@@ -3684,7 +3737,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
             // TBD - check result here?
             smf.AddOwnAddress(addr, ifIndex);
         }
-    }  // end if (NULL == iface)
+    }  // end if/else (NULL != iface)
 
     // Do we already have a "ProtoCap" and/or "ProtoDetour" (as appropriate) for this ifaceIndex?
     InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
@@ -3728,9 +3781,20 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
         mech->AddCidElement(*cap, flags);
     }  // end if (mech->GetElementList().IsEmpty())
     
-    // if the ProtoVif "device" is associated with a GRE ProtoCap, record its tunnel local addr for SMF operations
+    // if if is a GRE interface, record its tunnel local addr for SMF operations
     if (ProtoNet::IFACE_GRE == mech->GetPrincipalElement()->GetProtoCap().GetInterfaceType())
-        iface->SetTunnelLocalAddress(mech->GetPrincipalElement()->GetProtoCap().GetTunnelLocalAddr());
+    {
+        const ProtoAddress& localAddr = mech->GetPrincipalElement()->GetProtoCap().GetTunnelLocalAddr();
+        const ProtoAddress& remoteAddr = mech->GetPrincipalElement()->GetProtoCap().GetTunnelRemoteAddr();
+        // Only add tunnel addressing when local endpoint is valid
+        // (nrlsmf "address" command will be needed to separately set tunnel endpoint information
+        //  such as when "external" mode "metadata" lightweight GRE tunnels are used)
+        if (localAddr.IsValid() && !localAddr.HostIsEqual(PROTO_ADDR_ANY) && !localAddr.HostIsEqual(PROTO_ADDR_ANY6))
+        {
+            iface->SetTunnelLocalAddress(localAddr);
+            smf.AddTunnelAddress(ifIndex, localAddr, remoteAddr);
+        }
+    }
     
 #ifdef _PROTO_DETOUR
     if (firewall_forward || smf.GetUnicastEnabled())
@@ -4845,6 +4909,7 @@ bool SmfApp::TransferAddresses(unsigned int vifIndex, unsigned ifaceIndex)
             return false;
         }
         smf.AddOwnAddress(addr, vifIndex);
+        // TBD - transfer tunnel endpoint information for GRE tunnels???
     }
     if (NULL != rtMgr)
     {
@@ -5422,7 +5487,7 @@ void SmfApp::OnPktOutput(ProtoChannel&              theChannel,
                 }
                 // Use Smf::ProcessPacket() to decide if packet should be sent instead of default packet transmission behavior
                 unsigned int dstIfIndices[IF_COUNT_MAX];
-                // Grab the source and destinaiton MAC addresses
+                // Grab the source and destination MAC addresses
                 ProtoAddress srcMacAddr;
                 ethPkt.GetSrcAddr(srcMacAddr);
                 ProtoAddress dstMacAddr;
@@ -5563,7 +5628,10 @@ void SmfApp::OnPktCapture(ProtoChannel&              theChannel,
 	                      ProtoChannel::Notification notifyType)
 {
     ProtoCap& cap = static_cast<ProtoCap&>(theChannel);
-    PLOG(PL_DETAIL, "SmfApp::OnPktCapture() called ...\n");
+    char ifaceName[32];
+    ProtoNet::GetInterfaceName(cap.GetInterfaceIndex(), ifaceName, 32);
+    
+    PLOG(PL_DETAIL, "SmfApp::OnPktCapture() called for ifaceName:%s ...\n", ifaceName);
     if (ProtoChannel::NOTIFY_INPUT == notifyType)
     {
 
@@ -5581,6 +5649,7 @@ void SmfApp::OnPktCapture(ProtoChannel&              theChannel,
             char* recvBuffer = (char*)ethBuffer;
             if (ProtoNet::IFACE_GRE == cap.GetInterfaceType())
             {
+                TRACE("   (it's GRE)\n");
                 recvBuffer += 14;
                 numBytes -= 14;
                 
@@ -6266,7 +6335,7 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
                 continue;
             }
 
-            // Get list of current addresses assigned to the interface to properly update our
+            // Get list of current addresses assigned to the interface to properly update our InterfaceInfoTable
             ProtoAddressList addrList;
             if (!ProtoNet::GetInterfaceAddressList(ifIndex, ProtoAddress::ETH, addrList))
                 PLOG(PL_WARN, "SmfApp::MonitorEventHandler() warning: couldn't retrieve Ethernet address for iface: %s\n", ifName);
@@ -6278,7 +6347,7 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
                 PLOG(PL_WARN, "SmfApp::MonitorEventHandler() warning: no IP addresses found for iface: %s\n", ifName);
 
             // TBD - if an interface has no addresses left, should we consider it "down"?
-            ProtoAddressList& localAddrList = smf.AccessOwnAddressList();
+            Smf::InterfaceInfoTable& ifaceInfoTable = smf.AccessInterfaceInfoTable();
             ProtoAddressList& ifaceAddrList = iface->AccessAddressList();
             if (ProtoNet::Monitor::Event::IFACE_DOWN == theEvent.GetType())
             {
@@ -6287,7 +6356,7 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
                 //       (We'll have to troll the groups set up the matcher(s)
                 // Remove interface addresses from smf local (own) address list and remove interface from handling
                 PLOG(PL_DEBUG, "SmfApp::MonitorEventHandler() removing SMF interface \"%s\"\n", theEvent.GetInterfaceName());
-                localAddrList.RemoveList(addrList);
+                ifaceInfoTable.RemoveList(addrList);
                 ifaceAddrList.RemoveList(addrList);
                 ASSERT(NULL != iface);
                 smf.RemoveInterface(iface->GetIndex());
@@ -6296,7 +6365,7 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
             else if (ProtoNet::Monitor::Event::IFACE_ADDR_DELETE == theEvent.GetType())
             {
                 // Remove the deleted address from the smf local (own) address list
-                localAddrList.Remove(theEvent.GetAddress());
+                ifaceInfoTable.RemoveAddress(theEvent.GetAddress());
                 ifaceAddrList.Remove(theEvent.GetAddress());
                 addrList.Remove(theEvent.GetAddress());
             }
@@ -6307,6 +6376,20 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
             while (adderator.GetNextAddress(addr))
             {
                 smf.AddOwnAddress(addr, ifIndex);
+            }
+            // if if is a GRE interface, record its tunnel local addr for SMF operations
+            ProtoAddress localAddr;
+            ProtoAddress remoteAddr;
+            if (ProtoNet::IFACE_GRE == ProtoNet::GetInterfaceType(ifIndex, &localAddr, &remoteAddr))
+            {
+                // Only add tunnel addressing when local endpoint is valid
+                // (nrlsmf "address" command will be needed to separately set tunnel endpoint information
+                //  such as when "external" mode "metadata" lightweight GRE tunnels are used)
+                if (localAddr.IsValid() && !localAddr.HostIsEqual(PROTO_ADDR_ANY) && !localAddr.HostIsEqual(PROTO_ADDR_ANY6))
+                {
+                    iface->SetTunnelLocalAddress(localAddr);
+                    smf.AddTunnelAddress(ifIndex, localAddr, remoteAddr);
+                }
             }
             if (!ifaceAddrList.AddList(addrList))
             {

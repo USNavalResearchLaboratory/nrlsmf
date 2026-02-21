@@ -2766,12 +2766,12 @@ void ElasticMulticastController::OnAdvertisementTimeout(ProtoTimer& /*theTimer*/
 // "pktCount" is how many packets for the given flow have been received from given relay since the last update
 // "pktInterval" indicates number of ticks since last update (not currently used)
 void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescription,
-                                        unsigned int                   ifaceIndex,  // inbound interface index (unused) 
-                                        const ProtoAddress&            relayAddr,   // upstream relay addr              
-                                        unsigned int                   pktCount,                                        
-                                        unsigned int                   pktInterval,                                     
+                                        unsigned int                   ifaceIndex,  // inbound interface index (unused)
+                                        const ProtoAddress&            relayAddr,   // upstream relay addr 
+                                        unsigned int                   pktCount,
+                                        unsigned int                   pktInterval,
                                         bool                           oldAckingStatus,
-                                        bool                           activateAdvertisements)                                 
+                                        bool                           activateAdvertisements)
 {
     if (GetDebugLevel() >= PL_DEBUG)
     {
@@ -2808,8 +2808,8 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
                 }
                 DeactivateMembership(*membership, MulticastFIB::Membership::ELASTIC);
                 mcast_forwarder->SetForwardingStatus(flowDescription, 
-                                                     membership->GetInterfaceIndex(), 
-                                                     membership->GetDefaultForwardingStatus(), 
+                                                     membership->GetInterfaceIndex(),
+                                                     membership->GetDefaultForwardingStatus(),
                                                      oldAckingStatus);
                 // This should generally return true
                 if (membership->UpdateDownstreamRelays(pktCount))
