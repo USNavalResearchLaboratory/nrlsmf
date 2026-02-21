@@ -3015,7 +3015,7 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
                                         unsigned int                   ifaceIndex,  // inbound interface index (unused)
                                         const ProtoAddress&            relayAddr,   // upstream relay addr
                                         unsigned int                   pktCount,
-                                        unsigned int                   pktInterval,
+                                        unsigned int                   updateInterval,
                                         bool                           oldAckingStatus,
                                         bool                           activateAdvertisements)
 {
