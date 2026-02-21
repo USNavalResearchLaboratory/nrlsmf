@@ -2,6 +2,8 @@
 //#include "smartController.h"
 //#include "smartForwarder.h"
 
+#include "protoDebug.h"
+#include "protoString.h"
 #include "smfHashMD5.h"
 #include "smfHashSHA1.h"
 
@@ -9,6 +11,7 @@
 #include "protoPktIP.h"
 #include "protoNet.h"
 #include <random>
+
 
 const unsigned int Smf::DEFAULT_AGE_MAX = 10;  // 10 seconds
 const unsigned int Smf::PRUNE_INTERVAL = 5;    // 5 seconds
@@ -61,15 +64,19 @@ Smf::Interface::Extension::~Extension()
 {
 }
 
-Smf::Interface::Interface(unsigned int ifIndex)
- : if_index(ifIndex), resequence(false), is_tunnel(false), 
-   is_layered(false), is_reliable(false), use_etx(false),
-   ump_sequence(0), ip_encapsulate(false), dup_detector(NULL), 
-   unicast_group_count(0), 
+Smf::Interface::Interface(unsigned int ifIndex, const char *ifName)
+ : if_index(ifIndex), if_name(ifName), resequence(false), is_tunnel(false),
+   is_layered(false), is_igmp_proxy(false), is_reliable(false), use_etx(false),
+  
+   ump_sequence(0), ip_encapsulate(false), dup_detector(NULL),
+   unicast_group_count(0),
 #ifdef ELASTIC_MCAST
-   repair_window(DEFAULT_REPAIR_WINDOW), 
+   repair_window(DEFAULT_REPAIR_WINDOW),
+   elastic_mcast(false),
+   managed(false),
+   managed_memberships(),
 #endif // ELASTIC_MCAST
-   sent_count(0), retr_count(0), recv_count(0), 
+   sent_count(0), retr_count(0), recv_count(0),
    mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0), extension(NULL)
 {
 }
@@ -272,6 +279,7 @@ bool Smf::Interface::SetUMPOption(ProtoPktIPv4& ipPkt, bool increment)
     return true;
 }  // end Smf::Interface::SetUMPOption()
 
+
 #ifdef ELASTIC_MCAST
 void Smf::Interface::PruneUpstreamHistory(unsigned int currentTick)
 {
@@ -279,7 +287,7 @@ void Smf::Interface::PruneUpstreamHistory(unsigned int currentTick)
     MulticastFIB::UpstreamHistory* upstreamHistory;
     while (NULL != (upstreamHistory = tablerator.GetNextItem()))
     {
-        unsigned int idleCount = upstreamHistory->GetIdleCount(); 
+        unsigned int idleCount = upstreamHistory->GetIdleCount();
         unsigned int age = upstreamHistory->Age(currentTick);
         if ((age >= REPAIR_AGE_MAX) || (idleCount >= REPAIR_IDLE_MAX))
         {
@@ -374,18 +382,19 @@ Smf::Smf(ProtoTimerMgr& timerMgr)
    delay_time(0), hash_stash(1024),
    update_age_max(DEFAULT_AGE_MAX), current_update_time(0),
    selector_list_len(0), neighbor_list_len(0),
-   recv_count(0), mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0)
+   recv_count(0), mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0),
+   vrf_list(timerMgr), vrf_policies(), with_FRR(false)
 {
     delay_relay_off_timer.SetInterval(delay_time);
     delay_relay_off_timer.SetListener(this,&Smf::OnDelayRelayOffTimeout);
     prune_timer.SetInterval((double)PRUNE_INTERVAL);
     prune_timer.SetRepeat(-1);
     prune_timer.SetListener(this, &Smf::OnPruneTimeout);
-    
+
 #ifdef ELASTIC_MCAST
     unreliable_tos = 0;
 #endif // ELASTIC_MCAST
-    
+
     memset(dscp, 0, 256);
 }
 
@@ -481,12 +490,12 @@ void Smf::DeleteInterfaceGroup(InterfaceGroup& ifaceGroup)
     delete &ifaceGroup;
 }  // end Smf::DeleteInterfaceGroup()
 
-Smf::Interface* Smf::AddInterface(unsigned int ifIndex)
+Smf::Interface *Smf::AddInterface(unsigned int ifIndex, const char *ifName)
 {
     Interface* iface = GetInterface(ifIndex);
     if (NULL == iface)
     {
-        iface = new Interface(ifIndex);
+        iface = new Interface(ifIndex, ifName);
         if (NULL == iface)
         {
             PLOG(PL_ERROR, "Smf::AddInterface() new Smf::Interface error: %s\n", GetErrorString());
@@ -1082,6 +1091,8 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     //    and ttl/hopLimit (and also decrement ttl/hopLimit for forwarding)
     ProtoAddress srcIp, dstIp;
 
+    SmfVRF * vrf = vrf_list.GetVRFbyIfaceIndex(srcIface.GetIndex());
+
     char flowId[48];  // worst case is probably IPV6 <taggerID:srcAddr:dstAddr> w/ taggerID a IPv6 addr (3*128 bits)
     unsigned int flowIdSize = (48*8);
     char pktId[32];  // worst case 32-bits of ID plus 160 bits of hash
@@ -1096,7 +1107,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     bool AR_mode = false;
     bool isARAck = false;
 #endif // ADAPTIVE_ROUTING
-    
+
 #ifdef ELASTIC_MCAST
     // Lookup/compute current time for purposes of
     // elastic multicast token bucket update, etc
@@ -1108,16 +1119,16 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     bool nonDuplicate = false;  // will be set to 'true' if non-duplicate on any interface
     unsigned int currentTick = time_ticker.Update();
     UINT16 upstreamSeq = 0;
-    MulticastFIB::UpstreamHistory* upstreamHistory = 
+    MulticastFIB::UpstreamHistory* upstreamHistory =
         (srcIface.UseETX() && !outbound) ?
             GetUpstreamHistory(srcIface, ipPkt, upstreamSeq) :
             NULL;
      UINT16 nackCount = 0;
      if (NULL != upstreamHistory)
         nackCount = UpdateUpstreamHistory(currentTick, srcIface, *upstreamHistory, upstreamSeq);
-    
+
 #endif // ELASTIC_MCAST
-    
+
     PLOG(PL_DETAIL, "Smf::ProcessPacket() processing pkt IP version %d ...\n", version);
     switch (version)
     {
@@ -1135,8 +1146,8 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             PLOG(PL_DETAIL, "Smf::ProcessPacket(): IPv4 Packet detected: Length = %d.\n" , (UINT16)ipv4Pkt.GetLength());
             PLOG(PL_DETAIL, "Smf::ProcessPacket(): IPv4 Packet detected: FragmentOffset = %d.\n" , (UINT16)ipv4Pkt.GetFragmentOffset());
 #ifdef ELASTIC_MCAST
-           
-#endif // ELASTIC_MCAST            
+
+#endif // ELASTIC_MCAST
 
             if (!dstIp.IsMulticast() && !GetUnicastEnabled() && !GetAdaptiveRouting())      // only forward multicast dst, unless unicast enabled
             {
@@ -1149,7 +1160,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 #ifdef ELASTIC_MCAST
                 // TBD - use non-link local address for ElasticMcast control messages so that ACK/NACK
                 // message to enable assymmetric/non-reciprocal link topology support
-                
+
                 // Is this an ElasticMulticast ACK? (if so, notify controller)
                 if (dstIp.HostIsEqual(ElasticAck::ELASTIC_ADDR) &&
                     (ProtoPktIP::UDP == ipv4Pkt.GetProtocol()))
@@ -1229,7 +1240,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                     SmfCache* cache = cache_table.FindQueue(upstreamAddr);
                                     if (GetDebugLevel() >= PL_DEBUG)
                                     {
-                                        PLOG(PL_DEBUG, "Smf::ProcessPacket(): received EM_NACK for upstream %s", upstreamAddr.GetHostString()); 
+                                        PLOG(PL_DEBUG, "Smf::ProcessPacket(): received EM_NACK for upstream %s", upstreamAddr.GetHostString());
                                         PLOG(PL_ALWAYS, " from %s (cache:%p) ...\n", srcIp.GetHostString(), cache);
                                     }
                                     if (NULL != cache)
@@ -1719,7 +1730,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 ipv6Pkt.SetHopLimit(ttl - 1);
             break;
         }  // end case IPv6
-        
+
         default:
             PLOG(PL_ERROR, "Smf::ProcessPacket() unknown IP protocol version\n");
             return 0;
@@ -1974,7 +1985,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     // If there is an ElasticMcast interface group, this will
     // be looked up (or created as needed for new flows)
     MulticastFIB::Entry* fibEntry = NULL;
-      
+
 #endif  // ELASTIC_MCAST
 
     // Iterate through potential outbound interfaces ("associate" interfaces)
@@ -1998,25 +2009,27 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     {
         InterfaceGroup& ifaceGroup = assoc->GetInterfaceGroup();
         RelayType relayType = ifaceGroup.GetRelayType();
-        
+        Interface& dstIface = assoc->GetInterface();
+
 #ifdef ELASTIC_MCAST
-        bool elastic = ifaceGroup.GetElasticMulticast();  // yyy - change to use IsElastic() method
+        // yyy - change to use IsElastic() method
+        bool elastic = ifaceGroup.GetElasticMulticast() || dstIface.GetElasticMulticast();
         if (!elastic && mcast_controller->HasPolicies())
         {
-            // Check for matching fibEntry to get "default forwarding status".  This is used to 
+            // Check for matching fibEntry to get "default forwarding status".  This is used to
             // check if there is a DENY policy for the given flow.  Note that currently, the ligher-weight
             // "exhaustiveSearch=false" match is used. TBD - use approach similar to what elastic multicast
             // code does to do "exhaustiveSearch=true" to find the true best match policy on newly detected
             // flows, but note then flow_table entries will need to be maintained for per-packet handling
             ProtoFlow::Description flowDescription;
             flowDescription.InitFromPkt(ipPkt);
-            fibEntry = mcast_fib.FindBestMatch(flowDescription, false);  
+            fibEntry = mcast_fib.FindBestMatch(flowDescription, false);
             if (MulticastFIB::DENY == fibEntry->GetDefaultForwardingStatus())
             {
                 // If outbound, pass through (only to current interface), else ignore
                 if (outbound)
                 {
-                    // This instructs the controller pass-through the 
+                    // This instructs the controller pass-through the
                     // outbound packet on the given interface.
                     dstIfArray[0] = srcIface.GetIndex();
                     return 1;
@@ -2027,16 +2040,21 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                 }
             }
         }
+
+        if (dstIface.IsManaged() && !dstIface.HasActiveMembership(dstIp))
+        { // Host interfaces that don't have any active receivers should not be forwarded to
+            continue;
+        }
 #else
         bool elastic = false;
 #endif // if/else ELASTIC_MCAST
-        
+
 #ifdef  ADAPTIVE_ROUTING
         bool adaptive = ifaceGroup.GetAdaptiveRouting();
 #else
         bool adaptive = false;
 #endif  // end if/else ADAPTIVE_ROUTING
-        
+
         // Should we forward this packet on this associated "dstIface"?
         bool ifaceForward = false;
         bool updateDupTree = false;
@@ -2046,7 +2064,8 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             {
                 ifaceForward = relay_enabled;
                 updateDupTree = ifaceForward;
-                PLOG(PL_DETAIL, "Smf::ProcessPacket(): forward on interface?: %d\n", ifaceForward );
+                PLOG(PL_DETAIL, "Smf::ProcessPacket(): forward on interface?: %d  elastic?%i  relay-type:%i\n",
+                     ifaceForward, elastic, relayType );
                 break;
             }
             case E_CDS:
@@ -2112,12 +2131,44 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             asym_count++;
             srcIface.IncrementAsymCount();
         }
-        Interface& dstIface = assoc->GetInterface();
-        
+
+        // If we have VRFs, check if the outgoing interface belongs to the
+        // same VRF, if it doesn't, stop processing
+        if (NULL != vrf)
+        {
+            PLOG(PL_DETAIL, "Smf::ProcessPacket(): SRC VRF=\"%s\"\n", vrf->GetName());
+            if (!vrf->IsMemberInterface(dstIface.GetIndex()))
+            {
+                // Check for a route leaking policy that will allow this packet to be forwarded to a different VRF
+                bool leak = false;
+                SmfVRF* dstvrf = vrf_list.GetVRFbyIfaceIndex(dstIface.GetIndex());
+                if (NULL != dstvrf)
+                {
+                    PLOG(PL_DETAIL, "Smf::ProcessPacket(): DST VRF=\"%s\"\n", dstvrf->GetName());
+                    SmfVRFPolicy* pol = vrf_policies.FindPolicy(vrf->GetName(), dstvrf->GetName());
+                    PLOG(PL_DETAIL, "Found Policy? %u\n", pol?1:0);
+                    if (NULL != pol && // Found a policy
+                        // Is an allow list that contains the group, so leak it
+                        ((pol->IsAllowed() && pol->containsGroup(dstIp)) ||
+                        // Or is a deny list that does not contain the group, so leak it
+                         (pol->IsDenied() && !pol->containsGroup(dstIp))))
+                    {
+                        leak = true;
+                    }
+                }
+                //PLOG(PL_DETAIL, "Smf::ProcessPacket(): Interface %u does't belong to VRF %s\n", dstIface.GetIndex(), vrf->GetName());
+                if (!leak) {
+                    PLOG(PL_DETAIL, "Smf::ProcessPacket(): No VRF leak policy, Not forwarding packet to %d\n",dstIface.GetIndex());
+                    continue;
+                }
+                PLOG(PL_MAX, "Smf::ProcessPacket(): VRF route leaking policy matched\n");
+            }
+        }
+
 #ifdef ADAPTIVE_ROUTING
         smart_controller->UpdateInterfaces(dstIface.GetInterfaceAddress(),dstIface.GetIndex());
 #endif // ADAPTIVE_ROUTING
-        
+
         if (GetDebugLevel() >= PL_DETAIL)
         {
             char flowIdText[2048];
@@ -2235,16 +2286,16 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             ifaceForward = false;
         }
 #endif // ADAPTIVE_ROUTING
-         
+
 #ifdef ELASTIC_MCAST
-        if (IsOwnAddress(dstIp))
+        if (!dstIp.IsMulticast() && IsOwnAddress(dstIp))
         {
             // Don't forward unicast packets destined to self
             ifaceForward = false;
         }
         if (elastic)  // note 'elastic' can only be true for non-duplicate packets
         {
-            if (NULL == fibEntry)  
+            if (NULL == fibEntry)
             {
                 ProtoFlow::Description flowDescription;
                 flowDescription.InitFromPkt(ipPkt);
@@ -2261,7 +2312,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     // If outbound, pass through (only to current interface), else ignore
                     if (outbound)
                     {
-                        // This instructs the controller to pass-through the 
+                        // This instructs the controller to pass-through the
                         // outbound packet on the given interface.
                         dstIfArray[0] = srcIface.GetIndex();
                         return 1;
@@ -2290,7 +2341,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             }
         }  // end if (elastic)
 #endif  // ELASTIC_MCAST
-        
+
         if (ifaceForward && srcIface.IsLayered())
         {
             if (!outbound && (dstIface.GetIndex() == srcIface.GetIndex()))
@@ -2515,8 +2566,8 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     }
 
 #endif // ADAPTIVE_ROUTING
-    
-    
+
+
     if ((dstCount > 0) && ((ttl <= 1) && !outbound && !is_tunnel))
     {
         PLOG(PL_DEBUG, "Smf::ProcessPacket(): received ttl-expired packet (ttl = %d)...\n", ttl);
@@ -2540,7 +2591,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 	    dstCount = -1;
     }
 
-#ifdef ELASTIC_MCAST   
+#ifdef ELASTIC_MCAST
     if (srcIface.IsReliable() && (nackCount > 0))
     {
         // A packet is 'nackable' if forwarded or nonDuplicate for flow of active interest
@@ -2557,7 +2608,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
         }
     }
 #endif // ELASTIC_MCAST
-    
+
     // If we are "resequencing" packets recv'd on this srcIface (smf rpush|rmerge)
     // we need to mark the DPD table so we don't end up potentially sending the
     // resequenced version of the packet back out this srcIface on which it
@@ -2592,11 +2643,11 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                                                const ProtoFlow::Description&  flowDescription,
                                                Interface&                     srcIface,
                                                const ProtoAddress&            prevHopAddr,
-                                               MulticastFIB::UpstreamHistory* upstreamHistory, 
+                                               MulticastFIB::UpstreamHistory* upstreamHistory,
                                                bool                           outbound,
-                                               double                         advMetric)        
+                                               double                         advMetric)
 {
-    
+
     // NOTE - if (advMetric >= 0) this indicates that "advertise" mode is running and
     //        either hop-based or ETX metric-based routing can be used.
     // This should be called _once_ for non-duplicate flow events (packet or EM-ADV reception) and only when
@@ -2607,7 +2658,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
         flowDescription.Print();
         PLOG(PL_ALWAYS, " ...\n");
     }
-   
+
     /*  This commented block always called FindBestMatch() ... newer code below
     MulticastFIB::Entry* fibEntry = NULL;
     MulticastFIB::Entry* match = mcast_fib.FindBestMatch(flowDescription);  // lighter-weight exhaustiveSearch=false match
@@ -2618,7 +2669,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             PLOG(PL_DETAIL, "Smf::UpdateElasticRouting() best match: ");
             match->GetFlowDescription().Print();
             PLOG(PL_ALWAYS, " (forwarding status: %d)\n", match->GetDefaultForwardingStatus());
-        }                    
+        }
         if (MulticastFIB::DENY == match->GetDefaultForwardingStatus())
         {
             // Ignore the packet. I.e. if inbound, do nothing else pass through
@@ -2644,7 +2695,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
     }
     */
     MulticastFIB::Entry* fibEntry = mcast_fib.FindEntry(flowDescription); // light-weight exact match lookup
-    
+
     unsigned int pktCount = 0;
     unsigned int updateInterval = 0;
     bool updateController = false;
@@ -2673,7 +2724,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                 fibEntry->GetFlowDescription().Print();
                 PLOG(PL_ALWAYS, " matching: ");
                 match->GetFlowDescription().Print();
-                if (deny) 
+                if (deny)
                     PLOG(PL_ALWAYS, " (DENY)\n");
                 else
                     PLOG(PL_ALWAYS, "\n");
@@ -2730,16 +2781,16 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             updateController = true;
         }
     }  // end if/else NULL == (fibEntry)
-    
+
     if (deny)
     {
         // Ignore the packet. I.e. if inbound, do nothing else pass through
         if (outbound)
             return fibEntry;  // caller should check for DENY status
         else
-            return NULL;   
+            return NULL;
     }
-    
+
     bool activateAdvertisements = false;
     if (updateController)
     {
@@ -2754,7 +2805,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
         updateInterval = fibEntry->GetUpdateInterval();
         fibEntry->Reset(currentTick);
     }
-    
+
     // We track upstreams regardless of ackingStatus so we can be more responsive
     // to send an EM-ACK upon topology changes, etc
     if (!outbound) // && fibEntry->GetAckingStatus())
@@ -2772,7 +2823,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             }
             PLOG(PL_DEBUG, "Smf::UpdateElasticRouting() NEW UpstreamRelay %s ifaceIndex:%d\n", relayAddr.GetHostString(), srcIface.GetIndex());
             //updateController = true;  // new upstream, so update controller
-            if (fibEntry->GetAckingStatus()) 
+            if (fibEntry->GetAckingStatus())
             {
                 sendAck = true;
                 upstreamRelay->SetStatus(MulticastFIB::UpstreamRelay::PRIMARY);
@@ -2797,7 +2848,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                 if (upstreamRelay->AckPending(*fibEntry) || (advMetric >= 0.0))
                 {
                     sendAck = true;
-                    //updateController = true;  
+                    //updateController = true;
                     upstreamRelay->Reset(currentTick);
                     if (MulticastFIB::UpstreamRelay::NULLARY == upstreamRelay->GetStatus())
                     {
@@ -2823,7 +2874,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                 
                 MulticastFIB::UpstreamRelay* bestRelay = fibEntry->GetBestUpstreamRelay(currentTick);
                 if (NULL != bestRelay)
-                { 
+                {
                     if (bestRelay != upstreamRelay)
                     {
                         if (GetDebugLevel() >= PL_DEBUG)
@@ -2843,7 +2894,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                     {
                         // This won't occur since status was set above, but in case we change
                         // the logic ...
-                        upstreamRelay->SetStatus(MulticastFIB::UpstreamRelay::PRIMARY); 
+                        upstreamRelay->SetStatus(MulticastFIB::UpstreamRelay::PRIMARY);
                         //if (NULL != upstreamHistory) upstreamHistory->IncrementActiveFlowCount();
                     }
                 }
@@ -2857,13 +2908,13 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             if (currentUpstream != prevUpstream)
                 mcast_controller->OnUpstreamRelayChange(flowDescription, currentUpstream->GetAddress(), currentUpstream->GetAdvAddr());
         }
-    }  // end if (!outbound)   
-    if (updateController)  
+    }  // end if (!outbound)
+    if (updateController)
     {
         // Report how many packets seen for this flow and interval from this upstream relay since last update
         // (TBD - if controller and forwarder have shared FIB, this could be economized)
-        mcast_controller->Update(fibEntry->GetFlowDescription(), srcIface.GetIndex(), prevHopAddr, pktCount, 
-                                 updateInterval, fibEntry->GetAckingStatus(), activateAdvertisements);
+        mcast_controller->Update(fibEntry->GetFlowDescription(), srcIface.GetIndex(), prevHopAddr, pktCount, updateInterval,
+                                fibEntry->GetAckingStatus(), activateAdvertisements);
     }
     if (sendAck)
     {
@@ -2876,11 +2927,11 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
     }  // end if (sendAck)
     return fibEntry;
 }  // end MulticastFIB::Entry* Smf::UpdateElasticRouting()
-                                             
+
 void Smf::HandleAdv(unsigned int                    currentTick,
-                    ElasticAdv&                     elasticAdv, 
-                    Interface&                      srcIface, 
-                    const ProtoAddress&             prevHopAddr, 
+                    ElasticAdv&                     elasticAdv,
+                    Interface&                      srcIface,
+                    const ProtoAddress&             prevHopAddr,
                     const ProtoAddress&             msgSrc,
                     MulticastFIB::UpstreamHistory*  upstreamHistory)
 {
@@ -2891,27 +2942,27 @@ void Smf::HandleAdv(unsigned int                    currentTick,
     UINT8 trafficClass = elasticAdv.GetTrafficClass();
     ProtoPktIP::Protocol protocol = elasticAdv.GetProtocol();
     ProtoFlow::Description flowDescription(dstIp, srcIp, trafficClass, protocol);
-    
+
     //const ProtoAddress& relayAddr = (NULL != upstreamHistory) ? upstreamHistory->GetAddress() : prevHopAddr;
     if (GetDebugLevel() >= PL_DEBUG)
     {
         PLOG(PL_DEBUG, "Smf::HandleAdv() handling EM_ADV from src>%s: ", msgSrc.GetHostString());
-        PLOG(PL_ALWAYS, "adv>%s id>%hu ttl>%u hopCount:%u metric>%lf flow>", advIp.GetHostString(), elasticAdv.GetId(), 
+        PLOG(PL_ALWAYS, "adv>%s id>%hu ttl>%u hopCount:%u metric>%lf flow>", advIp.GetHostString(), elasticAdv.GetId(),
               (unsigned int)elasticAdv.GetTTL(), (unsigned int) elasticAdv.GetHopCount(), elasticAdv.GetMetric());
         flowDescription.Print();
         PLOG(PL_ALWAYS, "\n");
     }
-    
+
     if (IsOwnAddress(advIp) || IsOwnAddress(srcIp)|| (dstIp.IsUnicast() && IsOwnAddress(dstIp)))
         return; // ignore advertisements for our own flows
-                 
+
     // Update our MulticastFIB as if this were a packet received.
-    
+
     char flowId[34];  // worst case is  IPV6 <dpdType:proto:srcAddr:dstAddr> w/ taggerID a IPv6 addr (8 + 8 + 2*128 bits)
     unsigned int flowIdSize = (34*8);
     char pktId[16+2];  // worst case is IPv6 advertiser and 16-bit ElasticAdv ID
-    unsigned int pktIdSize = 18*8;  // in bits 
-    
+    unsigned int pktIdSize = 18*8;  // in bits
+
     flowId[0] = (char)255;  // fake 'dpdType' to differentiate within dup table (TBD - do this for packet entries, too)
     switch (srcIp.GetType())
     {
@@ -2958,17 +3009,17 @@ void Smf::HandleAdv(unsigned int                    currentTick,
             upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
         return;  // do nothing else, this is a duplicate EM_ADV message
     }
-                  
-    MulticastFIB::Entry* fibEntry = 
+
+    MulticastFIB::Entry* fibEntry =
         UpdateElasticRouting(currentTick, flowDescription, srcIface, prevHopAddr, upstreamHistory, false, elasticAdv.GetMetric());
-    
+
     if ((NULL != fibEntry) && (MulticastFIB::DENY != fibEntry->GetDefaultForwardingStatus()))
     {
         // Set the current FIB AdvAddr and AdvId
         MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->FindUpstreamRelay(relayAddr);
         if (NULL != upstreamRelay)
         {
-            PLOG(PL_DEBUG, "Smf::HandleAdv() saving EM_ADV info id:%hu metric:%lf for relay: %s\n", 
+            PLOG(PL_DEBUG, "Smf::HandleAdv() saving EM_ADV info id:%hu metric:%lf for relay: %s\n",
                             advId, elasticAdv.GetMetric(), upstreamRelay->GetAddress().GetHostString());
             upstreamRelay->SetAdvAddr(advIp);
             upstreamRelay->SetAdvId(advId);
@@ -2981,7 +3032,7 @@ void Smf::HandleAdv(unsigned int                    currentTick,
         else
         {
             PLOG(PL_ERROR, "Smf::HandleAdv() error: no upstream relay state established?!\n");
-        } 
+        }
     }
 }  // end Smf::HandleAdv()
 
@@ -2989,8 +3040,8 @@ void Smf::HandleAdv(unsigned int                    currentTick,
 // Call this to get upstreamHistory for the given "ipPkt" and sequence number embedded
 // Call at the beginning of packet processing and then pass the returned "upstreamHistory"
 // and "upstreamSeq" to the UpdateUpstreamHistory() method later.
-MulticastFIB::UpstreamHistory* Smf::GetUpstreamHistory(Interface&    srcIface, 
-                                                       ProtoPktIP&   ipPkt, 
+MulticastFIB::UpstreamHistory* Smf::GetUpstreamHistory(Interface&    srcIface,
+                                                       ProtoPktIP&   ipPkt,
                                                        UINT16&       upstreamSeq)   // output
 {
     // This establishes and/or updates an UpstreamHistory if Upstream Multicast Packet (UMP) header option is present
@@ -3016,16 +3067,16 @@ MulticastFIB::UpstreamHistory* Smf::GetUpstreamHistory(Interface&    srcIface,
     if (upstreamAddr.IsValid())
     {
         // The "upstreamHistory" state is kept independently of the "upstreamRelay" state because the
-        // upstreamRelay state is kept per-flow while the upstreamHistory (for reliable forwarding 
+        // upstreamRelay state is kept per-flow while the upstreamHistory (for reliable forwarding
         // opertation) spans transmissions by the upstreamRelay for _all_ flows.
         upstreamHistory = srcIface.FindUpstreamHistory(upstreamAddr);
-        if (NULL == upstreamHistory) 
+        if (NULL == upstreamHistory)
         {
             if (NULL != (upstreamHistory = new MulticastFIB::UpstreamHistory(upstreamAddr)))
             {
                 srcIface.AddUpstreamHistory(*upstreamHistory);
                 upstreamHistory->SetSequence(upstreamSeq);
-                
+
             }
             else
             {
@@ -3037,7 +3088,7 @@ MulticastFIB::UpstreamHistory* Smf::GetUpstreamHistory(Interface&    srcIface,
 }  // end Smf::GetUpstreamHistory()
 
 unsigned int Smf::UpdateUpstreamHistory(unsigned int                   currentTick,
-                                        Interface&                     srcIface, 
+                                        Interface&                     srcIface,
                                         MulticastFIB::UpstreamHistory& upstreamHistory,
                                         UINT16                         pktSeq) // new packet sequence number
 {
@@ -3053,7 +3104,7 @@ unsigned int Smf::UpdateUpstreamHistory(unsigned int                   currentTi
     {
         nackCount = seqDelta - 1;
     }
-    
+
     // Update link quality estimate
     if (seqDelta >= 0)
     {
@@ -3066,7 +3117,7 @@ unsigned int Smf::UpdateUpstreamHistory(unsigned int                   currentTi
     return nackCount;
 }  // end Smf::UpdateUpstreamHistory()
 
- void Smf::SendNack(Interface&                     srcIface, 
+ void Smf::SendNack(Interface&                     srcIface,
                     MulticastFIB::UpstreamHistory& upstreamHistory,
                     UINT16                         pktSeq, // new packet sequence number
                     UINT16                         nackCount)
@@ -3104,7 +3155,7 @@ unsigned int Smf::UpdateUpstreamHistory(unsigned int                   currentTi
             break;
     }
     if (ElasticNack::ADDR_INVALID != utype)
-    {  
+    {
 
         nack.SetUpstreamAddress(upstreamHistory.GetAddress());
         nack.SetSeqStart(pktSeq - nackCount);
@@ -3146,6 +3197,12 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
 {
     // Buid Elastic Ack message (IPv4 only at moment)
     const ProtoAddress& dstMac = (ProtoAddress::ETH == upstreamAddr.GetType()) ? upstreamAddr : ElasticNack::ELASTIC_MAC;  
+
+    if (iface.GetIpAddress().GetType() == ProtoAddress::INVALID)
+    {
+        PLOG(PL_WARN, "Smf::SendAck()  no IP address on interface %s!\n", iface.GetNameStr());
+        return false;
+    }
     UINT32 buffer[1416/4];
     unsigned int bufferLen = 1416;
     unsigned int frameMax = bufferLen - 2;  // offset by 2 bytes to maintain alignment for ProtoPktIP
@@ -3188,11 +3245,11 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
     ack.SetDstAddr(addrType, flowDescription.GetDstPtr(), flowDescription.GetDstLength());
     ack.SetSrcAddr(addrType, flowDescription.GetSrcPtr(), flowDescription.GetSrcLength());
     ack.AppendUpstreamAddr(upstreamAddr);
-    
+
     udpPkt.SetPayloadLength(ack.GetLength());
     ip4Pkt.SetPayloadLength(udpPkt.GetLength());
     udpPkt.FinalizeChecksum(ip4Pkt);
-    
+
     if (iface.UseETX())
     {
         // Apply Upstream Multicast Packet header option on iterfaces configured for "reliable forwarding"
@@ -3213,21 +3270,21 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
     {
         ethPkt.SetPayloadLength(ip4Pkt.GetLength());
     }
-    
+
     if (GetDebugLevel() >= PL_DEBUG)
     {
         PLOG(PL_DEBUG, "nrlsmf: sending EM_ACK (len:%u) for flow \"", ethPkt.GetLength());
         flowDescription.Print();  // to debug output or log
         PLOG(PL_ALWAYS, " to relay %s via interface index %d\n", upstreamAddr.GetHostString(), iface.GetIndex());
     }
-    
+
     // TBD - Implement ACK rate limiter by bundling multiple flow acks for common upstream relay
     // (i.e. do this with a timer and some sort of helper classes)
     return output_mechanism->SendFrame(iface.GetIndex(), (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
-    
+
 }  // end Smf::SendAck()
 
-#endif // ELASTIC_MCAST 
+#endif // ELASTIC_MCAST
 
 #ifdef ELASTIC_MCAST
 bool Smf::CreatePacketCache(Interface& iface, unsigned int cacheSize)
@@ -3253,13 +3310,13 @@ bool Smf::CreatePacketCache(Interface& iface, unsigned int cacheSize)
 
 bool Smf::CachePacket(const Interface& iface, UINT16 sequence, char* frameBuffer, unsigned int frameLength)
 {
-    
+
     // TBD - a more efficent packet caching scheme would be to maintain a cache cased upon
     //       the DPD id for the packet for storing the packet, _and_ a separate per-interface
     //       "index-based" (i.e., sequence-based) lookup table with entries that reference
-    //       the cached packets.  This avoids caching multiple copies of the same packet 
+    //       the cached packets.  This avoids caching multiple copies of the same packet
     //       (i.e. for different interfaces).
-    
+
     if (frameLength > SmfIndexedPacket::PKT_SIZE_MAX)
     {
         PLOG(PL_ERROR, "Smf::CachePacket() error: packet exceeds maximum packet size\n");
@@ -3270,7 +3327,7 @@ bool Smf::CachePacket(const Interface& iface, UINT16 sequence, char* frameBuffer
         // This 'hack' was to have NORM ACK/NACK message bypass hop-by-hop ARQ
         return true;
     }*/
-    
+
     SmfCache* cache = cache_table.FindQueue(iface.GetIpAddress());
     if (NULL == cache)
     {
@@ -3324,7 +3381,7 @@ void Smf::AdvertiseActiveFlows()
     InterfaceList::Iterator iferator(iface_list);
     while (NULL != (iface = iferator.GetNextInterface()))
     {
-        // We init our IP packet here since "reliable" interface will change buffer with 
+        // We init our IP packet here since "reliable" interface will change buffer with
         // addition of UMP IP option header
         ProtoPktIPv4 ip4Pkt(ethPkt.AccessPayload(), frameLenMax - ethPkt.GetHeaderLength());
         ip4Pkt.SetTTL(1);
@@ -3336,7 +3393,7 @@ void Smf::AdvertiseActiveFlows()
         udpPkt.SetDstPort(ElasticAdv::ELASTIC_PORT);
         unsigned msgLenMax = udpPkt.GetBufferLength() - udpPkt.GetHeaderLength();
         char* msgBuffer = (char*)udpPkt.AccessPayload();  // note this is actually 32-bit aligned because of above offsets
-    
+
         // Is this interface in an "elastic" InterfaceGroup
         // (TBD - mark interfaces with "elastic count" for more efficiency)
         Interface::AssociateList::Iterator iterator(*iface);
@@ -3344,11 +3401,11 @@ void Smf::AdvertiseActiveFlows()
         while (NULL != (assoc = iterator.GetNextItem()))
         {
             if (assoc->GetInterfaceGroup().IsElastic())
-                break;       
+                break;
         }
-        if (NULL == assoc) 
+        if (NULL == assoc)
             continue; // not in an elastic mcast iface group
-	    
+
         // TBD 'continue' if iface isn't pending
         MulticastFIB::Entry* fibEntry;
         MulticastFIB::EntryTable::Iterator fiberator(mcast_fib.AccessFlowTable());
@@ -3363,7 +3420,7 @@ void Smf::AdvertiseActiveFlows()
                 PLOG(PL_ALWAYS, " active:%d managed:%d\n", fibEntry->IsActive(), fibEntry->IsManaged());
             }
             if (!fibEntry->IsActive() && !fibEntry->IsManaged()) continue;
-            
+
             // Send info on all flows so we can include metric info
             ProtoAddress::Type atype = fibEntry->GetAddressType();
             ProtoAddress::Type vtype = atype;
@@ -3401,7 +3458,7 @@ void Smf::AdvertiseActiveFlows()
                 output_mechanism->SendFrame(iface->GetIndex(), (char*)ethBuffer, ethPkt.GetLength());
                 iface->IncrementLocalAdvId();
                 // 2) reset to beginning of 'msgBuffer' for bundled messages
-                adv.InitIntoBuffer(msgBuffer, msgLenMax);  
+                adv.InitIntoBuffer(msgBuffer, msgLenMax);
                 bufferIndex = 0;
             }
             ProtoAddress advAddr;
@@ -3429,8 +3486,8 @@ void Smf::AdvertiseActiveFlows()
                     advMetric = ElasticAdv::METRIC_MAX;
                 if (upstreamRelay->AdvMetricIsValid())
                 {
-                    // We have a received full path metric for this relay, 
-                    // so  compute our metric using that along with measured 
+                    // We have a received full path metric for this relay,
+                    // so  compute our metric using that along with measured
                     // upstream link quality
                     if (advMetric < ElasticAdv::METRIC_MAX)
                         advMetric += upstreamRelay->GetAdvMetric();
@@ -3452,7 +3509,7 @@ void Smf::AdvertiseActiveFlows()
             }
             else if (fibEntry->IsManaged() ||
                      (fibEntry->IsActive() && (fibEntry->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT)))
-            {  
+            {
                 // We must be the source (advMetric will be zero) of the flow
                 advTTL = fibEntry->GetTTL();
                 advHopCount = 0;
@@ -3468,14 +3525,14 @@ void Smf::AdvertiseActiveFlows()
                     PLOG(PL_ALWAYS, "  inactive flow? actv:%d age:%lu managed:%d\n", fibEntry->IsActive(), age, fibEntry->IsManaged());
                 continue;
             }
-            if (advTTL >= 1) 
+            if (advTTL >= 1)
             {
                 if (advHopCount > 0)
                     advTTL -= 1;
                 // else locally generated packet
                 advHopCount += 1;
             }
-            if (0 == advTTL) continue;  // don't advertise flows that have reached ttl limit 
+            if (0 == advTTL) continue;  // don't advertise flows that have reached ttl limit
             const ProtoFlow::Description& flowDescription = fibEntry->GetFlowDescription();
 	        adv.SetId(advId);
             adv.SetProtocol(flowDescription.GetProtocol());
@@ -3504,17 +3561,17 @@ void Smf::AdvertiseActiveFlows()
             adv.SetHopCount(advHopCount);
             adv.SetMetric(advMetric);
             adv.SetAdvAddr(advAddr);
-            
-            if (GetDebugLevel() >= PL_DEBUG)  
+
+            if (GetDebugLevel() >= PL_DEBUG)
             {
                 PLOG(PL_DEBUG, "Smf::AdvertiseActiveFlows() sending EM_ADV adv>%s id>%hu ttl>%u hopCount>%u metric>%lf (%lf) flow>",
                         advAddr.GetHostString(), advId, advTTL, advHopCount, advMetric, adv.GetMetric());
                 flowDescription.Print();
                 PLOG(PL_ALWAYS, "\n");
-            }            
-            
+            }
+
             ASSERT(msgLen == adv.GetLength());
-            
+
             bufferIndex += adv.GetLength();
             // Init adv to next msgBuffer location
             adv.InitIntoBuffer(msgBuffer + bufferIndex, msgLenMax - bufferIndex);
@@ -3522,7 +3579,7 @@ void Smf::AdvertiseActiveFlows()
             if (prevUpstream != upstreamRelay)
                 mcast_controller->OnUpstreamRelayChange(flowDescription, upstreamRelay->GetAddress(), upstreamRelay->GetAdvAddr());
         }  // end while GetNextEntry()
-        
+
         if (bufferIndex > 0)
         {
             // We have a pending message left to send
@@ -3557,7 +3614,7 @@ void Smf::AdvertiseActiveFlows()
             iface->IncrementLocalAdvId();
         }
     }  // end while GetNextInterface()
-    
+
     // Mark adv_metric on current advertised entries so they aren't duplicatively advertised
     // (or ttl for local flows) -- need a better way to this state reset for multiple ifaces
     MulticastFIB::Entry* fibEntry;
@@ -3662,11 +3719,11 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
 #ifdef ELASTIC_MCAST
     unsigned int currentTick = time_ticker.Update();  // ticker used for ElasticMulticast state maintenance
 #endif // ELASTIC_MCAST
-    
+
     ip4_seq_mgr.Prune(current_update_time, update_age_max);
     ip6_seq_mgr.Prune(current_update_time, update_age_max);
     hash_stash.Prune(current_update_time, update_age_max);
-    
+
     bool outputReport = (GetDebugLevel() >= PL_INFO);
 
     // The SmfDuplicateTree::Prune() method removes
@@ -3675,25 +3732,23 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
     InterfaceList::Iterator iterator(iface_list);
     Interface* nextIface;
     if (outputReport) PLOG(PL_ALWAYS, "nrlsmf report:\n");  // TBD - add date / timestamp
-    char ifaceName[IF_NAME_MAX+1];
-    ifaceName[IF_NAME_MAX] = '\0';
     while (NULL != (nextIface = iterator.GetNextItem()))
     {
         nextIface->PruneDuplicateDetector(current_update_time, update_age_max);
         flowCount += nextIface->GetFlowCount();
         if (outputReport)
         {
-            ProtoNet::GetInterfaceName(nextIface->GetIndex(), ifaceName, IF_NAME_MAX);
-            PLOG(PL_ALWAYS, "  iface:%s flows:%u recv:%u mrcv:%u sent:%u retr:%u fwd:%u dups:%u asym:%u queue:%u\n",ifaceName,
+            PLOG(PL_ALWAYS, "  iface:%s flows:%u recv:%u mrcv:%u sent:%u retr:%u fwd:%u dups:%u asym:%u queue:%u\n",
+                               nextIface->GetNameStr(),
                                nextIface->GetFlowCount(), nextIface->GetRecvCount(), nextIface->GetMcastCount(),
                                nextIface->GetSentCount(), nextIface->GetRetransmissionCount(), nextIface->GetForwardCount(),
                                nextIface->GetDuplicateCount(), nextIface->GetAsymCount(), nextIface->GetQueueLength());
         }
-        
+
 #ifdef ELASTIC_MCAST
         nextIface->PruneUpstreamHistory(currentTick);
-#endif // ELASTIC_MCAST        
-        
+#endif // ELASTIC_MCAST
+
     }
     // Output report
     if (outputReport)
@@ -3740,7 +3795,7 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
                 {
                     // ETX metric
                     double etx = upstream->GetLinkQuality();
-                    if (etx < 0.0) 
+                    if (etx < 0.0)
                         etx = 1.0;
                     else
                         etx = 1.0/etx;
@@ -3828,4 +3883,3 @@ bool Smf::IsNeighbor(const ProtoAddress& macAddr) const
     }
     return false;
 }  // end Smf::IsNeighbor()
-

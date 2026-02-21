@@ -1,4 +1,8 @@
 
+#ide/editor files
+.clangd
+compile_commands.json
+
 # build executables
 makefiles/nrlsmf
 

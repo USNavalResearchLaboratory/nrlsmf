@@ -1,5 +1,6 @@
 #ifndef _SMF
 #define _SMF
+#include "protoDefs.h"
 #include "smfHash.h"
 #include "smfDpd.h"
 #include "smfQueue.h"    // for optional per-flow interface queues
@@ -7,6 +8,10 @@
 #include "protoPktIP.h"  // (TBD) use something different for OPNET and/or ns-2?
 #include "protoPktETH.h"
 #include "protoQueue.h"
+#include "smfVrf.h"
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #if defined(ELASTIC_MCAST) || defined(ADAPTIVE_ROUTING)
 #include "mcastFib.h"
 #ifdef ADAPTIVE_ROUTING
@@ -255,13 +260,19 @@ class Smf
         }
         
         class InterfaceGroup;  // really an association group, if you will
-        
+
+        SmfVRFList* GetVRFs()
+          {return &vrf_list;}
+
+        SmfVRFPolicies* GetVRFPolicies()
+          {return &vrf_policies;}
+
         // We derive from "ProtoQueue::Item here so we can keep multiple lists of 
         // "Interfaces" indexed by their "ifIndex", "ifName", etc
         class Interface : public ProtoQueue::Item
         {
             public:
-                Interface(unsigned int ifIndex);
+                Interface(unsigned int ifIndex, const char *ifName);
                 ~Interface();
                 
                 bool Init(bool useWindow);// = false);  // (TBD) add parameters for DPD window, etc
@@ -270,6 +281,9 @@ class Smf
                 unsigned int GetIndex() const
                     {return if_index;}
                 
+                const char * GetNameStr()
+                    {return if_name.c_str();}
+
                 // These is the hardware MAC address (if GRE this will also be GRE tunnel local addr)
                 void SetInterfaceAddress(const ProtoAddress& ifAddr)
                     {if_addr = ifAddr;}
@@ -339,6 +353,13 @@ class Smf
                 bool IsLayered() const
                     {return is_layered;}
                
+                // Set to "true" to send igmp joins for the groups we want to receive on this interface
+                // This would typically be a layered interface as well.
+                void SetIgmpProxy(bool state)
+                    {is_igmp_proxy = state;}
+                bool IsIgmpProxy() const
+                    {return is_igmp_proxy;}
+
                 // These enable/disable reliable forwarding for the interface
                 void SetReliable(bool state)
                 {
@@ -424,6 +445,21 @@ class Smf
                     {repair_window = sec;}
                 double GetRepairWindow() const
                     {return repair_window;}
+                // Elastic routing state variables
+                void SetElasticMulticast(bool state)
+                    {elastic_mcast = state;}
+                bool GetElasticMulticast() const
+                    {return elastic_mcast;}
+                void SetManaged(bool state)
+                    {managed = state; if (!managed) managed_memberships.Destroy();}
+                bool IsManaged() const
+                    {return managed;}
+                void AddManagedMembership(const ProtoAddress& grpAddr)
+                    {managed_memberships.Insert(grpAddr);}
+                void RemoveManagedMembership(const ProtoAddress& grpAddr)
+                    {managed_memberships.Remove(grpAddr);}
+                bool HasActiveMembership(const ProtoAddress& grpAddr) const
+                    {return managed_memberships.Contains(grpAddr);}
 #endif // ELASTIC_MCAST
                 
                 // This is for adding an opaque "decorator" extension to the interface
@@ -514,6 +550,10 @@ class Smf
                 unsigned int GetQueueLength() const
                     {return pkt_queue.GetQueueLength();}
                 
+                // bool isVRF(const SmfVRF* new_vrf) const;  // check whether the interface belongs to this vrf
+                // void SetVRF(SmfVRF* new_vrf)
+                //     {vrf = new_vrf;}
+
                 // Used for InterfaceList required ProtoIndexedQueue overrides
                 const char* GetKey() const
                     {return ((const char*)&if_index);}
@@ -526,9 +566,11 @@ class Smf
                 ProtoAddressList                      addr_list;     // list of IP addresses of the interface    
                 ProtoAddress                          tunnel_local_addr;  // valid when Smf::Interface is GRE endpoint            
                 ProtoAddress                          ip_addr;       // used as source addr for nrlsmf IPIP encapsulation              
+                std::string                           if_name;
                 bool                                  resequence;                                                               
                 bool                                  is_tunnel;     // _not_ GRE tunnel, but indicates nrlsmf IPIP encapsulation                                                          
                 bool                                  is_layered;                                                               
+                bool                                  is_igmp_proxy;
                 bool                                  is_reliable;  
                 bool                                  use_etx; 
                 UINT16                                ump_sequence;                                                             
@@ -537,14 +579,16 @@ class Smf
                 SmfDpd*                               dup_detector;                                                             
                 AssociateList                         assoc_source_list;   // associates targeting this Interface                 
                 AssociateList                         assoc_target_list;   // associates that this Interface targets              
-                unsigned int                          unicast_group_count;                     
-                                                
+                unsigned int                          unicast_group_count;
                 SmfQueueTable                         queue_table;         // TBD - per flow (or next hop?) queues                      
                 SmfQueue                              pkt_queue;           // interface output queue
 #ifdef ELASTIC_MCAST                
                 MulticastFIB::UpstreamHistoryTable    upstream_history_table;
                 double                                repair_window;      // in secs (max retransmit packet age)
                 UINT16                                local_adv_id;
+                bool                                  elastic_mcast;
+                bool                                  managed;
+                ProtoAddressList                      managed_memberships; // List of groups with active receivers
 #endif // ELASTIC_MCAST
                                
                 unsigned int                          sent_count;  // count of outbound (sent) packets for iface
@@ -582,8 +626,8 @@ class Smf
                 unsigned int GetKeysize(const Item& item) const
                     {return static_cast<const Interface&>(item).GetKeysize();}
         };  // end class Smf::InterfaceList
-        
-        Interface* AddInterface(unsigned int ifIndex);
+
+        Interface *AddInterface(unsigned int ifIndex, const char *ifName);
         Interface* GetInterface(unsigned int ifIndex)
             {return iface_list.FindInterface(ifIndex);}
         InterfaceList& AccessInterfaceList()
@@ -770,6 +814,10 @@ class Smf
 	        {dscp[idxDSCP] = (char)RESET_DSCP;}
 	    char* GetUnicastDSCP(void)
 	        {return dscp;}
+        bool withFRR() const
+            {return with_FRR;}
+        void SetWithFRR(bool state)
+            {with_FRR = state;}
         void SetDelayTime(double time)
             {delay_time = time;} 
         enum DpdType
@@ -829,7 +877,7 @@ class Smf
         static const unsigned int DEFAULT_AGE_MAX; // (in seconds)
         static const unsigned int PRUNE_INTERVAL;  // (in seconds)
         
-        
+
         
         InterfaceGroup* AddInterfaceGroup(const char* groupName);
         InterfaceGroup* FindInterfaceGroup(const char* groupName)
@@ -950,6 +998,9 @@ class Smf
         unsigned int        dups_count;
         unsigned int        asym_count;
         unsigned int        fwd_count;
+        SmfVRFList          vrf_list;
+        SmfVRFPolicies      vrf_policies;
+        bool                with_FRR;             // running along side FRR
         
 };  // end class Smf
 #endif // _SMF
