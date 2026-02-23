@@ -2092,7 +2092,7 @@ bool MulticastFIB::AddFlowStatus(const ProtoFlow::Description&  flowDescription,
             fibEntry->SetTTL(255);  // TBD - allow option for TTL scoping of managed flows???
             break;
         case FlowStatus::POLICY:
-            fibEntry->SetManaged(true);
+            fibEntry->SetPolicy(true);
             break;
         default:
             PLOG(PL_ERROR, "MulticastFIB::AddFlowStatus() error: invalid flowStatus!\n");
@@ -2116,7 +2116,7 @@ void MulticastFIB::RemoveFlowStatus(const ProtoFlow::Description& flowDescriptio
             fibEntry->SetManaged(false);
             break;
         case FlowStatus::POLICY:
-            fibEntry->SetManaged(false);
+            fibEntry->SetPolicy(false);
             break;
         default:
             PLOG(PL_ERROR, "MulticastFIB::AddFlowStatus() error: invalid flowStatus!\n");
