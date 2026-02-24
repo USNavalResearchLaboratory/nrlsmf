@@ -2085,6 +2085,11 @@ bool MulticastFIB::AddFlowStatus(const ProtoFlow::Description&  flowDescription,
         fibEntry->SetForwardingStatus(0, defaultStatus, false);
         flow_table.InsertEntry(*fibEntry);
     }
+    else if (FlowStatus::POLICY == flowStatus)
+    {
+        // Update existing policy entry's default forwarding status (e.g. "allow all" updating wildcard)
+        fibEntry->SetForwardingStatus(0, defaultStatus, false);
+    }
     switch (flowStatus)
     {
         case FlowStatus::MANAGED:
@@ -2328,11 +2333,45 @@ ElasticMulticastController::~ElasticMulticastController()
 // Simple allow/deny policy for now
 bool ElasticMulticastController::SetPolicy(const ProtoFlow::Description& flowDescription, bool allow)
 {
-
-    // Set a full wildcard policy as default if not already set.  This sets the opposite policy
-    // for any flows that don't match allowed (or denied) flows ...
-    // TBD - perhaps only set wildcard when explicitly configured???
     ProtoFlow::Description wildcardDescription;
+    // "allow all" / "deny all": flowDescription is the wildcard (no dst, no src)
+    const bool isWildcardPolicy = (flowDescription.GetDstLength() == 0 && flowDescription.GetSrcLength() == 0);
+
+    if (isWildcardPolicy)
+    {
+        // Explicit "allow all" or "deny all" - set wildcard policy only (allow -> default_forwarding_status, deny -> DENY)
+        MulticastFIB::FlowPolicy* wildcard = policy_table.FindEntry(wildcardDescription);
+        MulticastFIB::ForwardingStatus forwardingStatus = allow ? default_forwarding_status : MulticastFIB::DENY;
+        if (NULL == wildcard)
+        {
+            if (NULL == (wildcard = new MulticastFIB::FlowPolicy(wildcardDescription)))
+            {
+                PLOG(PL_ERROR, "ElasticMulticastController::SetPolicy() new wildcard FlowPolicy error: %s\n", GetErrorString());
+                return false;
+            }
+            wildcard->SetForwardingStatus(forwardingStatus);
+            policy_table.InsertEntry(*wildcard);
+            if (!mcast_forwarder->AddFlowStatus(wildcardDescription, MulticastFIB::FlowStatus::POLICY, forwardingStatus))
+            {
+                PLOG(PL_ERROR, "ElasticMulticastController::SetPolicy() wildcard error: unable to add wildcard policy flow status!\n");
+                policy_table.RemoveEntry(*wildcard);
+                delete wildcard;
+                return false;
+            }
+        }
+        else
+        {
+            wildcard->SetForwardingStatus(forwardingStatus);
+            if (!mcast_forwarder->AddFlowStatus(wildcardDescription, MulticastFIB::FlowStatus::POLICY, forwardingStatus))
+            {
+                PLOG(PL_ERROR, "ElasticMulticastController::SetPolicy() wildcard error: unable to update wildcard policy flow status!\n");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Specific flow: set wildcard as default for non-matching flows (opposite of this rule)
     MulticastFIB::FlowPolicy* wildcard = policy_table.FindEntry(wildcardDescription);
     bool wildcardSet = false;
     if (NULL == wildcard)
@@ -2341,12 +2380,11 @@ bool ElasticMulticastController::SetPolicy(const ProtoFlow::Description& flowDes
         {
             PLOG(PL_ERROR, "ElasticMulticastController::SetPolicy() new wildcard FlowPolicy error: %s\n", GetErrorString());
             return false;
-        } 
-        MulticastFIB::ForwardingStatus forwardingStatus = allow ? MulticastFIB::DENY : default_forwarding_status;
-        wildcard->SetForwardingStatus(forwardingStatus);
+        }
+        MulticastFIB::ForwardingStatus wildcardStatus = allow ? MulticastFIB::DENY : default_forwarding_status;
+        wildcard->SetForwardingStatus(wildcardStatus);
         policy_table.InsertEntry(*wildcard);
-        // Inform forwarder of policy
-        if (!mcast_forwarder->AddFlowStatus(wildcardDescription, MulticastFIB::FlowStatus::POLICY, forwardingStatus))
+        if (!mcast_forwarder->AddFlowStatus(wildcardDescription, MulticastFIB::FlowStatus::POLICY, wildcardStatus))
         {
             PLOG(PL_ERROR, "ElasticMulticastController::SetPolicy() wildcard error: unable to add wildcard policy flow status!\n");
             policy_table.RemoveEntry(*wildcard);
@@ -2355,7 +2393,7 @@ bool ElasticMulticastController::SetPolicy(const ProtoFlow::Description& flowDes
         }
         wildcardSet = true;
     }
-    
+
     MulticastFIB::FlowPolicy* policy = policy_table.FindEntry(flowDescription);
     if (NULL == policy)
     {

@@ -2227,6 +2227,12 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                 // is the same as setting the wildcard
                 pol->InsertGroup(dstAddr);
             }
+            else if (0 == strcmp("all", text))
+            { // "allow all" - set wildcard policy to allow
+                ProtoFlow::Description wildcardDesc;
+                result = mcast_controller.SetPolicy(wildcardDesc, true);
+                if (!result) break;
+            }
             else
             { // Add regular flow policy
                 ProtoFlow::Description flowDescription(dstAddr);
@@ -2305,6 +2311,12 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                 // If addr was "all", i.e. the wildcard match, then the addr is invalid and that
                 // is the same as setting the wildcard
                 pol->InsertGroup(dstAddr);
+            }
+            else if (0 == strcmp("all", text))
+            { // "deny all" - set wildcard policy to deny
+                ProtoFlow::Description wildcardDesc;
+                result = mcast_controller.SetPolicy(wildcardDesc, false);
+                if (!result) break;
             }
             else
             { // Add regular flow policy
