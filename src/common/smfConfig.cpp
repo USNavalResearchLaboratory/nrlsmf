@@ -61,6 +61,7 @@ bool SmfConfig::AddInterface(const char*        ifaceName,
                              const char*        deviceName,
                              bool               reliable,
                              bool               layered,
+                             bool               igmpProxy,
                              bool               shadow,
                              bool               blockIGMP)
 {
@@ -131,6 +132,11 @@ bool SmfConfig::AddInterface(const char*        ifaceName,
     if (!iface->InsertBoolean("layered", layered))
     {
         PLOG(PL_ERROR, "SmfConfig::AddInterface() error adding 'layered' attribute: %s\n", GetErrorString());
+        return false;
+    }
+    if (!iface->InsertBoolean("igmpProxy", igmpProxy))
+    {
+        PLOG(PL_ERROR, "SmfConfig::AddInterface() error adding 'igmpProxy' attribute: %s\n", GetErrorString());
         return false;
     }
     if (!iface->InsertBoolean("shadow", shadow))

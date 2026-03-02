@@ -17,6 +17,7 @@ group :
     
     reliable        : {TRUE | FALSE} // FALSE is default upon omission
     layered         : {TRUE | FALSE} // FALSE is default upon omission
+    igmpProxy       : {TRUE | FALSE} // FALSE is default upon omission
     shadow          : {TRUE | FALSE} // FALSE is default upon omission
 }
 
@@ -27,6 +28,7 @@ interface
     addresses       : <array> of <string> // items of format "<address>[/<maskLength>]
     reliable        : {TRUE | FALSE} // FALSE is default upon omission
     layered         : {TRUE | FALSE} // FALSE is default upon omission
+    igmpProxy       : {TRUE | FALSE} // FALSE is default upon omission
     shadow          : {TRUE | FALSE} // FALSE is default upon omission
 }
 
@@ -52,6 +54,7 @@ class SmfConfig : public ProtoJson::Document
                           const char*           deviceName = NULL,
                           bool                  reliable = false,
                           bool                  layered = false,
+                          bool                  igmpProxy = false,
                           bool                  shadow = false,
                           bool                  blockIGMP = false);
         
