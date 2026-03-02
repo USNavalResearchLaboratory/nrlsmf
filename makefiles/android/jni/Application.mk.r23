@@ -1,4 +1,6 @@
 APP_ABI := all
 APP_PLATFORM := android-23
 APP_PIE := true
+APP_STL := c++_shared
+APP_CPPFLAGS := -fexceptions
 NDK_MODULE_PATH := ../../:../../protolib/
