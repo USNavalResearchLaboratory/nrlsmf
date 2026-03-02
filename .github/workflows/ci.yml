@@ -8,8 +8,105 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build (Linux)
+  build-macos:
+    runs-on: ${{ matrix.cfg.os }}
+    name: ${{ matrix.cfg.name }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        cfg:
+          - { os: macos-15-intel, name: 'macOS Intel' }
+          - { os: macos-latest,   name: 'macOS ARM' }
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build nrlsmf Elastic
+        run: make -C makefiles -f Makefile.macosx elastic
+
+      - name: Clean
+        run: |
+          make -C makefiles -f Makefile.macosx clean
+          git clean -fdx
+
+      - name: Build nrlsmf
+        run: make -C makefiles -f Makefile.macosx
+
+  build-linux:
+    runs-on: ubuntu-latest
+    container: ${{ matrix.cfg.container }}
+    name: ${{ matrix.cfg.name }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        cfg:
+          - { container: 'ubuntu:24.04', name: 'Ubuntu 24.04' }
+          - { container: 'debian:12',    name: 'Debian 12' }
+          - { container: 'fedora:43',    name: 'Fedora 43' }
+          - { container: 'rockylinux:8', name: 'Rocky 8' }
+
+    steps:
+      - name: Install git and build dependencies
+        run: |
+          case "${{ matrix.cfg.container }}" in
+            ubuntu*|debian*)
+              apt-get update -y
+              DEBIAN_FRONTEND=noninteractive apt-get install -y git g++ make libnetfilter-queue-dev
+              ;;
+            fedora*)
+              dnf -y install git gcc-c++ make libnetfilter_queue-devel
+              ;;
+            rocky*)
+              dnf install dnf-plugins-core -y
+              dnf config-manager --set-enabled devel -y
+              dnf -y install git gcc-c++ make libnetfilter_queue-devel
+              ;;
+          esac
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Mark workspace as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build nrlsmf Elastic
+        run: make -C makefiles -f Makefile.linux elastic
+
+      - name: Clean
+        run: |
+          make -C makefiles -f Makefile.linux clean
+          git clean -fdx
+
+      - name: Build nrlsmf
+        run: make -C makefiles -f Makefile.linux
+
+  build-windows:
+    name: Windows
+    runs-on: windows-latest
+    if: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build nrlsmf
+        run: msbuild makefiles/win32/nrlsmf.sln /p:Configuration=Release /p:Platform=Win32 /restore /v:minimal
+        shell: pwsh
+
+  build-android:
+    name: Android
     runs-on: ubuntu-latest
 
     steps:
@@ -18,16 +115,20 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install build dependencies
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26b
+
+      - name: Setup Application.mk
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libnetfilter-queue-dev
+          cd makefiles/android/jni
+          ln -sf Application.mk.r23 Application.mk
+
+      - name: Link protolib Android NDK path
+        run: ln -s android-ndk protolib/makefiles/android
 
       - name: Build nrlsmf
-        run: make -C makefiles -f Makefile.linux
-
-      - name: Build nrlsmf Elastic
         run: |
-          make -C makefiles -f Makefile.linux clean
-          make -C makefiles -f Makefile.linux elastic
-
+          cd makefiles/android
+          ndk-build NDK_MODULE_PATH=$GITHUB_WORKSPACE
