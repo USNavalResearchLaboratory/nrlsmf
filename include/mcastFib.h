@@ -8,6 +8,7 @@
 #include "r2dnMsg.h"
 #include "path.h"
 #include <list>
+#include <sstream>
 #include <vector>
 #include <unordered_map>
 
