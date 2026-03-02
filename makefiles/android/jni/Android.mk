@@ -21,6 +21,8 @@ LOCAL_SRC_FILES := \
 	../../../src/common/smfHashMD5.cpp \
 	../../../src/common/smfHashSHA1.cpp \
 	../../../src/common/smfQueue.cpp \
+	../../../src/common/smfConfig.cpp \
+	../../../src/common/smfVrf.cpp \
 	../../../protolib/src/linux/linuxCap.cpp \
 	../../../protolib/src/common/protoVif.cpp \
 	../../../protolib/src/unix/unixVif.cpp

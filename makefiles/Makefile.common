@@ -34,24 +34,33 @@ LIBPROTO = $(PROTOLIB)/lib/libprotokit.a
 $(PROTOLIB)/lib/libprotokit.a:
 	cd $(PROTOLIB)/makefiles; $(MAKE) -f Makefile.$(SYSTEM) libprotokit.a
 
-NRLSMF_SRC = $(COMMON)/nrlsmf.cpp $(COMMON)/smf.cpp $(COMMON)/smfDpd.cpp \
+# Base nrlsmf: object files in obj/ so they are not mixed with elastic build
+BASE_COMMON_SRC = $(COMMON)/nrlsmf.cpp $(COMMON)/smf.cpp $(COMMON)/smfDpd.cpp \
 	$(COMMON)/smfHash.cpp $(COMMON)/smfHashMD5.cpp $(COMMON)/smfHashSHA1.cpp \
-	$(COMMON)/smfQueue.cpp $(COMMON)/smfConfig.cpp $(COMMON)/smfVrf.cpp $(SYSTEM_SRC)
+	$(COMMON)/smfQueue.cpp $(COMMON)/smfConfig.cpp $(COMMON)/smfVrf.cpp
+SYSTEM_OBJ = $(SYSTEM_SRC:.cpp=.o)
+BASE_COMMON_OBJ = $(patsubst $(COMMON)/%.cpp,obj/%.o,$(BASE_COMMON_SRC))
+NRLSMF_OBJ = $(BASE_COMMON_OBJ) $(SYSTEM_OBJ)
 
-NRLSMF_OBJ = $(NRLSMF_SRC:.cpp=.o)
+obj/%.o: $(COMMON)/%.cpp
+	@mkdir -p obj
+	$(CC) -c $(CFLAGS) -o $@ $<
 
 nrlsmf:    $(NRLSMF_OBJ) $(LIBPROTO)
 	$(CC) $(CFLAGS) -o $@ $(NRLSMF_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
 
-# Builds "nrlsmf" with embedded experimental Elastic Multicast code
-ELASTIC_SRC = $(NRLSMF_SRC) $(COMMON)/mcastFib.cpp \
+# Builds "nrlsmf" with embedded experimental Elastic Multicast code (obj_elastic/ avoids mixing with base .o)
+ELASTIC_COMMON_SRC = $(BASE_COMMON_SRC) $(COMMON)/mcastFib.cpp \
 	$(COMMON)/elasticMsg.cpp $(COMMON)/smfIgmp.cpp
+ELASTIC_COMMON_OBJ = $(patsubst $(COMMON)/%.cpp,obj_elastic/%.o,$(ELASTIC_COMMON_SRC))
+ELASTIC_OBJ = $(ELASTIC_COMMON_OBJ) $(SYSTEM_OBJ)
 
-ELASTIC_OBJ = $(ELASTIC_SRC:.cpp=.o)
+obj_elastic/%.o: $(COMMON)/%.cpp
+	@mkdir -p obj_elastic
+	$(CC) -c $(CFLAGS) -DELASTIC_MCAST -o $@ $<
 
-elastic: CFLAGS += -DELASTIC_MCAST
 elastic:	$(ELASTIC_OBJ) $(LIBPROTO)
-	$(CC) $(CFLAGS) -o nrlsmf $(ELASTIC_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
+	$(CC) $(CFLAGS) -DELASTIC_MCAST -o nrlsmf $(ELASTIC_OBJ) $(LDFLAGS) $(LIBS) $(LIBPROTO)
 
 # Builds "nrlsmf" with embedded Smart Robust Routing (SRR) Code (for R2DN Program)
 ADAPTIVE_SRC = $(NRLSMF_SRC) $(COMMON)/mcastFib.cpp \
@@ -123,10 +132,12 @@ install:
 	cp -p nrlsmf $(INSTALLPREFIX)/bin
 
 clean:
+	rm -rf obj obj_elastic; \
 	rm -f *.o $(COMMON)/*.o $(NS)/*.o ../wx/*.o *.a nrlsmf; \
-        cd $(PROTOLIB)/makefiles; $(MAKE) -f Makefile.$(SYSTEM) clean
+	cd $(PROTOLIB)/makefiles; $(MAKE) -f Makefile.$(SYSTEM) clean
 
 smfclean:
+	rm -rf obj obj_elastic; \
 	rm -f *.o $(COMMON)/*.o $(NS)/*.o ../wx/*.o *.a nrlsmf;
 
 # DO NOT DELETE THIS LINE -- mkdep uses it.
