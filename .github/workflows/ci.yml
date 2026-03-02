@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - ci
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnetfilter-queue-dev
+
+      - name: Build nrlsmf
+        run: make -C makefiles -f Makefile.linux
+
+      - name: Build nrlsmf Elastic
+        run: |
+          make -C makefiles -f Makefile.linux clean
+          make -C makefiles -f Makefile.linux elastic
+
