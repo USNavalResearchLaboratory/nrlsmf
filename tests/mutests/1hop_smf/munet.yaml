@@ -1,0 +1,20 @@
+topology:
+ networks:
+  - name: hnet1
+  - name: hnet2
+# simple network with two hosts and one router
+# h1 <-> r1 <-> h2
+ nodes:
+  - name: h1
+    kind: frr
+    connections:
+      - to: hnet1
+  - name: h2
+    kind: frr
+    connections:
+      - to: hnet2
+  - name: r1
+    kind: frr
+    connections:
+      - to: hnet1
+      - to: hnet2
