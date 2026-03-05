@@ -2,15 +2,27 @@ name: CI
 
 on:
   pull_request:
+    paths-ignore:
+      - "**/*.md"
   push:
     branches:
       - ci
+    paths-ignore:
+      - "**/*.md"
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-macos:
     runs-on: ${{ matrix.cfg.os }}
-    name: ${{ matrix.cfg.name }}
+    name: Build (${{ matrix.cfg.name }})
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
@@ -39,13 +51,13 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     container: ${{ matrix.cfg.container }}
-    name: ${{ matrix.cfg.name }}
+    name: Build (${{ matrix.cfg.name }})
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
       matrix:
         cfg:
-          - { container: 'ubuntu:24.04', name: 'Ubuntu 24.04' }
           - { container: 'debian:12',    name: 'Debian 12' }
           - { container: 'fedora:43',    name: 'Fedora 43' }
           - { container: 'rockylinux:8', name: 'Rocky 8' }
@@ -88,9 +100,10 @@ jobs:
         run: make -C makefiles -f Makefile.linux
 
   build-windows:
-    name: Windows
+    name: Build (Windows)
     runs-on: windows-latest
     if: false
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -106,8 +119,9 @@ jobs:
         shell: pwsh
 
   build-android:
-    name: Android
+    name: Build (Android)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -132,3 +146,71 @@ jobs:
         run: |
           cd makefiles/android
           ndk-build NDK_MODULE_PATH=$GITHUB_WORKSPACE
+
+  mutest:
+    name: Test (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            g++ make libnetfilter-queue-dev \
+            iproute2 iputils-ping ethtool iperf frr tmux python3-pip
+
+      - name: Cache pip downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-munet-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-munet-
+
+      - name: Install munet
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install munet
+
+      - name: Build nrlsmf (Ubuntu 24.04)
+        run: make -j
+
+      - name: Install nrlsmf
+        run: |
+          sudo make install
+
+      - name: Prepare mutest run directory
+        run: |
+          sudo rm -rf /tmp/mutest
+          sudo mkdir -p /tmp/mutest
+
+      - name: Run mutests
+        run: |
+          cd tests/mutests
+          sudo env PATH="$GITHUB_WORKSPACE/.venv/bin:$PATH" mutest
+
+      - name: Print mutest logs on failure
+        if: failure()
+        run: |
+          for f in /tmp/mutest/mutest-output.log; do
+            if [ -f "$f" ]; then
+              echo "===== $f ====="
+              cat "$f"
+            fi
+          done
+
+      - name: Upload mutest logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutest-logs-${{ github.run_id }}
+          path: /tmp/mutest
+          if-no-files-found: ignore
