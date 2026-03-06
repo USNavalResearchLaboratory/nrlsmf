@@ -3172,6 +3172,7 @@ unsigned int Smf::UpdateUpstreamHistory(unsigned int                   currentTi
         {
             ethPkt.SetPayloadLength(ip4Pkt.GetLength());
         }
+        ip4Pkt.FinalizeChecksum();
         output_mechanism->SendFrame(srcIface.GetIndex(), (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
     }
  }  // end Smf::SendNack()
@@ -3268,6 +3269,7 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
     {
         ethPkt.SetPayloadLength(ip4Pkt.GetLength());
     }
+    ip4Pkt.FinalizeChecksum();
 
     if (GetDebugLevel() >= PL_DEBUG)
     {
@@ -3453,6 +3455,7 @@ void Smf::AdvertiseActiveFlows()
                 {
                     ethPkt.SetPayloadLength(ip4Pkt.GetLength());
                 }
+                ip4Pkt.FinalizeChecksum();
                 output_mechanism->SendFrame(iface->GetIndex(), (char*)ethBuffer, ethPkt.GetLength());
                 iface->IncrementLocalAdvId();
                 // 2) reset to beginning of 'msgBuffer' for bundled messages
@@ -3467,11 +3470,14 @@ void Smf::AdvertiseActiveFlows()
             MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->GetBestUpstreamRelay(currentTick);
             if (NULL != upstreamRelay)
             {
+                bool useLocalAdvertisement = false;
                 if (!upstreamRelay->GetAdvAddr().IsValid())
                 {
-                    continue;  // invalid address indicates we don't have refreshed EM_ADV state for this flow.  Don't advertise again until we do
+                    // No refreshed upstream advertisement state yet; fall back to local advertisement.
+                    useLocalAdvertisement = true;
                 }
-                if (upstreamRelay->Age(currentTick) >= MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT)
+                if (!useLocalAdvertisement &&
+                    (upstreamRelay->Age(currentTick) >= MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT))
                 {
                     continue;  // don't advertise idle upstream (shouldn't get here anyway due to address validity used as marker)
                 }
@@ -3482,7 +3488,7 @@ void Smf::AdvertiseActiveFlows()
                     advMetric = 1.0 / linkQuality;
                 else
                     advMetric = ElasticAdv::METRIC_MAX;
-                if (upstreamRelay->AdvMetricIsValid())
+                if (!useLocalAdvertisement && upstreamRelay->AdvMetricIsValid())
                 {
                     // We have a received full path metric for this relay,
                     // so  compute our metric using that along with measured
@@ -3492,18 +3498,25 @@ void Smf::AdvertiseActiveFlows()
                 }
                 else
                 {
-                    // TBD - should we advertise a conservative metric instead, or an ambiguous one?
-                    // for this case of an upstream with measured link quality but an unknown path metric?
-                    // This could happen if we timeout received metrics to avoid advertising stale paths ...
-                    // but what do advertise instead ... or so we wait until we get a metric ... probably should
-                    // do that since it's consistent with behavior of no packet reception ...
-                    continue;  // don't advertise until we get an updated metric for this flow
+                    // If upstream metric state is not ready, still advertise locally for active flows.
+                    useLocalAdvertisement = true;
                 }
-                advTTL = upstreamRelay->GetAdvTTL();
-                advHopCount = upstreamRelay->GetAdvHopCount();
-                ASSERT(upstreamRelay->GetAdvAddr().IsValid());
-                advAddr = upstreamRelay->GetAdvAddr();
-                advId = upstreamRelay->GetAdvId();
+                if (useLocalAdvertisement)
+                {
+                    advTTL = fibEntry->GetTTL();
+                    advHopCount = 0;
+                    advMetric = 0.0;
+                    advAddr = iface->GetIpAddress();
+                    advId = iface->GetLocalAdvId();
+                }
+                else
+                {
+                    advTTL = upstreamRelay->GetAdvTTL();
+                    advHopCount = upstreamRelay->GetAdvHopCount();
+                    ASSERT(upstreamRelay->GetAdvAddr().IsValid());
+                    advAddr = upstreamRelay->GetAdvAddr();
+                    advId = upstreamRelay->GetAdvId();
+                }
             }
             else if (fibEntry->IsManaged() ||
                      (fibEntry->IsActive() && (fibEntry->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT)))
@@ -3608,6 +3621,7 @@ void Smf::AdvertiseActiveFlows()
             {
                 ethPkt.SetPayloadLength(ip4Pkt.GetLength());
             }
+            ip4Pkt.FinalizeChecksum();
             output_mechanism->SendFrame(iface->GetIndex(), (char*)ethBuffer, ethPkt.GetLength());
             iface->IncrementLocalAdvId();
         }

@@ -1238,6 +1238,9 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
         OnShutdown();
         return false;
     }
+    // For "nrlsmf help" / "nrlsmf version", exit before opening pipes or runtime services.
+    if (need_help && (2 == argc))
+        exit(0);
 
     smf.GetVRFs()->SetPolicies(smf.GetVRFPolicies());
     smf.GetVRFs()->EnableFRRUpdates(smf.withFRR());
@@ -1271,7 +1274,7 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
         if (isEmpty)
         {
             // No resequencing or iface I/O configured?
-            PLOG(PL_WARN, "smfApp::OnStartup() warning: no active forwarding or resequencing in place (runtime configuration will be needed)\n");
+            PLOG(PL_INFO, "smfApp::OnStartup() warning: no active forwarding or resequencing in place (runtime configuration will be needed)\n");
             //OnShutdown();
             //return false;
         }
@@ -1538,7 +1541,13 @@ bool SmfApp::ProcessCommands(int argc, const char*const* argv)
                 if (!OnCommand(argv[i], NULL))
                 {
                     if (need_help) // catches "help" and "version" checks
-                        return true;
+                    {
+                        // "nrlsmf help" / "nrlsmf version" as a sole CLI command should exit cleanly.
+                        if ((1 == i) && (2 == argc))
+                            exit(0);
+                        i++;
+                        continue;
+                    }
                     PLOG(PL_FATAL, "SmfApp::ProcessCommands() ProcessCommand(%s) error\n", argv[i]);
                     return false;
                 }
@@ -3030,7 +3039,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         }
         else
         {
-            PLOG(PL_WARN, "SmfApp::OnCommand(smfServer) warning: unable to connect to smfServer \"%s\"\n", val);
+            PLOG(PL_INFO, "SmfApp::OnCommand(smfServer) warning: unable to connect to smfServer \"%s\"\n", val);
             return true;
         }
     }

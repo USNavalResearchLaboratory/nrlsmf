@@ -1279,7 +1279,17 @@ class ElasticMulticastController
             {mcast_forwarder = forwarder;}
 
         void SetDefaultForwardingStatus(MulticastFIB::ForwardingStatus status)
-            {default_forwarding_status = status;}
+        {
+            default_forwarding_status = status;
+            // If advertise mode is enabled at runtime, start advertisement timer immediately.
+            if ((MulticastFIB::HYBRID == default_forwarding_status) &&
+                (NULL != mcast_forwarder) &&
+                !advertisement_timer.IsActive())
+            {
+                advertisement_timer.SetInterval(0.0);
+                timer_mgr.ActivateTimer(advertisement_timer);
+            }
+        }
 
         MulticastFIB::ForwardingStatus GetDefaultForwardingStatus() const
             {return default_forwarding_status;}
