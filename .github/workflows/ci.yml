@@ -163,7 +163,7 @@ jobs:
           sudo apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             g++ make libnetfilter-queue-dev \
-            iproute2 iputils-ping ethtool iperf frr tmux python3-pip
+            iproute2 iputils-ping ethtool tcpdump iperf frr tmux python3-pip
 
       - name: Cache pip downloads
         uses: actions/cache@v4

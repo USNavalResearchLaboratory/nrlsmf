@@ -238,7 +238,62 @@ wait_step(
 wait_step(
     "h2",
     "tail -n4 iperf-server.log",
-    match="1 pps",
+    match="1.00 KBytes",
     desc="Receiving 239.0.0.1 rate limited to 1 pps",
+    timeout=30,
+)
+
+# Advertise mode
+step("r1", "pkill nrlsmf")
+
+wait_step(
+    "r1",
+    'pgrep -af "nrlsmf"',
+    match="",
+    desc="stopped nrlsmf",
+)
+section("Start nrlsmf with advertise mode r1 ")
+step(
+    "r1",
+    "nrlsmf debug 4 advertise add net,cf,eth0,eth1 elastic net &> nrlsmf-advertise.log &",
+)
+
+wait_step(
+    "r1",
+    'pgrep -af "nrlsmf.*advertise.*elastic net"',
+    match="advertise",
+    desc="nrlsmf is started with advertise + elastic group net",
+)
+
+wait_step(
+    "r1",
+    'grep  "regular group" nrlsmf-advertise.log',
+    match='"net" eth0,eth1',
+    desc='nrlsmf-advertise.log contains group "net" eth0,eth1',
+)
+
+wait_step(
+    "r1",
+    'grep  "regular group" nrlsmf-advertise.log',
+    match='"push:eth0" eth0',
+    desc='nrlsmf-advertise.log contains group "push:eth0" eth0',
+)
+wait_step(
+    "r1",
+    'grep  "regular group" nrlsmf-advertise.log',
+    match='"push:eth1" eth1',
+    desc='nrlsmf-advertise.log contains group "push:eth1" eth1',
+)
+
+step(
+    "h2",
+    "tcpdump -lnni eth0 'udp dst port 5555 and dst 224.0.0.55' &> tcpdump-emadv.log &",
+)
+
+wait_step(
+    "h2",
+    "grep -m1 '224.0.0.55.5555' tcpdump-emadv.log",
+    match="224.0.0.55.5555",
+    desc="EM_ADV packets seen on h2 eth0 in advertise mode",
     timeout=30,
 )
