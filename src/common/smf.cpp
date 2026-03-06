@@ -3172,6 +3172,7 @@ unsigned int Smf::UpdateUpstreamHistory(unsigned int                   currentTi
         {
             ethPkt.SetPayloadLength(ip4Pkt.GetLength());
         }
+        ip4Pkt.FinalizeChecksum();
         output_mechanism->SendFrame(srcIface.GetIndex(), (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
     }
  }  // end Smf::SendNack()
@@ -3268,6 +3269,7 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
     {
         ethPkt.SetPayloadLength(ip4Pkt.GetLength());
     }
+    ip4Pkt.FinalizeChecksum();
 
     if (GetDebugLevel() >= PL_DEBUG)
     {
@@ -3453,6 +3455,7 @@ void Smf::AdvertiseActiveFlows()
                 {
                     ethPkt.SetPayloadLength(ip4Pkt.GetLength());
                 }
+                ip4Pkt.FinalizeChecksum();
                 output_mechanism->SendFrame(iface->GetIndex(), (char*)ethBuffer, ethPkt.GetLength());
                 iface->IncrementLocalAdvId();
                 // 2) reset to beginning of 'msgBuffer' for bundled messages
@@ -3608,6 +3611,7 @@ void Smf::AdvertiseActiveFlows()
             {
                 ethPkt.SetPayloadLength(ip4Pkt.GetLength());
             }
+            ip4Pkt.FinalizeChecksum();
             output_mechanism->SendFrame(iface->GetIndex(), (char*)ethBuffer, ethPkt.GetLength());
             iface->IncrementLocalAdvId();
         }
