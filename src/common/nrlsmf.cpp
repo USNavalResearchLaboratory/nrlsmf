@@ -105,6 +105,7 @@ class SmfApp : public ProtoApp
         static void CliUsage();
         static int RunControlClient(int argc, const char*const* argv);
 
+        bool SendOnReplyPath(const char* data, unsigned int numBytes);
         bool ControlReply(const char* data, unsigned int numBytes);
         bool ControlReply(const std::string& s);
         void OnShowCommand(const char* arg);
@@ -484,9 +485,11 @@ class SmfApp : public ProtoApp
         InterfaceMatcherList        iface_matcher_list;
         ProtoNet::Monitor*          iface_monitor;
 
-        ProtoPipe                   control_pipe;   // pipe _from_ controller to me
+        ProtoPipe                   control_pipe;   // bind/listen + sendto replies (one socket)
         char                        control_pipe_name[128];
-        ProtoPipe                   server_pipe;    // pipe _to_ controller (e.g., nrlolsr)
+        ProtoPipe                   server_pipe;    // WIN32 / unnamed-sender fallback to controller
+        char                        smf_server_name[PATH_MAX];
+        char                        control_reply_src[PATH_MAX];  // RecvFrom sender path for this command
 
         ProtoPipe                   tap_pipe;
         bool                        tap_active;
@@ -1129,6 +1132,8 @@ SmfApp::SmfApp()
 #endif // ADAPTIVE_ROUTING
 
     config_path[0] = config_path[PATH_MAX] = '\0';
+    smf_server_name[0] = '\0';
+    control_reply_src[0] = '\0';
 }
 
 SmfApp::~SmfApp()
@@ -1677,31 +1682,15 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
         return 0;
     }
 
-    char listenName[64];
-#ifndef WIN32
-    snprintf(listenName, sizeof(listenName), "nrlsmf-cli-%d", (int)getpid());
-#else
-    snprintf(listenName, sizeof(listenName), "nrlsmf-cli-%u", (unsigned int)GetCurrentProcessId());
-#endif
-
-    ProtoPipe listenPipe(ProtoPipe::MESSAGE);
     ProtoPipe smfPipe(ProtoPipe::MESSAGE);
-
-    if (!listenPipe.Listen(listenName))
-    {
-        fprintf(stderr, "nrlsmf --cli: unable to open reply pipe \"%s\"\n", listenName);
-        return 1;
-    }
 
     if (!smfPipe.Connect(instance))
     {
         fprintf(stderr, "nrlsmf --cli: unable to connect to instance \"%s\" (is nrlsmf running?)\n",
                 instance);
-        listenPipe.Close();
         return 1;
     }
 
-    bool startedServer = false;
     for (size_t n = 0; n < commands.size(); n++)
     {
         const char* cmd = commands[n];
@@ -1711,30 +1700,11 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
             continue;
         }
 
-        if (CliExpectsReply(cmd) && !startedServer)
-        {
-            // Status replies are sent on server_pipe, not back to the requester.
-            // Register this process as the (temporary) controller so we receive them.
-            char startMsg[128];
-            snprintf(startMsg, sizeof(startMsg), "smfServerStart %s", listenName);
-            unsigned int numBytes = (unsigned int)strlen(startMsg) + 1;
-            if (!smfPipe.Send(startMsg, numBytes))
-            {
-                fprintf(stderr, "nrlsmf --cli: failed to send smfServerStart to instance \"%s\"\n",
-                        instance);
-                smfPipe.Close();
-                listenPipe.Close();
-                return 1;
-            }
-            startedServer = true;
-        }
-
         unsigned int numBytes = (unsigned int)strlen(cmd) + 1;
         if (!smfPipe.Send(cmd, numBytes))
         {
             fprintf(stderr, "nrlsmf --cli: failed to send command to instance \"%s\"\n", instance);
             smfPipe.Close();
-            listenPipe.Close();
             return 1;
         }
 
@@ -1742,11 +1712,10 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
         {
             char reply[8192];
             unsigned int replyLen = sizeof(reply);
-            if (!CliRecvWithTimeout(listenPipe, reply, replyLen, 2000))
+            if (!CliRecvWithTimeout(smfPipe, reply, replyLen, 2000))
             {
                 fprintf(stderr, "nrlsmf --cli: timed out waiting for reply to \"%s\"\n", cmd);
                 smfPipe.Close();
-                listenPipe.Close();
                 return 1;
             }
             fwrite(reply, 1, replyLen, stdout);
@@ -1756,7 +1725,6 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
     }
 
     smfPipe.Close();
-    listenPipe.Close();
     return 0;
 }  // end SmfApp::RunControlClient()
 
@@ -1918,7 +1886,7 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
         }
     }
     // Tell an "smfServer" that we're open for business (if not already done)
-    if (!server_pipe.IsOpen())
+    if ('\0' == smf_server_name[0])
     {
         if (!OnCommand("smfServer", DEFAULT_SMF_SERVER))
         {
@@ -2194,26 +2162,41 @@ bool SmfApp::ProcessCommands(int argc, const char*const* argv)
     return true;
 }  // end SmfApp::ProcessCommands()
 
-// if the server pipe is not open, don't fail.  If it is open and the
-// send fails, then fail.
-bool SmfApp::ServerSend(const char* word, const char* value)
+// Reply on the sender path when RecvFrom() named it; otherwise to smfServer
+// on the same control_pipe. WIN32 still uses a connected server_pipe.
+bool SmfApp::SendOnReplyPath(const char* data, unsigned int numBytes)
 {
+#ifndef WIN32
+    const char* destName = ('\0' != control_reply_src[0]) ? control_reply_src :
+                           (('\0' != smf_server_name[0]) ? smf_server_name : NULL);
+    if (NULL != destName)
+    {
+        unsigned int n = numBytes;
+        if (control_pipe.IsOpen() && control_pipe.SendTo(data, n, destName))
+            return true;
+        PLOG(PL_DEBUG, "SmfApp::SendOnReplyPath() SendTo(%s) failed, trying server_pipe\n", destName);
+    }
+#endif // !WIN32
     if (server_pipe.IsOpen())
     {
-        std::ostringstream ss;
-        ss << "{\"" << word << "\":\"" << value << "\"}\n";
-        unsigned int len = ss.str().size();
-        if (!server_pipe.Send(ss.str().c_str(),len))
-        {
-            PLOG(PL_ERROR, "SmfApp::ServerSend() error sending %s to smf server\n", ss.str().c_str());
-            return false;
-        }
-     }
-     else
-     {
-        PLOG(PL_DEBUG, "SmfApp::ServerSend() no socket to send %s\n", word);
-     }
-     return true;
+        unsigned int n = numBytes;
+        if (server_pipe.Send(data, n))
+            return true;
+        PLOG(PL_ERROR, "SmfApp::SendOnReplyPath() error sending %u bytes on server_pipe\n", numBytes);
+        return false;
+    }
+    return false;
+}
+
+bool SmfApp::ServerSend(const char* word, const char* value)
+{
+    std::ostringstream ss;
+    ss << "{\"" << word << "\":\"" << value << "\"}\n";
+    unsigned int len = ss.str().size();
+    if (SendOnReplyPath(ss.str().c_str(), len))
+        return true;
+    PLOG(PL_DEBUG, "SmfApp::ServerSend() no socket to send %s\n", word);
+    return true;
 }
 bool SmfApp::OnCommand(const char* cmd, const char* val)
 {
@@ -3813,7 +3796,6 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     }
     else if (!strncmp("smfServer", cmd, len))
     {
-        if (server_pipe.IsOpen()) server_pipe.Close();
         if (!control_pipe.IsOpen())
         {
             const char* instanceName = ('\0' != control_pipe_name[0]) ? control_pipe_name : DEFAULT_INSTANCE_NAME;
@@ -3828,25 +3810,24 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             PLOG(PL_ERROR, "SmfApp::OnCommand(smfServer) error sending hello to smf server, no server name provided\n");
             return false;
         }
-        else
-            PLOG(PL_INFO, "SmfApp:  Connecting to server %s\n", val);
-        if (server_pipe.Connect(val))
-        {
-            // Tell the "controller" (server) our control pipe name, if applicable
-            if ('\0' != control_pipe_name[0])
-            {
-                // change what is commented if we don't want json behavior
-                if (!ServerSend("smfClientStart", control_pipe_name))
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(instance) error sending hello to smf server\n");
-                    return false;
-                }
-            }
-        }
-        else
+        strncpy(smf_server_name, val, sizeof(smf_server_name) - 1);
+        smf_server_name[sizeof(smf_server_name) - 1] = '\0';
+        PLOG(PL_INFO, "SmfApp:  smfServer is %s\n", val);
+#ifdef WIN32
+        if (server_pipe.IsOpen()) server_pipe.Close();
+        if (!server_pipe.Connect(val))
         {
             PLOG(PL_INFO, "SmfApp::OnCommand(smfServer) warning: unable to connect to smfServer \"%s\"\n", val);
             return true;
+        }
+#endif // WIN32
+        if ('\0' != control_pipe_name[0])
+        {
+            if (!ServerSend("smfClientStart", control_pipe_name))
+            {
+                PLOG(PL_ERROR, "SmfApp::OnCommand(smfServer) error sending hello to smf server\n");
+                return false;
+            }
         }
     }
     else if (!strncmp("tap", cmd, len))
@@ -6435,18 +6416,11 @@ bool SmfApp::AssignAddresses(const char* ifaceName, unsigned int ifaceIndex, con
 
 bool SmfApp::ControlReply(const char* data, unsigned int numBytes)
 {
-    if (!server_pipe.IsOpen())
-    {
-        fprintf(stderr, "Server pipe is NOT open\n");
-        PLOG(PL_WARN, "SmfApp::ControlReply() server pipe is not open\n");
-        return false;
-    }
-    if (!server_pipe.Send(data, numBytes))
-    {
-        PLOG(PL_ERROR, "SmfApp::ControlReply() error sending %u byte reply\n", numBytes);
-        return false;
-    }
-    return true;
+    if (SendOnReplyPath(data, numBytes))
+        return true;
+    fprintf(stderr, "Server pipe is NOT open\n");
+    PLOG(PL_WARN, "SmfApp::ControlReply() no reply path is open\n");
+    return false;
 }
 
 bool SmfApp::ControlReply(const std::string& s)
@@ -7168,7 +7142,7 @@ void SmfApp::OnShowCommand(const char* arg)
     }
 }
 
-/* These are the messages that come in through the server socket
+/* These are the messages that come in through the control socket
  *   "show <command> [brief|details] [json]"  modern CLI status query
  *   e.g. show statistics, show interface, show interface grouping,
  *        show tunnel, show tunnel neighbors
@@ -7181,8 +7155,21 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
     {
         char buffer[8192];
         unsigned int len = 8191;
-        if (thePipe.Recv(buffer, len))
+        char srcName[PATH_MAX];
+        srcName[0] = '\0';
+        ProtoPipe& pipe = static_cast<ProtoPipe&>(thePipe);
+        if (pipe.RecvFrom(buffer, len, srcName, sizeof(srcName)))
         {
+            if (0 == len)
+                return;
+            strncpy(control_reply_src, srcName, sizeof(control_reply_src) - 1);
+            control_reply_src[sizeof(control_reply_src) - 1] = '\0';
+            struct ReplySrcClear {
+                char* s;
+                explicit ReplySrcClear(char* p) : s(p) {}
+                ~ReplySrcClear() { s[0] = '\0'; }
+            } srcClear(control_reply_src);
+
             // trim trailing white space if present
             char *end = buffer + len - 1;
             while(end > buffer && isspace((unsigned char)*end)) end--;
@@ -7217,6 +7204,7 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
             char* cmd = buffer;
             unsigned int cmdLen = strlen(cmd);
             unsigned int argLen = len - (arg - cmd);
+
             // Check for a pipe only commands first
             if (!strncmp(cmd, "smfPkt", cmdLen))
             {
@@ -7332,9 +7320,13 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                     PLOG(PL_ERROR, "SmfApp::OnControlMsg(smfServerStart) No server name provided\n");
                     return;
                 }
+                strncpy(smf_server_name, arg, sizeof(smf_server_name) - 1);
+                smf_server_name[sizeof(smf_server_name) - 1] = '\0';
+#ifdef WIN32
                 if (server_pipe.IsOpen()) server_pipe.Close();
                 if (!server_pipe.Connect(arg))
                     PLOG(PL_ERROR, "SmfApp::OnControlMsg(smfServerStart) error connecting to smf server\n");
+#endif // WIN32
             }
             else if (!strncmp(cmd, "selectorMac", cmdLen))
             {
@@ -7371,23 +7363,12 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
             }
             else if (!strncmp("ping", cmd, len)) // just checking that nrlsmf is running, don't care about anything else ...
             {
-                if (server_pipe.IsOpen())
+                if (!ControlReply(std::string("pong\n")))
                 {
-                    char hb[6] = "pong\n";
-                    unsigned int numBytes = strlen(hb);
-                    if (!server_pipe.Send(hb, numBytes))
-                    {
-                        PLOG(PL_ERROR, "SmfApp::OnCommand(instance) error sending heartbeat to smf server\n");
-                        return;
-                    }
-                    else
-                        PLOG(PL_DEBUG, "SmfApp::OnCommand(instance) sent heartbeat to smf server\n");
+                    PLOG(PL_WARN, "SmfApp::OnControlMsg(ping) warning: unable to send heartbeat\n");
+                    return;
                 }
-                else
-                {
-                    fprintf(stderr, "Server pipe is NOT open\n");
-                    PLOG(PL_WARN, "SmfApp::OnCommand(ping) warning: unable to connect to smfServer\n");
-                }
+                PLOG(PL_DEBUG, "SmfApp::OnControlMsg(ping) sent heartbeat\n");
             }
             else if (!strncmp(cmd, "stats", cmdLen))
             {
