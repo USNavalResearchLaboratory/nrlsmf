@@ -2411,7 +2411,12 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</programlisting>
     <literal>groupsj</literal> still work for compatibility. Configuration
     commands (for example "<literal>nrlsmf --cli -c "debug 2"</literal>",
     "<literal>with-frr</literal>", or "<literal>elastic overlay</literal>")
-    are sent without waiting for a response. Use "<literal>-i</literal>" when
+    are sent without waiting for a response. Status queries
+    (<literal>show</literal>, <literal>ping</literal>, and the older
+    one-shot verbs) are answered on the same datagram socket to the
+    sender; they do not replace the <literal>smfServer</literal>
+    destination used for unnamed senders (for example
+    <application>nrlolsr</application> or FRR). Use "<literal>-i</literal>" when
     the target process was started with a non-default
     <literal>instance</literal> name. Run "<literal>nrlsmf --cli ?</literal>"
     for the show-command list.</para>
