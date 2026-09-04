@@ -3763,11 +3763,18 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         }
         strncpy(control_pipe_name, val, 127);
         control_pipe_name[127] = '\0';
-        // Following returns json formatted response, if that is not desired, comment the lines below and uncomment next section
-        if (!ServerSend("smfClientStart", "control_pipe_name"))
+        // Startup is usually "instance" then "smfServer". There is no
+        // RecvFrom sender yet and smf_server_name is still empty, so a
+        // hello here is dropped. smfServer sends it once the dest is set.
+        // Send now only when a dest already exists (runtime instance
+        // change, or smfServer came first).
+        if (('\0' != control_reply_src[0]) || ('\0' != smf_server_name[0]))
         {
-            PLOG(PL_ERROR, "SmfApp::OnCommand(instance) error sending hello to smf server\n");
-            return false;
+            if (!ServerSend("smfClientStart", control_pipe_name))
+            {
+                PLOG(PL_ERROR, "SmfApp::OnCommand(instance) error sending hello to smf server\n");
+                return false;
+            }
         }
     }
     else if (!strncmp("load", cmd, len))
@@ -7435,6 +7442,10 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                 // clientStart has already replied back to the server
                 if (!strncmp(cmd, "smfClientStart",cmdLen))
                     ServerSend(cmd, passed ? "OK" : "failed");
+                // Named senders get an ack. Do not send ok/failed to
+                // smfServer: unnamed controllers do not read those.
+                else if ('\0' != control_reply_src[0])
+                    ControlReply(passed ? "ok\n" : "failed\n");
             }
         }
     }
