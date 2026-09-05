@@ -2404,6 +2404,9 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</programlisting>
     support none, one, or both. When JSON is wanted, <literal>json</literal>
     is always the last modifier (for example
     "<literal>show groups brief json</literal>").
+    Commands, subcommands, and modifiers may be abbreviated when the
+    prefix is unique (for example "<literal>show ver</literal>" or
+    "<literal>show int grouping json</literal>").
     Older one-shot verbs such as <literal>stats</literal> and
     <literal>groupsj</literal> still work for compatibility. Configuration
     commands (for example "<literal>nrlsmf --cli -c "debug 2"</literal>",

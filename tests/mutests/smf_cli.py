@@ -52,14 +52,14 @@ def check_common_show(node, instance=None, group_name=None, ifaces=None):
     ver = show_json(node, "show version", instance)
     if ver is not None:
         test_step(
-            isinstance(ver, dict) and bool(ver.get("jsonVersion")),
-            f"{node} show version json has jsonVersion",
+            isinstance(ver, dict) and bool(ver.get("Version")),
+            f"{node} show version json has Version",
             target=node,
         )
 
     stats = show_json(node, "show statistics", instance)
     if isinstance(stats, list):
-        names = {row.get("interface") for row in stats if isinstance(row, dict)}
+        names = {row.get("Interface") for row in stats if isinstance(row, dict)}
         for iface in ifaces or ():
             test_step(iface in names, f"{node} statistics includes {iface}", target=node)
 

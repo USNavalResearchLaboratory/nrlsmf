@@ -1305,6 +1305,89 @@ static const struct ShowTopicSpec
     { NULL, NULL, NULL, false, false, false, false }
 };
 
+enum ShowMatch
+{
+    SHOW_MATCH_NONE,
+    SHOW_MATCH_UNIQUE,
+    SHOW_MATCH_AMBIGUOUS
+};
+
+static bool ShowTokenMatches(const char* token, const char* name)
+{
+    if ((NULL == token) || (NULL == name) || ('\0' == *token))
+        return false;
+    size_t tlen = strlen(token);
+    size_t nlen = strlen(name);
+    if (tlen > nlen)
+        return false;
+    return (0 == strncmp(token, name, tlen));
+}
+
+// Unique prefix among distinct topic names. Exact match wins.
+static ShowMatch MatchShowTopicName(const char* token, const char** canonical)
+{
+    if (NULL != canonical)
+        *canonical = NULL;
+    if ((NULL == token) || ('\0' == *token))
+        return SHOW_MATCH_NONE;
+    const char* found = NULL;
+    size_t tlen = strlen(token);
+    for (unsigned int i = 0; NULL != kShowTopics[i].name; i++)
+    {
+        const char* name = kShowTopics[i].name;
+        if (!ShowTokenMatches(token, name))
+            continue;
+        if (tlen == strlen(name))
+        {
+            if (NULL != canonical)
+                *canonical = name;
+            return SHOW_MATCH_UNIQUE;
+        }
+        if ((NULL != found) && (0 != strcmp(found, name)))
+            return SHOW_MATCH_AMBIGUOUS;
+        found = name;
+    }
+    if (NULL == found)
+        return SHOW_MATCH_NONE;
+    if (NULL != canonical)
+        *canonical = found;
+    return SHOW_MATCH_UNIQUE;
+}
+
+static ShowMatch MatchShowSub(const char* topicName, const char* token, const char** canonical)
+{
+    if (NULL != canonical)
+        *canonical = NULL;
+    if ((NULL == topicName) || (NULL == token) || ('\0' == *token))
+        return SHOW_MATCH_NONE;
+    const char* found = NULL;
+    size_t tlen = strlen(token);
+    for (unsigned int i = 0; NULL != kShowTopics[i].name; i++)
+    {
+        if (0 != strcmp(topicName, kShowTopics[i].name))
+            continue;
+        const char* sub = kShowTopics[i].sub;
+        if (NULL == sub)
+            continue;
+        if (!ShowTokenMatches(token, sub))
+            continue;
+        if (tlen == strlen(sub))
+        {
+            if (NULL != canonical)
+                *canonical = sub;
+            return SHOW_MATCH_UNIQUE;
+        }
+        if ((NULL != found) && (0 != strcmp(found, sub)))
+            return SHOW_MATCH_AMBIGUOUS;
+        found = sub;
+    }
+    if (NULL == found)
+        return SHOW_MATCH_NONE;
+    if (NULL != canonical)
+        *canonical = found;
+    return SHOW_MATCH_UNIQUE;
+}
+
 static const ShowTopicSpec* FindShowTopic(const char* name, const char* sub)
 {
     if (NULL == name)
@@ -1328,7 +1411,13 @@ static const ShowTopicSpec* FindShowTopic(const char* name, const char* sub)
 
 static bool IsShowSubcommand(const char* name, const char* word)
 {
-    return (NULL != FindShowTopic(name, word));
+    const char* canonical = NULL;
+    return (SHOW_MATCH_UNIQUE == MatchShowSub(name, word, &canonical));
+}
+
+static bool MatchShowModifier(const char* token, const char* name)
+{
+    return ShowTokenMatches(token, name);
 }
 
 static void FormatShowMods(std::ostringstream& ss, const ShowTopicSpec& topic)
@@ -1359,6 +1448,9 @@ static void FormatShowHelp(std::ostringstream& ss)
         ss << "\n";
     }
     ss << "\n"
+       << "Commands, subcommands, and modifiers may be abbreviated if unique\n"
+       << "(for example \"show ver\" or \"show int grouping\").\n"
+       << "\n"
        << "Modifiers are optional and command-specific. json, when used, is last:\n"
        << "  brief     less output than the default listing\n"
        << "  details   more output than the default listing\n"
@@ -6367,7 +6459,9 @@ void SmfApp::ReplyVersion(bool json)
 {
     if (json)
     {
-        ServerSend("jsonVersion", _SMF_VERSION);
+        std::ostringstream ss;
+        ss << "{\"Version\":\"" << _SMF_VERSION << "\"}\n";
+        ControlReply(ss.str());
         return;
     }
     char buf[128];
@@ -6387,16 +6481,16 @@ void SmfApp::ReplyStats(bool json)
         while (NULL != (nextIface = iterator.GetNextItem()))
         {
             ss << (comma ? "," : "") << "{";
-            ss <<  "\"interface\":\"" << nextIface->GetNameStr() << "\",";
-            ss <<  "\"flows\":\"" << nextIface->GetFlowCount() <<  "\",";
-            ss <<  "\"recv\":\"" << nextIface->GetRecvCount() <<  "\",";
-            ss <<  "\"mrcv\":\"" << nextIface->GetMcastCount() << "\",";
-            ss <<  "\"sent\":\"" << nextIface->GetSentCount() << "\",";
-            ss <<  "\"retr\":\"" << nextIface->GetRetransmissionCount() << "\",";
-            ss <<  "\"fwd\":\"" << nextIface->GetForwardCount() <<  "\",";
-            ss <<  "\"dups\":\"" << nextIface->GetDuplicateCount() << "\",";
-            ss <<  "\"asym\":\"" << nextIface->GetAsymCount() << "\",";
-            ss <<  "\"queue\":\"" << nextIface->GetQueueLength() << "\"";
+            ss << "\"Interface\":\"" << nextIface->GetNameStr() << "\",";
+            ss << "\"flows\":" << nextIface->GetFlowCount() << ",";
+            ss << "\"recv\":" << nextIface->GetRecvCount() << ",";
+            ss << "\"mrcv\":" << nextIface->GetMcastCount() << ",";
+            ss << "\"sent\":" << nextIface->GetSentCount() << ",";
+            ss << "\"retr\":" << nextIface->GetRetransmissionCount() << ",";
+            ss << "\"fwd\":" << nextIface->GetForwardCount() << ",";
+            ss << "\"dups\":" << nextIface->GetDuplicateCount() << ",";
+            ss << "\"asym\":" << nextIface->GetAsymCount() << ",";
+            ss << "\"queue\":" << nextIface->GetQueueLength();
             ss << "}";
             comma = true;
         }
@@ -6442,8 +6536,8 @@ void SmfApp::ReplyInfo(bool json)
 
             spot = first ? "" : ",";
             first = false;
-            ss << spot << "{\"GroupName\": \"" << group->GetName() << "\",";
-            ss << "\"GroupType\": \"" << (group->IsTemplateGroup() ? "Template" : "Regular") << "\",";
+            ss << spot << "{\"GroupName\":\"" << group->GetName() << "\",";
+            ss << "\"GroupType\":\"" << (group->IsTemplateGroup() ? "Template" : "Regular") << "\",";
             std::string relayType;
             switch (group->GetRelayType())
             {
@@ -6454,15 +6548,15 @@ void SmfApp::ReplyInfo(bool json)
                 case Smf::MPR_CDS: relayType="mpr_cds"; break;
                 case Smf::NS_MPR: relayType="ns_mpr"; break;
             }
-            ss << "\"RelayType\": \"" << relayType << "\",";
+            ss << "\"RelayType\":\"" << relayType << "\",";
             switch (group->GetForwardingMode())
             {
                 case Smf::PUSH: relayType="Push"; break;
                 case Smf::MERGE: relayType="Merge"; break;
                 case Smf::RELAY: relayType="Relay"; break;
             }
-            ss << "\"ForwardingMode\": \"" << relayType << "\",";
-            ss << "\"Interfaces\": [";
+            ss << "\"ForwardingMode\":\"" << relayType << "\",";
+            ss << "\"Interfaces\":[";
             bool firstInterface = true;
             while (NULL != (iface = ifacerator.GetNextInterface()))
             {
@@ -6473,9 +6567,9 @@ void SmfApp::ReplyInfo(bool json)
             }
             ss << "]";
             if (group->GetElasticMulticast())
-                ss << ", \"Elastic\" : true";
+                ss << ",\"Elastic\":true";
             if (group->GetAdaptiveRouting())
-                ss << ", \"Adaptive\" : true";
+                ss << ",\"Adaptive\":true";
             ss << "}";
         }
         ss << "]\n";
@@ -6510,6 +6604,10 @@ void SmfApp::ReplyInfo(bool json)
                 case Smf::MERGE: relayType="Merge"; break;
                 case Smf::RELAY: relayType="Relay"; break;
             }
+            if (group->GetElasticMulticast())
+                relayType += ", Elastic";
+            if (group->GetAdaptiveRouting())
+                relayType += ", Adaptive";
             ss << std::setw(14) << relayType << " ";
             bool firstInterface = true;
             while (NULL != (iface = ifacerator.GetNextInterface()))
@@ -6518,10 +6616,6 @@ void SmfApp::ReplyInfo(bool json)
                 ss << ( firstInterface ? "" : ",") << ifaceName;
                 firstInterface = false;
             }
-            if (group->GetElasticMulticast())
-                ss << ", Elastic";
-            if (group->GetAdaptiveRouting())
-                ss << ", Adaptive";
             ss << "\n";
         }
         ss << "\n";
@@ -6541,8 +6635,8 @@ void SmfApp::ReplyInterfaces(bool json)
         while (NULL != (nextIface = iterator.GetNextItem()))
         {
             ss << (comma ? "," : "") << "{";
-            ss << "\"Interface\" : \"" <<  nextIface->GetNameStr()  << "\",";
-            ss << "\"FwdMethod\" : \"";
+            ss << "\"Interface\":\"" <<  nextIface->GetNameStr()  << "\",";
+            ss << "\"FwdMethod\":\"";
 #ifdef ELASTIC_MCAST
             if (nextIface->GetElasticMulticast()) {
                 if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
@@ -6554,7 +6648,7 @@ void SmfApp::ReplyInterfaces(bool json)
             ss << "Flood";
 #endif // ELASTIC_MCAST
             ss << "\",";
-            ss << "\"Flags\" : \"";
+            ss << "\"Flags\":\"";
             if (nextIface->IsLayered()) ss << "L";
             if (nextIface->IsTunnel()) ss << "T";
             if (nextIface->IsIgmpProxy()) ss << "I";
@@ -6565,7 +6659,7 @@ void SmfApp::ReplyInterfaces(bool json)
 #endif // ELASTIC_MCAST
             ss << "\"";
 #ifdef ELASTIC_MCAST
-            ss << ", \"Managed\" : " << (nextIface->IsManaged() ? "true" : "false");
+            ss << ",\"Managed\":" << (nextIface->IsManaged() ? "true" : "false");
 #endif // ELASTIC_MCAST
             ss << "}";
             comma = true;
@@ -6673,6 +6767,13 @@ static void TunnelOverlayLocal(Smf::Interface* iface, ProtoAddress& overlay)
     }
 }
 
+// iface_info_table also holds every local MAC/IP (AddOwnAddress). Tunnel
+// rows are only those added by map, kernel GRE attributes, or dynamic neigh.
+static bool IsTunnelEndpointInfo(const Smf::InterfaceInfo& info)
+{
+    return info.FromConfig() || info.FromKernel() || info.IsLearned();
+}
+
 void SmfApp::ReplyTunnel(bool json)
 {
     std::ostringstream ss;
@@ -6684,6 +6785,8 @@ void SmfApp::ReplyTunnel(bool json)
         bool comma = false;
         while (NULL != (info = it.GetNextItem()))
         {
+            if (!IsTunnelEndpointInfo(*info))
+                continue;
             char ifaceName[Smf::IF_NAME_MAX + 1];
             ifaceName[0] = '\0';
             ProtoNet::GetInterfaceName(info->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
@@ -6717,6 +6820,8 @@ void SmfApp::ReplyTunnel(bool json)
         ss << "---------------- ---------------- ---------------- ---------------- -----\n";
         while (NULL != (info = it.GetNextItem()))
         {
+            if (!IsTunnelEndpointInfo(*info))
+                continue;
             char ifaceName[Smf::IF_NAME_MAX + 1];
             ifaceName[0] = '\0';
             ProtoNet::GetInterfaceName(info->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
@@ -6824,6 +6929,10 @@ void SmfApp::ReplyTunnelNeighbors(bool json)
     {
         const ProtoAddress& remote = info->GetRemoteAddress();
         if (TunnelAddrUnspecified(remote))
+            continue;
+        if (ProtoNet::IFACE_GRE != ProtoNet::GetInterfaceType(info->GetIndex()))
+            continue;
+        if (!IsTunnelEndpointInfo(*info))
             continue;
         // Configured maps and kernel-learned device remotes (P2P, multicast-
         // underlay). 0.0.0.0 is skipped above; it is not a neighbor.
@@ -6938,13 +7047,27 @@ void SmfApp::OnShowCommand(const char* arg)
             *p++ = '\0';
         if (NULL == topic)
         {
-            topic = start;
+            const char* canonical = NULL;
+            ShowMatch match = MatchShowTopicName(start, &canonical);
+            if (SHOW_MATCH_NONE == match)
+            {
+                ControlReply(std::string("show: unknown command '") + start + "'\n");
+                return;
+            }
+            if (SHOW_MATCH_AMBIGUOUS == match)
+            {
+                ControlReply(std::string("show: ambiguous command '") + start + "'\n");
+                return;
+            }
+            topic = canonical;
         }
         else if ((NULL == sub) && !json && !brief && !details && IsShowSubcommand(topic, start))
         {
-            sub = start;
+            const char* canonical = NULL;
+            MatchShowSub(topic, start, &canonical);
+            sub = canonical;
         }
-        else if (0 == strcmp(start, "json"))
+        else if (MatchShowModifier(start, "json"))
         {
             json = true;
         }
@@ -6953,11 +7076,11 @@ void SmfApp::OnShowCommand(const char* arg)
             ControlReply(std::string("show: 'json' must be the last modifier\n"));
             return;
         }
-        else if (0 == strcmp(start, "brief"))
+        else if (MatchShowModifier(start, "brief"))
         {
             brief = true;
         }
-        else if ((0 == strcmp(start, "details")) || (0 == strcmp(start, "detail")))
+        else if (MatchShowModifier(start, "details"))
         {
             details = true;
         }
@@ -7243,7 +7366,8 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
             }
             else if (!strncmp("jsonVersion", cmd, len))
             {
-                ReplyVersion(true);
+                // Legacy key; show version json uses "Version".
+                ServerSend("jsonVersion", _SMF_VERSION);
             }
             else if (!strncmp("ping", cmd, len)) // just checking that nrlsmf is running, don't care about anything else ...
             {

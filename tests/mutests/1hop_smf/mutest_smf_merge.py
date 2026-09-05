@@ -96,15 +96,26 @@ wait_step(
 section("nrlsmf --cli show commands (json)")
 
 check_common_show("r0", group_name="merge", ifaces=("eth0", "eth1"))
+ver = show_json("r0", "show ver")
+test_step(isinstance(ver, dict) and bool(ver.get("Version")),
+          "r0 show ver json matches show version", target="r0")
+wait_step(
+    "r0",
+    'nrlsmf --cli -c "show i"',
+    match="ambiguous command",
+    desc="nrlsmf --cli show i is ambiguous (interface vs igmp)",
+    timeout=10,
+)
 tunnels = show_json("r0", "show tunnel")
-test_step(isinstance(tunnels, list), "r0 show tunnel json is a list", target="r0")
+test_step(isinstance(tunnels, list) and len(tunnels) == 0,
+          "r0 show tunnel json is empty (no GRE mappings)", target="r0")
 neighbors = show_json("r0", "show tunnel neighbors")
 test_step(isinstance(neighbors, list) and len(neighbors) == 0,
           "r0 show tunnel neighbors json is empty (no GRE)", target="r0")
 wait_step(
     "r0",
     'nrlsmf --cli -c "show version json" -c "show statistics json"',
-    match="jsonVersion",
+    match="Version",
     desc="nrlsmf --cli multiple -c commands (json)",
     timeout=10,
 )
