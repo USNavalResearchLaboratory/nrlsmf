@@ -2568,7 +2568,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             char ifaceName[64];
             ifaceName[63] = '\0';
             iface->SetElasticMulticast(true);
-            if (iface->GetIndex() == 0)
+            if (iface->IsStub())
                 continue;
             if (!ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, 63))
             {
@@ -4143,7 +4143,9 @@ bool SmfApp::SaveConfig(const char* configPath)
     {
         char ifaceName[Smf::IF_NAME_MAX + 1];
         ifaceName[Smf::IF_NAME_MAX] = '\0';
-        if (0 == ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX))
+        strncpy(ifaceName, iface->GetNameStr(), Smf::IF_NAME_MAX);
+        if ('\0' == ifaceName[0] &&
+            (0 == ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX)))
         {
             PLOG(PL_ERROR, "SmfApp::SaveConfig() error: unable to get interface name\n");
             return false;
@@ -4293,13 +4295,10 @@ void SmfApp::DisplayGroups()
             PLOG(PL_ALWAYS, "   regular group ");
         PLOG(PL_ALWAYS, "\"%s\" ", group->GetName());
         bool comma = false;
-        char ifaceName[Smf::IF_NAME_MAX + 1];
-        ifaceName[Smf::IF_NAME_MAX] = '\0';
         if ((Smf::PUSH == group->GetForwardingMode()) && (NULL != group->GetPushSource()))
         {
             // print source interface name first for PUSH groups
-            ProtoNet::GetInterfaceName(group->GetPushSource()->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
-            PLOG(PL_ALWAYS, "%s", ifaceName);
+            PLOG(PL_ALWAYS, "%s", group->GetPushSource()->GetNameStr());
             comma = true;
         }
         Smf::InterfaceGroup::Iterator ifacerator(*group);
@@ -4309,8 +4308,7 @@ void SmfApp::DisplayGroups()
             if ((Smf::PUSH == group->GetForwardingMode()) &&
                 (group->GetPushSource() == iface))
                 continue;  // already printed
-            ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
-            PLOG(PL_ALWAYS, "%s%s", comma ? "," : "", ifaceName);
+            PLOG(PL_ALWAYS, "%s%s", comma ? "," : "", iface->GetNameStr());
             comma = true;
         }
         PLOG(PL_ALWAYS, "%s\n", group->GetElasticMulticast() ? " (Elastic Multicast)" : "");
@@ -5054,13 +5052,13 @@ bool SmfApp::ParseInterfaceName(Smf::InterfaceGroup& ifaceGroup, const char* ifa
         if (NULL == iface)
         {
             PLOG(PL_ERROR, "SmfApp::ParseInterfaceName() error: unable to add new Smf::Interface\n");
-            // return false;
+            return false;
         }
         if (!AddInterfaceToGroup(ifaceGroup, *iface, isSourceIface))
         {
             PLOG(PL_ERROR, "SmfApp::ParseInterfaceName() error: unable to add interface \"%s\" to group \"%s\"\n",
                             ifaceName, ifaceGroup.GetName());
-            // return false;
+            return false;
         }
         PLOG(PL_DEBUG, "SmfApp::ParseInterfaceName() added SMF %sinterface \"%s\" to %sgroup \"%s\"\n",
                 isSourceIface ? "source " : "", ifaceName, ifaceGroup.IsTemplateGroup() ? "template " : "", ifaceGroup.GetName());
@@ -5069,19 +5067,56 @@ bool SmfApp::ParseInterfaceName(Smf::InterfaceGroup& ifaceGroup, const char* ifa
 }  // end SmfApp::ParseInterfaceName()
 
 // This gets a known Smf::Interface by name or creates a new one
-// and adds to our set of known interfaces
+// and adds to our set of known interfaces. A name not yet in the
+// kernel is kept as a stub until IFACE_UP.
 Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
 {
     if (0 == ifIndex)
         ifIndex = ProtoNet::GetInterfaceIndex(ifName);
-    if (0 == ifIndex)
-    {
-        PLOG(PL_ERROR, "SmfApp::GetInterface() warning: iface does not exist: \"%s\"\n", ifName);
-        // return NULL;
-    }
-    Smf::Interface* iface = smf.GetInterface(ifIndex);
+
+    Smf::Interface* iface = (0 != ifIndex) ? smf.GetInterface(ifIndex) : NULL;
+    if (NULL == iface)
+        iface = smf.FindInterfaceByName(ifName);
+
     if (NULL != iface)
     {
+        if ((0 != ifIndex) && (iface->GetIndex() != ifIndex))
+        {
+            PLOG(PL_INFO, "SmfApp::GetInterface() binding stub \"%s\" index %u -> %u\n",
+                 ifName, iface->GetIndex(), ifIndex);
+            if (!smf.RekeyInterface(*iface, ifIndex))
+                return NULL;
+        }
+        if (0 == ifIndex)
+            return iface;  // still pending; no ProtoCap yet
+        InterfaceMechanism* boundMech =
+            static_cast<InterfaceMechanism*>(iface->GetExtension());
+        if ((NULL != boundMech) && (NULL != boundMech->GetPrincipalElement()))
+            return iface;  // already capturing
+    }
+    else if (0 == ifIndex)
+    {
+        /* Name is not in the kernel yet. Keep a stub in the group;
+         * IFACE_UP / a later add binds it. Index 0 is the first stub;
+         * extra names get a high synthetic index so they do not collide
+         * in the ifindex-keyed list.
+         */
+        unsigned int stubIndex = 0;
+        if (NULL != smf.GetInterface(0))
+        {
+            stubIndex = 0x80000000u;
+            while (NULL != smf.GetInterface(stubIndex))
+                stubIndex++;
+        }
+        PLOG(PL_INFO, "SmfApp::GetInterface() creating stub for \"%s\" (index:%u)\n",
+             ifName, stubIndex);
+        iface = smf.AddInterface(stubIndex, ifName);
+        if (NULL == iface)
+        {
+            PLOG(PL_ERROR, "SmfApp::GetInterface(): new Smf::Interface error: %s\n", GetErrorString());
+            return NULL;
+        }
+        iface->SetQueueLimit(smf_queue_limit);
         return iface;
     }
     else
@@ -5092,21 +5127,15 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
             PLOG(PL_ERROR, "SmfApp::GetInterface(): new Smf::Interface error: %s\n", GetErrorString());
             return NULL;
         }
-        // Set interface to default queuing limit until overridden
         iface->SetQueueLimit(smf_queue_limit);
-        // Add the MAC (ETH) addr for this iface to our SMF local addr list
+    }
 
-        if (0 == ifIndex)
-        {
-            return iface;
-        }
-        else
-        {
+    {
             ProtoAddress ifAddr;
             if (!ProtoNet::GetInterfaceAddress(ifName, ProtoAddress::ETH, ifAddr))
             {
                 PLOG(PL_ERROR, "SmfApp::GetInterface() error: unable to get ETH addr for iface:%s\n", ifName);
-                smf.RemoveInterface(ifIndex);
+                /* Keep the iface so a later add / IFACE_UP can retry. */
                 return NULL;
             }
             if (ifAddr.HostIsEqual(PROTO_ADDR_EINVALID))
@@ -5119,7 +5148,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
                 if (!smf.AddOwnAddress(ifAddr, ifIndex))
                 {
                     PLOG(PL_ERROR, "SmfApp::GetInterface() error: unable to add ETH addr to local addr list.\n");
-                    smf.RemoveInterface(ifIndex);
+                    /* Keep the iface so a later add / IFACE_UP can retry. */
                     return NULL;
                 }
                 TRACE("ifName:%s ifAddr:%s\n", ifName, ifAddr.GetHostString());
@@ -5145,8 +5174,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
                 // TBD - check result here?
                 smf.AddOwnAddress(addr, ifIndex);
             }
-        } // end if (0 != ifIndex)
-    }  // end if (NULL == iface)
+    }
 
     // Do we already have a "ProtoCap" and/or "ProtoDetour" (as appropriate) for this ifaceIndex?
     InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
@@ -5155,7 +5183,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
         if (NULL == (mech = new InterfaceMechanism(*iface, pkt_pool, smf)))
         {
             PLOG(PL_ERROR, "SmfApp::GetInterface(): new InterfaceMechanism error: %s\n", GetErrorString());
-            smf.RemoveInterface(ifIndex);
+            /* Keep the iface so a later add / IFACE_UP can retry. */
             return NULL;
         }
         iface->SetExtension(*mech);
@@ -5172,7 +5200,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
         if (NULL == cap)
         {
             PLOG(PL_ERROR, "SmfApp::GetInterface(): ProtoCap::Create() error: %s\n", GetErrorString());
-            smf.RemoveInterface(ifIndex);
+            /* Keep the iface so a later add / IFACE_UP can retry. */
             return NULL;
         }
         cap->SetListener(this, &SmfApp::OnPktCapture);
@@ -5181,7 +5209,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
         {
             PLOG(PL_ERROR, "SmfApp::GetInterface(): ProtoCap::Open(%s) error: %s\n", ifName, GetErrorString());
             delete cap;
-            smf.RemoveInterface(ifIndex);
+            /* Keep the iface so a later add / IFACE_UP can retry Open. */
             return NULL;
         }
         cap->StopInputNotification();  // will be re-enabled in UpdateGroupAssociations() as needed
@@ -5280,7 +5308,7 @@ bool SmfApp::AddInterfaceToGroup(Smf::InterfaceGroup& ifaceGroup, Smf::Interface
     else
     {
 #ifdef ELASTIC_MCAST
-        if (ifaceGroup.GetElasticMulticast())
+        if (ifaceGroup.GetElasticMulticast() && !iface.IsStub())
         {
             // Add this interface's group memberships to mcast_controller
             char ifaceName[64];
@@ -5311,7 +5339,7 @@ bool SmfApp::AddInterfaceToGroup(Smf::InterfaceGroup& ifaceGroup, Smf::Interface
         }
 #endif // ELASTIC_MCAST
 #ifdef ADAPTIVE_ROUTING
-        if (ifaceGroup.GetAdaptiveRouting())
+        if (ifaceGroup.GetAdaptiveRouting() && !iface.IsStub())
         {
             // Add this interface's group memberships to mcast_controller
             char ifaceName[64];
@@ -5506,10 +5534,14 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
     Smf::Interface* iface;
     while (NULL != (iface = ifacerator.GetNextInterface()))
     {
+        if (iface->IsStub())
+            continue;
         switch (ifaceGroup.GetForwardingMode())
         {
             case Smf::PUSH:
             {
+                if ((NULL == srcIface) || srcIface->IsStub())
+                    continue;
                 if (iface == srcIface) continue;  // don't associate with self if PUSH
                 // Set up a classical flooding relay type to all other interfaces in group
                 Smf::Interface::Associate* assoc = srcIface->FindAssociate(iface->GetIndex());
@@ -5554,7 +5586,7 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
                 Smf::Interface* dstIface;
                 while (NULL != (dstIface = dstIfacerator.GetNextInterface()))
                 {
-                    if (dstIface == iface) continue;  // don't associate with self
+                    if ((dstIface == iface) || dstIface->IsStub()) continue;  // don't associate with self or pending stubs
                     Smf::Interface::Associate* assoc = iface->FindAssociate(dstIface->GetIndex());
                     if (NULL != assoc)
                     {
@@ -5589,6 +5621,7 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
                 Smf::Interface* dstIface;
                 while (NULL != (dstIface = dstIfacerator.GetNextInterface()))
                 {
+                    if (dstIface->IsStub()) continue;
                     Smf::Interface::Associate* assoc = iface->FindAssociate(dstIface->GetIndex());
                     if (NULL != assoc)
                     {
@@ -5621,8 +5654,10 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
     // needed to force the interface into promiscuous mode so that
     // "firewallCapture" has a chance to get packets of interest.
     ifacerator.Reset();
-    while (NULL != (iface = ifacerator.GetNextInterface()) && (iface->GetIndex() != 0))
+    while (NULL != (iface = ifacerator.GetNextInterface()))
     {
+        if (iface->IsStub())
+            continue;
         if (iface->HasAssociates()) // it's an input interface
         {
 #ifdef _PROTO_DETOUR
@@ -5630,7 +5665,8 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
 #endif // _PROTO_DETOUR
             {
                 InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
-                mech->StartInputNotification();
+                if (NULL != mech)
+                    mech->StartInputNotification();
             }
         }
 #ifdef _PROTO_DETOUR
@@ -6510,8 +6546,6 @@ void SmfApp::ReplyInfo(bool json)
         ss << "[";
         while (NULL != (group = grouperator.GetNextItem()))
         {
-            char ifaceName[Smf::IF_NAME_MAX + 1];
-            ifaceName[Smf::IF_NAME_MAX] = '\0';
             Smf::InterfaceGroup::Iterator ifacerator(*group);
             Smf::Interface* iface;
 
@@ -6541,9 +6575,8 @@ void SmfApp::ReplyInfo(bool json)
             bool firstInterface = true;
             while (NULL != (iface = ifacerator.GetNextInterface()))
             {
-                ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
                 spot = firstInterface ? "" : ",";
-                ss << spot << "\""<< ifaceName << "\"";
+                ss << spot << "\"" << iface->GetNameStr() << "\"";
                 firstInterface = false;
             }
             ss << "]";
@@ -6561,8 +6594,6 @@ void SmfApp::ReplyInfo(bool json)
         ss << "-------------------- --------- --------- -------------- ----------\n";
         while (NULL != (group = grouperator.GetNextItem()))
         {
-            char ifaceName[Smf::IF_NAME_MAX + 1];
-            ifaceName[Smf::IF_NAME_MAX] = '\0';
             Smf::InterfaceGroup::Iterator ifacerator(*group);
             Smf::Interface* iface;
 
@@ -6593,8 +6624,7 @@ void SmfApp::ReplyInfo(bool json)
             bool firstInterface = true;
             while (NULL != (iface = ifacerator.GetNextInterface()))
             {
-                ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
-                ss << ( firstInterface ? "" : ",") << ifaceName;
+                ss << ( firstInterface ? "" : ",") << iface->GetNameStr();
                 firstInterface = false;
             }
             ss << "\n";
@@ -8732,8 +8762,41 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
             }
 
             // Is this an interface we care about?
-            // a) Is it one of our interfaces?
+            // a) Is it one of our interfaces (including a name-only stub)?
             Smf::Interface* iface = smf.GetInterface(ifIndex);
+            if (NULL == iface)
+                iface = smf.FindInterfaceByName(ifName);
+            if ((NULL != iface) &&
+                ((ProtoNet::Monitor::Event::IFACE_UP == theEvent.GetType()) ||
+                 (ProtoNet::Monitor::Event::IFACE_STATE == theEvent.GetType()) ||
+                 (ProtoNet::Monitor::Event::IFACE_ADDR_NEW == theEvent.GetType())))
+            {
+                InterfaceMechanism* mech =
+                    static_cast<InterfaceMechanism*>(iface->GetExtension());
+                bool wasUnbound = iface->IsStub() ||
+                                  (NULL == mech) ||
+                                  (NULL == mech->GetPrincipalElement());
+                SmfApp::GetInterface(ifName, ifIndex);
+                iface = smf.GetInterface(ifIndex);
+                if (NULL == iface)
+                    iface = smf.FindInterfaceByName(ifName);
+                if ((NULL != iface) && wasUnbound && !iface->IsStub())
+                {
+                    mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
+                    if ((NULL != mech) && (NULL != mech->GetPrincipalElement()))
+                    {
+                        Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
+                        Smf::InterfaceGroup* group;
+                        while (NULL != (group = grouperator.GetNextItem()))
+                        {
+                            if (!group->Contains(*iface))
+                                continue;
+                            bool isSrc = (group->GetPushSource() == iface);
+                            AddInterfaceToGroup(*group, *iface, isSrc);
+                        }
+                    }
+                }
+            }
             if (NULL == iface)
             {
                 if (ProtoNet::Monitor::Event::IFACE_DOWN == theEvent.GetType())
@@ -8777,6 +8840,9 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
                 // TBD - save the interface that has gone DOWN as an InterfaceMatcher so that if it
                 //       comes back up we automatically assign it back to its group(s)
                 //       (We'll have to troll the groups set up the matcher(s)
+                // A name-only stub is pending kernel appearance; do not drop it on DOWN.
+                if (iface->IsStub())
+                    continue;
                 // Remove interface addresses from smf local (own) address list and remove interface from handling
                 PLOG(PL_DEBUG, "SmfApp::MonitorEventHandler() removing SMF interface \"%s\"\n", theEvent.GetInterfaceName());
                 ifaceInfoTable.RemoveList(addrList);

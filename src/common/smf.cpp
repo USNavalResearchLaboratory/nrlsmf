@@ -528,6 +528,53 @@ Smf::Interface *Smf::AddInterface(unsigned int ifIndex, const char *ifName)
     return iface;
 }  // end Smf::AddInterface()
 
+Smf::Interface* Smf::FindInterfaceByName(const char* ifName)
+{
+    if ((NULL == ifName) || ('\0' == *ifName))
+        return NULL;
+    InterfaceList::Iterator iterator(iface_list);
+    Interface* iface;
+    while (NULL != (iface = iterator.GetNextItem()))
+    {
+        if (0 == strcmp(iface->GetNameStr(), ifName))
+            return iface;
+    }
+    return NULL;
+}  // end Smf::FindInterfaceByName()
+
+bool Smf::RekeyInterface(Interface& iface, unsigned int newIndex)
+{
+    if (iface.GetIndex() == newIndex)
+        return true;
+
+    InterfaceGroup* groups[64];
+    unsigned int groupCount = 0;
+    InterfaceGroupList::Iterator grouperator(iface_group_list);
+    InterfaceGroup* group;
+    while (NULL != (group = grouperator.GetNextItem()))
+    {
+        if (!group->Contains(iface))
+            continue;
+        if (groupCount < 64)
+            groups[groupCount++] = group;
+    }
+
+    iface_list.Remove(iface);
+    for (unsigned int i = 0; i < groupCount; i++)
+        groups[i]->RemoveInterface(iface);
+
+    iface.SetIndex(newIndex);
+    if (!iface_list.Insert(iface))
+    {
+        PLOG(PL_ERROR, "Smf::RekeyInterface() error: unable to reinsert iface \"%s\" as index %u\n",
+             iface.GetNameStr(), newIndex);
+        return false;
+    }
+    for (unsigned int i = 0; i < groupCount; i++)
+        groups[i]->AddInterface(iface);
+    return true;
+}  // end Smf::RekeyInterface()
+
 void Smf::RemoveInterface(unsigned int ifIndex)
 {
     Interface* iface = GetInterface(ifIndex);
