@@ -26,6 +26,19 @@ sudo mutest smf_config
 sudo mutest mgre_chained_clouds
 ```
 
+## Repo venv (local munet on PATH)
+
+`sudo mutest` will still use a local munet (pipx, `~/.local`, a
+checkout). Point sudo at the repo venv binary instead:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install munet
+
+cd tests/mutests
+sudo ../../.venv/bin/mutest smf_config
+```
+
 ## Suites
 
 | Directory | Covers |
