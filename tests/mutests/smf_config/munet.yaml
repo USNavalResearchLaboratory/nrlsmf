@@ -1,0 +1,12 @@
+# Single node used only to feed nrlsmf config commands and check
+# that they parse into the expected show state. No traffic.
+topology:
+  networks:
+    - name: lan0
+    - name: lan1
+  nodes:
+    - name: r0
+      kind: host
+      connections:
+        - to: lan0
+        - to: lan1

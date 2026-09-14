@@ -44,6 +44,53 @@ def show_json(node, show_cmd, instance=None):
     return data
 
 
+def _cli_status(raw):
+    text = (raw or "").strip().lower()
+    if text == "ok" or text.startswith("ok\n") or text.endswith("\nok"):
+        return "ok"
+    if "failed" in text:
+        return "failed"
+    return text
+
+
+def expect_ok(node, command, instance=None):
+    raw = cli_cmd(node, command, instance)
+    test_step(
+        _cli_status(raw) == "ok",
+        f"{node} '{command}' parsed (got {raw.strip()!r})",
+        target=node,
+    )
+    return raw
+
+
+def expect_failed(node, command, instance=None):
+    raw = cli_cmd(node, command, instance)
+    test_step(
+        _cli_status(raw) == "failed",
+        f"{node} '{command}' rejected (got {raw.strip()!r})",
+        target=node,
+    )
+    return raw
+
+
+def group_row(grouping, group_name):
+    if not isinstance(grouping, list):
+        return None
+    for row in grouping:
+        if isinstance(row, dict) and row.get("GroupName") == group_name:
+            return row
+    return None
+
+
+def iface_row(listing, iface):
+    if not isinstance(listing, list):
+        return None
+    for row in listing:
+        if isinstance(row, dict) and row.get("Interface") == iface:
+            return row
+    return None
+
+
 def check_common_show(node, instance=None, group_name=None, ifaces=None):
     """Ping plus JSON show version/statistics/interface/grouping."""
     pong = cli_cmd(node, "ping", instance)

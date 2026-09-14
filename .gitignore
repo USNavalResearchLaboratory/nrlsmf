@@ -12,6 +12,7 @@ doc/site/
 # python
 __pycache__/
 *.pyc
+.venv/
 
 # object files
 *.o

@@ -471,6 +471,13 @@ class Smf
 
                 unsigned int GetIndex() const
                     {return if_index;}
+                void SetIndex(unsigned int ifIndex)
+                    {if_index = ifIndex;}
+
+                // Pending (not yet in the kernel) stubs use 0 or a high
+                // synthetic index so more than one name can be queued.
+                bool IsStub() const
+                    {return (0 == if_index) || (if_index >= 0x80000000u);}
 
                 const char * GetNameStr()
                     {return if_name.c_str();}
@@ -838,6 +845,8 @@ class Smf
         Interface *AddInterface(unsigned int ifIndex, const char *ifName);
         Interface* GetInterface(unsigned int ifIndex)
             {return iface_list.FindInterface(ifIndex);}
+        Interface* FindInterfaceByName(const char* ifName);
+        bool RekeyInterface(Interface& iface, unsigned int newIndex);
         InterfaceList& AccessInterfaceList()
             {return iface_list;}
         void RemoveInterface(unsigned int ifIndex);
