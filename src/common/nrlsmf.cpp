@@ -1477,7 +1477,7 @@ static void FormatShowHelp(std::ostringstream& ss)
        << "  nrlsmf --cli -i smf-p4 -c \"show interface json\"\n"
        << "\n"
        << "Configuration commands (debug, add, relay, map, ...) use the same\n"
-       << "--cli -c syntax and do not return a reply. See \"nrlsmf help\".\n";
+       << "--cli -c syntax and reply ok or failed. See \"nrlsmf help\".\n";
 }
 
 static void CliQueryHelp()
@@ -1551,23 +1551,7 @@ static bool CliIsLocalHelp(const char* message)
 static bool CliExpectsReply(const char* message)
 {
     char cmd[64];
-    if (!CliCopyFirstToken(message, cmd, sizeof(cmd)))
-        return false;
-    if ((0 == strcmp(cmd, "show")) || (0 == strcmp(cmd, "ping")))
-        return true;
-    static const char* const kLegacyQueryCmds[] =
-    {
-        "stats", "jsonStats", "info", "jsonInfo", "jsonVersion",
-        "interfaces", "interfacesj", "groups", "groupsj",
-        "brfgroups", "brfgroupsj",
-        NULL
-    };
-    for (const char* const* p = kLegacyQueryCmds; NULL != *p; p++)
-    {
-        if (0 == strcmp(cmd, *p))
-            return true;
-    }
-    return false;
+    return CliCopyFirstToken(message, cmd, sizeof(cmd));
 }
 
 static bool CliRecvWithTimeout(ProtoPipe& pipe, char* buffer, unsigned int& numBytes,
