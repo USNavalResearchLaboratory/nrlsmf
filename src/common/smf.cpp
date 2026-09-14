@@ -1369,10 +1369,18 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                     break;
                             }
                         }
+                        else
+                        {
+                            PLOG(PL_WARN, "Smf::ProcessPacket() warning: invalid elastic message from src %s\n",
+                                 srcIp.GetHostString());
+                        }
                     }
                     else
                     {
-                        PLOG(PL_WARN, "Smf::ProcessPacket() warning: invalid elastic UDP packet from src %s\n", srcIp.GetHostString());
+                        // 224.0.0.0/24 (and 169.254/16) UDP that is not EM port 5555,
+                        // e.g. mDNS/LLMNR. Not an elastic parse failure.
+                        PLOG(PL_DETAIL, "Smf::ProcessPacket() skipping non-elastic link-local UDP from src %s\n",
+                             srcIp.GetHostString());
                     }
                 }
                 // TBD - Mark the relay status of UpstreamHistory instances and only send NACKs
