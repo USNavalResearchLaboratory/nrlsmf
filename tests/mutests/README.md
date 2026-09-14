@@ -22,6 +22,7 @@ sudo mutest
 ```bash
 sudo mutest mgre_four_peers
 sudo mutest 1hop_smf
+sudo mutest smf_config
 sudo mutest mgre_chained_clouds
 ```
 
@@ -29,6 +30,7 @@ sudo mutest mgre_chained_clouds
 
 | Directory | Covers |
 |-----------|--------|
+| `smf_config/` | Single node: nrlsmf config commands parsed and reflected in show json |
 | `1hop_smf/` | Single router, two host LANs: basic nrlsmf CLI and forwarding modes (merge, classical flooding, elastic, advertise) |
 | `mgre_four_peers/` | Four routers across a shared underlay: every GRE/mGRE tunnel mode nrlsmf supports (point-to-point, static NBMA mGRE, NHRP-resolved mGRE, multicast-underlay mGRE, external/metadata GRE), one mode per test |
 | `mgre_chained_clouds/` | All five of those modes chained together end to end across five segments, connected only by nrlsmf relaying (never IP routing) |
