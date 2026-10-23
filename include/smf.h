@@ -1117,7 +1117,8 @@ class Smf
                                                   const ProtoAddress&            srcMac,
                                                   MulticastFIB::UpstreamHistory* upstreamHistory,
                                                   bool                           outbound,
-                                                  double                         metric);
+                                                  double                         metric,
+                                                  int                            dataTTL);
 
         MulticastFIB::UpstreamHistory* GetUpstreamHistory(Interface&    srcIface,
                                                           ProtoPktIP&   ipPkt,
