@@ -5,6 +5,9 @@
 #include <protoJson.h>
 #include <iostream>
 
+static const double IGMP_POLL_INTERVAL = 5.0;
+static const double IGMP_POLL_FIRST_INTERVAL = 0.01;
+
 SmfIgmp::SmfIgmp(ProtoTimerMgr& timerMgr, Smf& _smf) :
     ProtoChannel(),
     wpipe(INVALID_HANDLE),
@@ -16,7 +19,7 @@ SmfIgmp::SmfIgmp(ProtoTimerMgr& timerMgr, Smf& _smf) :
     active_interfaces(),
     interface_changes()
 {
-    update_timer.SetInterval(5.0);
+    update_timer.SetInterval(IGMP_POLL_INTERVAL);
     update_timer.SetRepeat(-1);
     update_timer.SetListener(this, &SmfIgmp::DoUpdate);
 }
@@ -55,9 +58,14 @@ bool SmfIgmp::Open(bool withFRR)
 
 void SmfIgmp::EnableFrrPolling()
 {
-    DoUpdate(update_timer);
+    /* Do not DoUpdate() here: Open(withFRR) runs from OnStartup before
+     * the dispatcher, and blocking PIM VTY would stall the SMF socket.
+     */
     if (!update_timer.IsActive())
+    {
+        update_timer.SetInterval(IGMP_POLL_FIRST_INTERVAL);
         timer_mgr.ActivateTimer(update_timer);
+    }
 }
 
 void SmfIgmp::Close()
@@ -119,6 +127,8 @@ void SmfIgmp::DoUpdate(ProtoTimer& theTimer)
             PLOG(PL_ERROR, "SmfIgmp::DoUpdate() Failed to write to pipe, %s\n", GetErrorString());
         }
     }
+    if (theTimer.GetInterval() != IGMP_POLL_INTERVAL)
+        theTimer.SetInterval(IGMP_POLL_INTERVAL);
 }
 
 void SmfIgmp::UpdateInterfaces()

@@ -6,6 +6,20 @@
 #include <vector>
 #include <cstdint>
 #include "protoPipe.h"
+#include "protoDebug.h"
+#ifndef WIN32
+#include <sys/select.h>
+#include <sys/time.h>
+#include <ctime>
+#endif
+
+/* Cap a single VTY exchange. A blocking recv with no deadline leaves
+ * the SMF control socket unread, so queued datagrams can fill and the
+ * peer send can stall until this reply arrives -- or never does.
+ */
+#ifndef FRR_VTY_REPLY_TIMEOUT_SEC
+#define FRR_VTY_REPLY_TIMEOUT_SEC 8
+#endif
 
 // This file contains a collection of functions to help with communicating
 // to FRR through the VTY socket interface
@@ -42,12 +56,46 @@ namespace FRR
         }
 
         // Continue receiving until we get the end of reply signal, 3 null bytes + 1 return code byte
+#ifndef WIN32
+        const time_t deadline = time(NULL) + FRR_VTY_REPLY_TIMEOUT_SEC;
+#endif
         while (true)
         {
+#ifndef WIN32
+            {
+                fd_set fds;
+                struct timeval tv;
+                const time_t now = time(NULL);
+                const int fd = sock.GetHandle();
+
+                if (now >= deadline || fd < 0)
+                {
+                    PLOG(PL_ERROR, "FRR::DoVtyCommand() timeout waiting for reply to \"%s\"\n",
+                         cmd.c_str());
+                    return std::make_pair("", -1);
+                }
+                FD_ZERO(&fds);
+                FD_SET(fd, &fds);
+                tv.tv_sec = deadline - now;
+                tv.tv_usec = 0;
+                if (select(fd + 1, &fds, NULL, NULL, &tv) <= 0 || !FD_ISSET(fd, &fds))
+                {
+                    PLOG(PL_ERROR, "FRR::DoVtyCommand() timeout waiting for reply to \"%s\"\n",
+                         cmd.c_str());
+                    return std::make_pair("", -1);
+                }
+            }
+#endif
             char buf[2048];
             sz = 2048;
             if (!sock.Recv(buf, sz))
             {
+                return std::make_pair("", -1);
+            }
+
+            if (sz == 0)
+            {
+                PLOG(PL_ERROR, "FRR::DoVtyCommand() peer closed during \"%s\"\n", cmd.c_str());
                 return std::make_pair("", -1);
             }
 
