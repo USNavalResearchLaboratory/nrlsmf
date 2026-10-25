@@ -3723,8 +3723,8 @@ void Smf::AdvertiseActiveFlows()
     ethPkt.SetDstAddr(ElasticAdv::ELASTIC_MAC);
     ethPkt.SetType(ProtoPktETH::IP);  // TBD - based upon IP address type
     Interface* iface;
-    InterfaceList::Iterator iferator(iface_list);
-    while (NULL != (iface = iferator.GetNextInterface()))
+    InterfaceList::Iterator ifacerator(iface_list);
+    while (NULL != (iface = ifacerator.GetNextInterface()))
     {
         // We init our IP packet here since "reliable" interface will change buffer with
         // addition of UMP IP option header
@@ -3751,7 +3751,7 @@ void Smf::AdvertiseActiveFlows()
         if (NULL == assoc)
             continue; // not in an elastic mcast iface group
 
-        // TBD 'continue' if iface isn't pending
+        // TBD 'continue' if iface isn't pending advertisement?
         MulticastFIB::Entry* fibEntry;
         MulticastFIB::EntryTable::Iterator fiberator(mcast_fib.AccessFlowTable());
         ElasticAdv adv(msgBuffer, msgLenMax, false);
