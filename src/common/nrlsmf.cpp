@@ -1801,6 +1801,9 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
         exit(0);
 
     smf.GetVRFs()->SetPolicies(smf.GetVRFPolicies());
+    /* Arms a short timer; the first zebra VTY query runs after the
+     * dispatcher starts so the control socket can be read first.
+     */
     smf.GetVRFs()->EnableFRRUpdates(smf.withFRR());
 
     if (smf.withFRR())

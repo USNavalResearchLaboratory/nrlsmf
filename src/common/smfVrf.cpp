@@ -88,13 +88,19 @@ bool SmfVRF::SetIfaceList(std::unordered_set<std::string> new_iface_list)
   }
 
 
+static const double VRF_POLL_INTERVAL = 5.0;
+/* First poll after the dispatcher is running so the SMF control pipe
+ * can be read before we block in FRR VTY.
+ */
+static const double VRF_POLL_FIRST_INTERVAL = 0.01;
+
 SmfVRFList::SmfVRFList(ProtoTimerMgr& timerMgr) :
     ProtoIndexedQueueTemplate<SmfVRF>(),
     timer_mgr(timerMgr),
     update_timer(),
     policies(NULL)
 {
-    update_timer.SetInterval(5.0);
+    update_timer.SetInterval(VRF_POLL_INTERVAL);
     update_timer.SetRepeat(-1);
     update_timer.SetListener(this, &SmfVRFList::DoUpdate);
 }
@@ -111,9 +117,14 @@ void SmfVRFList::SmfVRFList::EnableFRRUpdates(bool enable)
 {
     if (enable)
     {
-        QueryFRRVRFs();
+        /* Do not QueryFRRVRFs() here. OnStartup calls this after the
+         * instance socket is already bound but before the dispatcher
+         * runs. A blocking zebra VTY recv at that point leaves the
+         * control socket unread so queued datagrams can fill.
+         */
         if (!update_timer.IsActive())
         {
+            update_timer.SetInterval(VRF_POLL_FIRST_INTERVAL);
             timer_mgr.ActivateTimer(update_timer);
         }
     }
@@ -128,6 +139,8 @@ void SmfVRFList::SmfVRFList::EnableFRRUpdates(bool enable)
 void SmfVRFList::DoUpdate(ProtoTimer& theTimer)
 {
     QueryFRRVRFs();
+    if (theTimer.GetInterval() != VRF_POLL_INTERVAL)
+        theTimer.SetInterval(VRF_POLL_INTERVAL);
 }
 
 SmfVRF* SmfVRFList::AddVRF(const char *vrf_name, UINT32 vrf_id, int table_id)
