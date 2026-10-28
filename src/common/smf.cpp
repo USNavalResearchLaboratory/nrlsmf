@@ -2446,7 +2446,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             {
                 ProtoFlow::Description flowDescription;
                 flowDescription.InitFromPkt(ipPkt);
-                fibEntry = UpdateElasticRouting(currentTick, flowDescription, srcIface, prevHopAddr, upstreamHistory, outbound, -1.0);
+                fibEntry = UpdateElasticRouting(currentTick, flowDescription, srcIface, prevHopAddr, upstreamHistory, outbound, -1.0, (int)ttl);
                 if (NULL == fibEntry)
                 {
                     PLOG(PL_ERROR, "Smf::ProcessPacket() error: multicast FIB update failure!\n");
@@ -2800,7 +2800,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
                                                const ProtoAddress&            prevHopAddr,
                                                MulticastFIB::UpstreamHistory* upstreamHistory,
                                                bool                           outbound,
-                                               double                         advMetric)
+                                               double                         advMetric,
+                                               int                            dataTTL)
 {
 
     // NOTE - if (advMetric >= 0) this indicates that "advertise" mode is running and
@@ -3037,6 +3038,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
         // Make sure the "best upstream relay" has the most recent metric/link quality for this upstream
         if (NULL != upstreamHistory)
             upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
+        if (dataTTL >= 0)
+            upstreamRelay->NoteDataTTL((UINT8)dataTTL);
         if (advMetric >= 0.0)
             upstreamRelay->SetAdvMetric(advMetric);
         if (sendAck)
@@ -3190,7 +3193,7 @@ void Smf::HandleAdv(unsigned int                    currentTick,
     }
 
     MulticastFIB::Entry* fibEntry =
-        UpdateElasticRouting(currentTick, flowDescription, srcIface, prevHopAddr, upstreamHistory, false, elasticAdv.GetMetric());
+        UpdateElasticRouting(currentTick, flowDescription, srcIface, prevHopAddr, upstreamHistory, false, elasticAdv.GetMetric(), -1);
 
     if ((NULL != fibEntry) && (MulticastFIB::DENY != fibEntry->GetDefaultForwardingStatus()))
     {
@@ -3812,20 +3815,41 @@ void Smf::AdvertiseActiveFlows()
             UINT8 advTTL, advHopCount;
             double advMetric = 0.0;
             MulticastFIB::UpstreamRelay* prevUpstream = fibEntry->GetCurrentUpstreamRelay();
+            // Prunes idle relays and selects the best advertising path when one exists.
             MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->GetBestUpstreamRelay(currentTick);
-            if (NULL != upstreamRelay)
+
+            // Closest previous hop that has sent data but no EM_ADV.
+            MulticastFIB::UpstreamRelay* sourceRelay = NULL;
+            UINT8 sourceTTL = 0;
+            MulticastFIB::UpstreamRelayList::Iterator uperator(fibEntry->AccessUpstreamRelayList());
+            MulticastFIB::UpstreamRelay* nextRelay;
+            while (NULL != (nextRelay = uperator.GetNextItem()))
             {
-                bool useLocalAdvertisement = false;
-                if (!upstreamRelay->GetAdvAddr().IsValid())
+                if (nextRelay->IsAdvertising() || !nextRelay->HasDataTTL())
+                    continue;
+                if (nextRelay->Age(currentTick) >= MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT)
+                    continue;
+                if ((NULL == sourceRelay) || (nextRelay->GetDataTTL() > sourceTTL))
                 {
-                    // No refreshed upstream advertisement state yet; fall back to local advertisement.
-                    useLocalAdvertisement = true;
+                    sourceRelay = nextRelay;
+                    sourceTTL = nextRelay->GetDataTTL();
                 }
-                if (!useLocalAdvertisement &&
-                    (upstreamRelay->Age(currentTick) >= MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT))
-                {
-                    continue;  // don't advertise idle upstream (shouldn't get here anyway due to address validity used as marker)
-                }
+            }
+
+            // Originate when this non-router source is at least as close as
+            // the best advertisement we have heard (higher or equal IP TTL).
+            bool originate = false;
+            if (NULL != sourceRelay)
+            {
+                if ((NULL == upstreamRelay) || !upstreamRelay->IsAdvertising() ||
+                    (sourceTTL >= upstreamRelay->GetAdvTTL()))
+                    originate = true;
+            }
+
+            if (!originate && (NULL != upstreamRelay) && upstreamRelay->IsAdvertising())
+            {
+                if (upstreamRelay->Age(currentTick) >= MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT)
+                    continue;  // don't advertise idle upstream
                 MulticastFIB::UpstreamHistory* upstreamHistory = iface->FindUpstreamHistory(upstreamRelay->GetAddress());
                 // If no upstreamHistory, this degenerates to a hop count metric ...
                 double linkQuality = (NULL != upstreamHistory) ? upstreamHistory->GetLinkQuality() : 1.0;
@@ -3833,41 +3857,20 @@ void Smf::AdvertiseActiveFlows()
                     advMetric = 1.0 / linkQuality;
                 else
                     advMetric = ElasticAdv::METRIC_MAX;
-                if (!useLocalAdvertisement && upstreamRelay->AdvMetricIsValid())
-                {
-                    // We have a received full path metric for this relay,
-                    // so  compute our metric using that along with measured
-                    // upstream link quality
-                    if (advMetric < ElasticAdv::METRIC_MAX)
-                        advMetric += upstreamRelay->GetAdvMetric();
-                }
-                else
-                {
-                    // If upstream metric state is not ready, still advertise locally for active flows.
-                    useLocalAdvertisement = true;
-                }
-                if (useLocalAdvertisement)
-                {
-                    advTTL = fibEntry->GetTTL();
-                    advHopCount = 0;
-                    advMetric = 0.0;
-                    advAddr = iface->GetIpAddress();
-                    advId = iface->GetLocalAdvId();
-                }
-                else
-                {
-                    advTTL = upstreamRelay->GetAdvTTL();
-                    advHopCount = upstreamRelay->GetAdvHopCount();
-                    ASSERT(upstreamRelay->GetAdvAddr().IsValid());
-                    advAddr = upstreamRelay->GetAdvAddr();
-                    advId = upstreamRelay->GetAdvId();
-                }
+                // Received full path metric plus measured upstream link quality.
+                if (advMetric < ElasticAdv::METRIC_MAX)
+                    advMetric += upstreamRelay->GetAdvMetric();
+                advTTL = upstreamRelay->GetAdvTTL();
+                advHopCount = upstreamRelay->GetAdvHopCount();
+                ASSERT(upstreamRelay->GetAdvAddr().IsValid());
+                advAddr = upstreamRelay->GetAdvAddr();
+                advId = upstreamRelay->GetAdvId();
             }
-            else if (fibEntry->IsManaged() ||
+            else if (originate || fibEntry->IsManaged() ||
                      (fibEntry->IsActive() && (fibEntry->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT)))
             {
-                // We must be the source (advMetric will be zero) of the flow
-                advTTL = fibEntry->GetTTL();
+                // Non-router source, or we are the source (advMetric stays zero).
+                advTTL = (NULL != sourceRelay) ? sourceTTL : fibEntry->GetTTL();
                 advHopCount = 0;
                 advMetric = 0.0;
                 advAddr = iface->GetIpAddress();
@@ -3932,7 +3935,7 @@ void Smf::AdvertiseActiveFlows()
             // Init adv to next msgBuffer location
             adv.InitIntoBuffer(msgBuffer + bufferIndex, msgLenMax - bufferIndex);
             // Update controller if change in upstream relay for this flow
-            if (prevUpstream != upstreamRelay)
+            if ((NULL != upstreamRelay) && (prevUpstream != upstreamRelay))
                 mcast_controller->OnUpstreamRelayChange(flowDescription, upstreamRelay->GetAddress(), upstreamRelay->GetAdvAddr());
         }  // end while GetNextEntry()
 

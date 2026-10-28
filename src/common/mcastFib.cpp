@@ -800,14 +800,14 @@ double MulticastFIB::UpstreamHistory::UpdateLossEstimate(unsigned int gapCount)
 
 MulticastFIB::UpstreamRelay::UpstreamRelay(const ProtoAddress& addr, unsigned int ifaceIndex)
  : relay_addr(addr), iface_index(ifaceIndex), relay_status(NULLARY), update_count(0),
-   update_start(0), update_max(true), link_quality(-1.0)
+   update_start(0), update_max(true), link_quality(-1.0), data_ttl(0), data_ttl_valid(false)
 {
 
 }
 
 MulticastFIB::UpstreamRelay::UpstreamRelay()
 : relay_addr(ProtoAddress("ff:ff:ff:ff:ff:ff")), iface_index(0),
-  update_count(0),  update_start(0), update_max(true) //, packet_rate(0.0)
+  update_count(0),  update_start(0), update_max(true), data_ttl(0), data_ttl_valid(false) //, packet_rate(0.0)
 {
 }
 
@@ -1321,7 +1321,8 @@ MulticastFIB::Entry::Entry(const ProtoAddress&  dst,
     best_relay(NULL), unicast_probability(0.0), acking_status(false),
     acking_count_threshold(DEFAULT_ACKING_COUNT),
     acking_interval_max(DEFAULT_ACKING_INTERVAL_MAX),
-    acking_interval_min(DEFAULT_ACKING_INTERVAL_MIN)
+    acking_interval_min(DEFAULT_ACKING_INTERVAL_MIN),
+    flow_ttl(0)
 {
 }
 
@@ -1332,7 +1333,8 @@ MulticastFIB::Entry::Entry(const ProtoFlow::Description& flowDescription, int fl
    best_relay(NULL), unicast_probability(0.0), acking_status(false),
    acking_count_threshold(DEFAULT_ACKING_COUNT),
    acking_interval_max(DEFAULT_ACKING_INTERVAL_MAX),
-   acking_interval_min(DEFAULT_ACKING_INTERVAL_MIN)
+   acking_interval_min(DEFAULT_ACKING_INTERVAL_MIN),
+   flow_ttl(0)
 {
     //PLOG(PL_DEBUG, "MulticastFIB::Entry:: constructor called\n");
     unicast_probability = 0.0;
