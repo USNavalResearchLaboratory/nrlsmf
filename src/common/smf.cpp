@@ -3179,15 +3179,20 @@ void Smf::HandleAdv(unsigned int                    currentTick,
         MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->FindUpstreamRelay(relayAddr);
         if (NULL == upstreamRelay)
         {
-            ASSERT(0);  // TBD should we create new upstream relay state here or before this method is entered?
-            return;  // no upstream relay state
+            // New upstream relay ...
+            if (NULL == (upstreamRelay = fibEntry->AddUpstreamRelay(relayAddr, srcIface.GetIndex())))
+            {
+                PLOG(PL_ERROR, "Smf::HandleAdv() error: unable to add new upstream relay\n");
+                return;
+            }
+            PLOG(PL_DEBUG, "Smf::HandleAdv() NEW UpstreamRelay %s ifaceIndex:%d\n", relayAddr.GetHostString(), srcIface.GetIndex());
+            upstreamRelay->Reset(currentTick);
         }
         upstreamRelay->UpdateAdvertisementState(currentTick, advIp, elasticAdv.GetId(),  &elasticAdv);
         //upstreamRelay->SetAdvMetric(elasticAdv.GetMetric());
         //upstreamRelay->SetAdvTTL(elasticAdv.GetTTL());
         //upstreamRelay->SetAdvHopCount(elasticAdv.GetHopCount());
-
-        if (NULL != upstreamHistory)
+if (NULL != upstreamHistory)
             upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
         return;  // do nothing else, this is a duplicate EM_ADV message
     }
