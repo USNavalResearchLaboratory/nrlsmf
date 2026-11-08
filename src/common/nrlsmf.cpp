@@ -1097,7 +1097,7 @@ SmfApp::SmfApp()
 #endif // MNE_SUPPORT
 #ifdef ELASTIC_MCAST
    mcast_controller(GetTimerMgr()),
-   igmp_controller(GetTimerMgr(), smf),
+   igmp_controller(),
 #endif // ELASTIC_MCAST
    underlay_group_socket(ProtoSocket::UDP),
    underlay_gre_cap(NULL),
@@ -7569,6 +7569,7 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
     if (igmp_controller.HasInterfaceUpdates())
     {
         std::map<std::string, std::vector<std::string>> commands; // The commands to run to update configuration
+        std::vector<unsigned int> createdIfaces;
 
         // Get the interface updates from the igmp_controller and update the interface and group configuration
         // Returns a map of iff index to pair with iface name and flag indicating added/removed (true/false)
@@ -7576,6 +7577,13 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
         {
             if (u.second.second)
             {
+                Smf::Interface* existing = smf.GetInterface(u.first);
+                if (existing)
+                {
+                    existing->SetManaged(true);
+                    continue;
+                }
+                createdIfaces.push_back(u.first);
                 // Set up it up as if configured on the command line with
                 //    nrlsmf add,network,cf,eth0 add,eth0_push,push,eth0,<iface> add,<iface>_rpush,rpush,<iface>,eth0
                 // where the network group was configured and we automatically added the push/rpush commands.
@@ -7626,6 +7634,10 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
             }
             else
             {
+                Smf::Interface* existing = smf.GetInterface(u.first);
+                if (!existing)
+                    continue;
+                existing->SetManaged(false);
                 // Just removing the interface should handle cleaning it from all groups and clearing any empty groups etc.
                 commands["remove"].emplace_back(u.second.first);
             }
@@ -7639,6 +7651,12 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
             {
                 PLOG(PL_ERROR, "SmfApp::OnIgmpMembershipUpdate() Unable to add automatic host configuration\n");
             }
+        }
+        for (unsigned int index : createdIfaces)
+        {
+            Smf::Interface* created = smf.GetInterface(index);
+            if (created)
+                created->SetManaged(true);
         }
         // Now do the remove commands
         for (const auto& c : commands["remove"])

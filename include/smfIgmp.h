@@ -9,19 +9,21 @@
 #include <vector>
 #include <sstream>
 #include <unistd.h>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 #include <protoChannel.h>
 #include <protoDebug.h>
-#include <protoTimer.h>
 #include <protoAddress.h>
 
 /**
  * @class SmfIgmp
  *
- * @brief This class can deploy a variety of methods to determine IGMP join information
- * and sends updates to the SMF core via a pipe. It uses a timer to periodically check
- * IGMP state in FRR to discover IGMP membership changes and sends those updates to the pipe
- * to notify the smf core app. The core app uses the GetMemeberUpdates interface to retrieve
- * a list of all group memberships that have been added/removed in the last update
+ * @brief Polls FRR for IGMP interface and group state. The poll runs on its
+ * own thread so a slow pimd reply does not stall the SMF control socket.
+ * The worker diffs each successful read and hands the main thread only
+ * the added and removed interfaces and groups. The core app applies that
+ * list.
  *
  */
 
@@ -32,18 +34,18 @@ class SmfIgmp : public ProtoChannel
     using InterfacesMap = std::map<std::uint32_t, std::pair<std::string, bool>>;
 
     public:
-        SmfIgmp(ProtoTimerMgr& timerMgr, Smf& _smf);
+        SmfIgmp();
         ~SmfIgmp();
 
         virtual bool Open(bool withFRR);
         virtual void Close();
         virtual bool IsOpen() const;
-        // Start (or resume) polling FRR PIM for IGMP ifaces/groups.
+        // Start polling FRR PIM for IGMP ifaces/groups.
         // Safe after Open(false) so "with-frr" can be sent at runtime.
         void EnableFrrPolling();
 
         void ProcessUpdates();
-        bool HasMembershipUpdates() const 
+        bool HasMembershipUpdates() const
             {return !membership_changes.empty();}
         MembershipChangeArray GetMembershipUpdates()
             {return std::move(membership_changes);}
@@ -55,18 +57,33 @@ class SmfIgmp : public ProtoChannel
         std::vector<std::tuple<std::string, std::string>> NewNetworkInterface(const std::string& ifaceName) const;
 
     private:
-        void DoUpdate(ProtoTimer& theTimer);
-        void UpdateInterfaces();
-        void UpdateMemberships();
+        struct Handoff
+        {
+            InterfacesMap interface_changes;
+            MembershipChangeArray membership_changes;
+        };
+
+        void PollLoop();
+        void StopPollThread();
+        bool Stopping();
+        bool CollectInterfaces(InterfacesMap& out);
+        bool CollectMemberships(MembershipMap& out);
+        static void DiffInterfaces(const InterfacesMap& previous, const InterfacesMap& current,
+                                   InterfacesMap& changes);
+        static void DiffMemberships(MembershipMap& previous, const MembershipMap& current,
+                                    MembershipChangeArray& changes);
 
         int wpipe;
-        ProtoTimerMgr& timer_mgr;
-        Smf& smf;
-        ProtoTimer update_timer;
-        MembershipMap active_memberships;
         MembershipChangeArray membership_changes;
         InterfacesMap active_interfaces;
         InterfacesMap interface_changes;
+
+        std::mutex mu;
+        std::condition_variable cv;
+        bool stop;
+        bool notify_armed;
+        Handoff pending;
+        std::thread poll_thread;
 };
 
 #endif // _SMF_IGMP
