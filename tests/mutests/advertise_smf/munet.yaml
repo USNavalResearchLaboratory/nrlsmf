@@ -1,0 +1,55 @@
+# Advertise-mode routers and an attached multicast source.
+# r2 is a longer path between r0 and r1.
+#
+#                 r3
+#                 |
+#   h0 -- lan0 -- r0 -- net0 -- r1 -- lan1 -- h1
+#                 |             |
+#                net1          net2
+#                 | \           |
+#                r4  r2 --------+
+#
+# h0 is not an nrlsmf router. r0 must originate EM_ADV for h0's flow.
+# r1 must forward the direct advertisement, not the one that came via r2.
+# r3 is another router on net0. r4 is another router on net1.
+topology:
+  networks:
+    - name: lan0
+    - name: net0
+    - name: lan1
+    - name: net1
+    - name: net2
+  nodes:
+    - name: h0
+      kind: frr
+      connections:
+        - to: lan0
+    - name: h1
+      kind: frr
+      connections:
+        - to: lan1
+    - name: r0
+      kind: frr
+      connections:
+        - to: lan0
+        - to: net0
+        - to: net1
+    - name: r1
+      kind: frr
+      connections:
+        - to: net0
+        - to: lan1
+        - to: net2
+    - name: r2
+      kind: frr
+      connections:
+        - to: net1
+        - to: net2
+    - name: r3
+      kind: frr
+      connections:
+        - to: net0
+    - name: r4
+      kind: frr
+      connections:
+        - to: net1

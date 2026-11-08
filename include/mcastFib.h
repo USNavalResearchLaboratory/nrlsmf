@@ -427,6 +427,17 @@ class MulticastFIB
                 void SetLinkQuality(double value)
                     {link_quality = value;}
 
+                // IP TTL of a data packet from this previous hop. A hop that
+                // never sends EM_ADV is a non-router source (attached host).
+                void NoteDataTTL(UINT8 ttl)
+                    {data_ttl = ttl; data_ttl_valid = true;}
+                bool HasDataTTL() const
+                    {return data_ttl_valid;}
+                UINT8 GetDataTTL() const
+                    {return data_ttl;}
+                bool IsAdvertising() const
+                    {return GetAdvAddr().IsValid() && AdvMetricIsValid();}
+
                 const ProtoAddress& GetAdvAddr() const
                     {return adv_state.GetAdvAddr();}
                 UINT16 GetAdvId() const
@@ -464,6 +475,8 @@ class MulticastFIB
                 ActivityStatus          activity_status; // status of  packet forwarding from this upstream
                 AdvertisementState      adv_state;      // state/status of EM_ADV from this upstream
                 double                  link_quality;    // current measured link quality
+                UINT8                   data_ttl;        // last IP TTL seen in data from this hop
+                bool                    data_ttl_valid;
 
         };  // end class MulticastFIB::UpstreamRelay
 
