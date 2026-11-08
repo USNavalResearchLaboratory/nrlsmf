@@ -5,7 +5,9 @@
 #include <iterator>
 #include <sstream>
 #include <string>
+#include <chrono>
 #include <stdlib.h>  // for atoi()
+#include <unistd.h>
 
 SmfVRF::SmfVRF(UINT32 vid) :
     ProtoQueue::Item(),
@@ -88,28 +90,151 @@ bool SmfVRF::SetIfaceList(std::unordered_set<std::string> new_iface_list)
   }
 
 
-static const double VRF_POLL_INTERVAL = 5.0;
-/* First poll after the dispatcher is running so the SMF control pipe
- * can be read before we block in FRR VTY.
+static const int VRF_POLL_INTERVAL_MS = 5000;
+/* Six unchanged reads means VRF config has settled. Later changes are
+ * still picked up, just less often.
  */
-static const double VRF_POLL_FIRST_INTERVAL = 0.01;
+static const int VRF_POLL_STABLE_COUNT = 6;
+static const int VRF_POLL_SLOW_INTERVAL_MS = 15000;
 
-SmfVRFList::SmfVRFList(ProtoTimerMgr& timerMgr) :
+SmfVrfUpdateChannel::SmfVrfUpdateChannel() :
+    ProtoChannel(),
+    wpipe(ProtoChannel::INVALID_HANDLE),
+    mu(),
+    armed(false)
+{
+}
+
+SmfVrfUpdateChannel::~SmfVrfUpdateChannel()
+{
+    Close();
+}
+
+bool SmfVrfUpdateChannel::Open()
+{
+    if (IsOpen())
+        return true;
+    int p[2];
+    if (pipe(p) < 0)
+    {
+        PLOG(PL_ERROR, "SmfVrfUpdateChannel::Open() pipe() error: %s\n", GetErrorString());
+        return false;
+    }
+    descriptor = p[0];
+    wpipe = p[1];
+    if (!ProtoChannel::Open())
+    {
+        PLOG(PL_ERROR, "SmfVrfUpdateChannel::Open() Failed to open ProtoChannel\n");
+        Close();
+        return false;
+    }
+    return true;
+}
+
+void SmfVrfUpdateChannel::Close()
+{
+    ProtoChannel::Close();
+    if (descriptor != ProtoChannel::INVALID_HANDLE)
+    {
+        close(descriptor);
+        descriptor = ProtoChannel::INVALID_HANDLE;
+    }
+    if (wpipe != ProtoChannel::INVALID_HANDLE)
+    {
+        ::close(wpipe);
+        wpipe = ProtoChannel::INVALID_HANDLE;
+    }
+    armed = false;
+}
+
+void SmfVrfUpdateChannel::Signal()
+{
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        if (armed || wpipe == ProtoChannel::INVALID_HANDLE)
+            return;
+        armed = true;
+    }
+    char c = 1;
+    if (write(wpipe, &c, 1) != 1)
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        armed = false;
+    }
+}
+
+void SmfVrfUpdateChannel::Drain()
+{
+    char c;
+    while (read(descriptor, &c, 1) > 0)
+    {
+    }
+    std::lock_guard<std::mutex> lock(mu);
+    armed = false;
+}
+
+SmfVRFList::SmfVRFList() :
     ProtoIndexedQueueTemplate<SmfVRF>(),
-    timer_mgr(timerMgr),
-    update_timer(),
+    update_channel(),
+    poll_mu(),
+    poll_cv(),
+    stop(false),
+    poll_thread(),
+    pending_mu(),
+    pending_updates(),
+    last_snapshot(),
     policies(NULL)
 {
-    update_timer.SetInterval(VRF_POLL_INTERVAL);
-    update_timer.SetRepeat(-1);
-    update_timer.SetListener(this, &SmfVRFList::DoUpdate);
 }
 
 SmfVRFList::~SmfVRFList()
 {
-    if (update_timer.IsActive())
+    StopPollThread();
+}
+
+void SmfVRFList::StopPollThread()
+{
     {
-        update_timer.Deactivate();
+        std::lock_guard<std::mutex> lock(poll_mu);
+        stop = true;
+    }
+    poll_cv.notify_all();
+    if (poll_thread.joinable())
+        poll_thread.join();
+}
+
+bool SmfVRFList::Stopping()
+{
+    std::lock_guard<std::mutex> lock(poll_mu);
+    return stop;
+}
+
+void SmfVRFList::PollLoop()
+{
+    bool first = true;
+    int intervalMs = VRF_POLL_INTERVAL_MS;
+    int stable = 0;
+    while (true)
+    {
+        {
+            std::unique_lock<std::mutex> lock(poll_mu);
+            if (stop)
+                return;
+            if (!first &&
+                poll_cv.wait_for(lock, std::chrono::milliseconds(intervalMs),
+                                 [this]() { return stop; }))
+                return;
+        }
+        first = false;
+        int result = Collect();
+        if (result > 0)
+        {
+            update_channel.Signal();
+            intervalMs = VRF_POLL_INTERVAL_MS;
+            stable = 0;
+        }
+        else if (result == 0 && ++stable >= VRF_POLL_STABLE_COUNT)
+            intervalMs = VRF_POLL_SLOW_INTERVAL_MS;
     }
 }
 
@@ -117,30 +242,23 @@ void SmfVRFList::SmfVRFList::EnableFRRUpdates(bool enable)
 {
     if (enable)
     {
-        /* Do not QueryFRRVRFs() here. OnStartup calls this after the
-         * instance socket is already bound but before the dispatcher
-         * runs. A blocking zebra VTY recv at that point leaves the
-         * control socket unread so queued datagrams can fill.
-         */
-        if (!update_timer.IsActive())
+        if (poll_thread.joinable())
+            return;
+        if (!update_channel.IsOpen() && !update_channel.Open())
         {
-            update_timer.SetInterval(VRF_POLL_FIRST_INTERVAL);
-            timer_mgr.ActivateTimer(update_timer);
+            PLOG(PL_ERROR, "SmfVRFList::EnableFRRUpdates() update channel open failed\n");
+            return;
         }
+        {
+            std::lock_guard<std::mutex> lock(poll_mu);
+            stop = false;
+        }
+        poll_thread = std::thread(&SmfVRFList::PollLoop, this);
     }
     else
     {
-        if (update_timer.IsActive())
-        {
-            timer_mgr.DeactivateTimer(update_timer);
-        }
+        StopPollThread();
     }
-}
-void SmfVRFList::DoUpdate(ProtoTimer& theTimer)
-{
-    QueryFRRVRFs();
-    if (theTimer.GetInterval() != VRF_POLL_INTERVAL)
-        theTimer.SetInterval(VRF_POLL_INTERVAL);
 }
 
 SmfVRF* SmfVRFList::AddVRF(const char *vrf_name, UINT32 vrf_id, int table_id)
@@ -179,29 +297,13 @@ SmfVRF* SmfVRFList::AddVRF(const char *vrf_name, UINT32 vrf_id, int table_id)
     }
     return vrf;
 }
-void SmfVRFList::QueryFRRVRFs()
+bool SmfVRFList::ParseShowVrf(const std::string& text, std::vector<VrfUpdate>& out)
 {
-    std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::Zebra, {"show vrf"});
-    bool dirty = false;
-    if (ret.second != 0)
-    {
-        // TODO: command failed
-        return;
-    }
-
-    // There is always a default VRF mapped to table 254
-    AddVRF("default", 0, 254);
-    dirty = QueryFRRVRFInterface("default");
-    //ret.first; // The string response to parse through
-    PLOG(PL_DETAIL,"SmfVRFList::QueryFRRVRFs VRFs from FRR:\n%s\n", ret.first.c_str());
-
     // FRR# show vrf
     // vrf blue id 13 table 10
     // vrf red id 19 table 11
-
-    std::istringstream iss(ret.first);
+    std::istringstream iss(text);
     std::string line;
-    int totalVRFs = 0;
     while (std::getline(iss, line))
     {
         std::string vrfName, vrfId, vrfTable;
@@ -210,77 +312,47 @@ void SmfVRFList::QueryFRRVRFs()
         int field = 0;
         while (std::getline(liness, lpart, ' '))
         {
-            if (!lpart.empty()) // Ignore extra white space between fields
+            if (lpart.empty())
+                continue;
+            field++;
+            // Second, fourth, and sixth words are name, id, and table.
+            switch (field)
             {
-                field++;
-                // get the second, forth, and 6th words corresponding to vrf name, id,
-                // and table
-                switch (field)
-                {
-                    case 2:
-                        vrfName = lpart;
-                        break;
-                    case 4:
-                        vrfId = lpart;
-                        break;
-                    case 6:
-                        vrfTable = lpart;
-                        break;
-                }
+                case 2:
+                    vrfName = lpart;
+                    break;
+                case 4:
+                    vrfId = lpart;
+                    break;
+                case 6:
+                    vrfTable = lpart;
+                    break;
             }
         }
-
-        if(!vrfName.empty() && !vrfId.empty() && !vrfTable.empty())
-        {
-            AddVRF(vrfName.c_str(), atoi(vrfId.c_str()), atoi(vrfTable.c_str()));
-            totalVRFs++;
-            if (QueryFRRVRFInterface(vrfName))
-            dirty = true;
-        }
-
+        if (vrfName.empty() || vrfId.empty() || vrfTable.empty())
+            continue;
+        VrfUpdate u;
+        u.name = vrfName;
+        u.id = (UINT32)atoi(vrfId.c_str());
+        u.table_id = atoi(vrfTable.c_str());
+        u.ifaces_valid = false;
+        out.push_back(u);
     }
-
-    if (dirty)
-    {
-        DumpVRFs();
-        if (policies)
-            policies->DumpPolicies();
-    }
+    return true;
 }
 
-bool SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
+void SmfVRFList::ParseIfaceBrief(const std::string& text, std::unordered_set<std::string>& out)
 {
-    SmfVRF * vrf = GetVRFByName(vrf_name.c_str());
-
-    if (NULL == vrf)
-    {
-        PLOG(PL_ERROR,"SmfVRFList::QueryFRRVRFInterface:  No such VRF: %s\n", vrf_name.c_str());
-        return false;
-    }
-    std::string cmd = "show interface vrf " + vrf_name + " brief";
-    std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::Zebra, {cmd});
-    if (ret.second != 0)
-    {
-        // TODO: command failed
-        return false;
-    }
-    //ret.first; // The string response to parse through
-    PLOG(PL_DETAIL,"SmfVRFList::QueryFRRVRFInterface: VRF FRR %s interface list:\n%s\n", vrf_name.c_str(), ret.first.c_str());
-
-    // jtr# show  interface vrf  vblue brief
     // Interface       Status  VRF             Addresses
-    //---------       ------  ---             ---------
-    // eth1           up      blue           192.168.20.1/24
-    // blue           up      blue
-
-    std::istringstream iss(ret.first);
+    // ---------       ------  ---             ---------
+    // eth1            up      blue            192.168.20.1/24
+    // A second address is a continuation line and has no interface name.
+    std::istringstream iss(text);
     std::string line;
-    std::unordered_set<std::string> iface_list;
-    int totalIfaces = 0;
     int skip2lines = 2;
     while (std::getline(iss, line))
     {
-        if (0 != skip2lines) // skip the first two header lines
+        if (0 != skip2lines)
         {
             skip2lines--;
             continue;
@@ -291,48 +363,123 @@ bool SmfVRFList::QueryFRRVRFInterface(std::string vrf_name)
         int field = 0;
         while (std::getline(liness, lpart, ' '))
         {
-            if (!lpart.empty()) // Ignore extra white space between fields
+            if (lpart.empty())
+                continue;
+            field++;
+            switch (field)
             {
-                field++;
-                switch (field)
-                {
-                    case 1:
-                        // Interfaces with multiple IP addresses configured will
-                        // have multiple lines, make sure to skip the extra lines
-                        // ex:
-                        // eth0          up      default         192.168.30.1/24
-                        // eth1          up      default         192.168.35.1/32
-                        //                                       192.168.45.1/32
-                        if (lpart.find("/") == std::string::npos)
-                        {
-                            ifaceName = lpart;
-                        }
-                        break;
-                    case 2:
-                        // Skip "down" interfaces
-                        if (lpart == "down")
-                        {
-                            ifaceName.clear();
-                        }
-                        break;
-                }
+                case 1:
+                    if (lpart.find("/") == std::string::npos)
+                        ifaceName = lpart;
+                    break;
+                case 2:
+                    if (lpart == "down")
+                        ifaceName.clear();
+                    break;
             }
         }
-
         if (!ifaceName.empty())
+            out.insert(ifaceName);
+    }
+}
+
+int SmfVRFList::Collect()
+{
+    std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::Zebra, {"show vrf"});
+    if (ret.second != 0)
+        return -1;
+
+    PLOG(PL_DETAIL,"SmfVRFList::Collect VRFs from FRR:\n%s\n", ret.first.c_str());
+
+    std::vector<VrfUpdate> listed;
+    ParseShowVrf(ret.first, listed);
+
+    std::unordered_map<std::string, VrfSnap> now;
+    VrfSnap deflt;
+    deflt.id = 0;
+    deflt.table_id = 254;
+    deflt.have_ifaces = false;
+    now["default"] = deflt;
+    for (std::vector<VrfUpdate>::const_iterator it = listed.begin(); it != listed.end(); ++it)
+    {
+        VrfSnap snap;
+        snap.id = it->id;
+        snap.table_id = it->table_id;
+        snap.have_ifaces = false;
+        now[it->name] = snap;
+    }
+
+    for (std::unordered_map<std::string, VrfSnap>::iterator it = now.begin(); it != now.end(); ++it)
+    {
+        if (Stopping())
+            return -1;
+        std::string cmd = "show interface vrf " + it->first + " brief";
+        std::pair<std::string, std::int8_t> iret = FRR::FRRVty(FRR::Zebra, {cmd});
+        if (iret.second != 0)
+            continue;
+        ParseIfaceBrief(iret.first, it->second.ifaces);
+        it->second.have_ifaces = true;
+    }
+
+    std::vector<VrfUpdate> delta;
+    for (std::unordered_map<std::string, VrfSnap>::iterator it = now.begin(); it != now.end(); ++it)
+    {
+        std::unordered_map<std::string, VrfSnap>::iterator prev = last_snapshot.find(it->first);
+        bool isNew = prev == last_snapshot.end();
+        bool ifacesChanged = it->second.have_ifaces &&
+            (isNew || !prev->second.have_ifaces || prev->second.ifaces != it->second.ifaces);
+        if (!isNew && !ifacesChanged)
+            continue;
+
+        VrfUpdate update;
+        update.name = it->first;
+        update.id = it->second.id;
+        update.table_id = it->second.table_id;
+        update.ifaces_valid = it->second.have_ifaces;
+        if (update.ifaces_valid)
+            update.ifaces = it->second.ifaces;
+        delta.push_back(update);
+
+        if (isNew || it->second.have_ifaces)
+            last_snapshot[it->first] = it->second;
+    }
+    if (delta.empty())
+        return 0;
+
+    std::lock_guard<std::mutex> lock(pending_mu);
+    pending_updates.insert(pending_updates.end(), delta.begin(), delta.end());
+    return 1;
+}
+
+void SmfVRFList::ApplyPending()
+{
+    update_channel.Drain();
+    std::vector<VrfUpdate> batch;
+    {
+        std::lock_guard<std::mutex> lock(pending_mu);
+        batch.swap(pending_updates);
+    }
+    bool dirty = false;
+    for (std::vector<VrfUpdate>::const_iterator it = batch.begin(); it != batch.end(); ++it)
+    {
+        AddVRF(it->name.c_str(), it->id, it->table_id);
+        if (!it->ifaces_valid)
+            continue;
+        SmfVRF* vrf = GetVRFByName(it->name.c_str());
+        if (NULL == vrf)
+            continue;
+        if (it->ifaces != vrf->GetIfaceList())
         {
-            totalIfaces++;
-            iface_list.insert(ifaceName);
+            vrf->SetIfaceList(it->ifaces);
+            dirty = true;
         }
     }
-
-    if (iface_list != vrf->GetIfaceList() )
+    if (dirty)
     {
-        // we got some updates, reset the iface list.
-        vrf->SetIfaceList(iface_list);
-        return true;
+        DumpVRFs();
+        if (policies)
+            policies->DumpPolicies();
     }
-    return false;
 }
 
 SmfVRF* SmfVRFList::GetVRFByName(const char* vrf_name)
