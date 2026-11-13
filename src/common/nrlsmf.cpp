@@ -213,6 +213,8 @@ class SmfApp : public ProtoApp
         bool OnIgmpQueryTimeout(ProtoTimer& theTimer);
         void OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
                                     ProtoChannel::Notification  notifyType);
+        void OnVrfUpdate(ProtoChannel&               theChannel,
+                         ProtoChannel::Notification  notifyType);
 
         bool JoinUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
         bool LeaveUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
@@ -1097,7 +1099,7 @@ SmfApp::SmfApp()
 #endif // MNE_SUPPORT
 #ifdef ELASTIC_MCAST
    mcast_controller(GetTimerMgr()),
-   igmp_controller(GetTimerMgr(), smf),
+   igmp_controller(),
 #endif // ELASTIC_MCAST
    underlay_group_socket(ProtoSocket::UDP),
    underlay_gre_cap(NULL),
@@ -1125,6 +1127,8 @@ SmfApp::SmfApp()
     igmp_controller.SetNotifier(&GetChannelNotifier());
     igmp_controller.SetListener(this, &SmfApp::OnIgmpMembershipUpdate);
 #endif // ELASTIC_MCAST
+    smf.GetVRFs()->GetUpdateChannel().SetNotifier(&GetChannelNotifier());
+    smf.GetVRFs()->GetUpdateChannel().SetListener(this, &SmfApp::OnVrfUpdate);
 #ifdef ADAPTIVE_ROUTING
     smart_controller.SetForwarder(&smf);
     smf.SetController(&smart_controller);
@@ -1801,8 +1805,8 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
         exit(0);
 
     smf.GetVRFs()->SetPolicies(smf.GetVRFPolicies());
-    /* Arms a short timer; the first zebra VTY query runs after the
-     * dispatcher starts so the control socket can be read first.
+    /* VRF polling runs on its own thread. The main thread only applies
+     * the queued result when that thread signals the update channel.
      */
     smf.GetVRFs()->EnableFRRUpdates(smf.withFRR());
 
@@ -2215,6 +2219,7 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     {
         PLOG(PL_DEBUG,"Setup to pull VRF data from FRR\n");
         smf.SetWithFRR(true);
+        smf.GetVRFs()->EnableFRRUpdates(true);
 #ifdef ELASTIC_MCAST
         // Command-line with-frr runs before OnStartup() opens the
         // controller. A runtime --cli "with-frr" must start FRR polling
@@ -7569,6 +7574,7 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
     if (igmp_controller.HasInterfaceUpdates())
     {
         std::map<std::string, std::vector<std::string>> commands; // The commands to run to update configuration
+        std::vector<unsigned int> createdIfaces;
 
         // Get the interface updates from the igmp_controller and update the interface and group configuration
         // Returns a map of iff index to pair with iface name and flag indicating added/removed (true/false)
@@ -7576,6 +7582,13 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
         {
             if (u.second.second)
             {
+                Smf::Interface* existing = smf.GetInterface(u.first);
+                if (existing)
+                {
+                    existing->SetManaged(true);
+                    continue;
+                }
+                createdIfaces.push_back(u.first);
                 // Set up it up as if configured on the command line with
                 //    nrlsmf add,network,cf,eth0 add,eth0_push,push,eth0,<iface> add,<iface>_rpush,rpush,<iface>,eth0
                 // where the network group was configured and we automatically added the push/rpush commands.
@@ -7626,6 +7639,10 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
             }
             else
             {
+                Smf::Interface* existing = smf.GetInterface(u.first);
+                if (!existing)
+                    continue;
+                existing->SetManaged(false);
                 // Just removing the interface should handle cleaning it from all groups and clearing any empty groups etc.
                 commands["remove"].emplace_back(u.second.first);
             }
@@ -7639,6 +7656,12 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
             {
                 PLOG(PL_ERROR, "SmfApp::OnIgmpMembershipUpdate() Unable to add automatic host configuration\n");
             }
+        }
+        for (unsigned int index : createdIfaces)
+        {
+            Smf::Interface* created = smf.GetInterface(index);
+            if (created)
+                created->SetManaged(true);
         }
         // Now do the remove commands
         for (const auto& c : commands["remove"])
@@ -7683,6 +7706,12 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
     }
 }
 #endif // ELASTIC_MCAST
+
+void SmfApp::OnVrfUpdate(ProtoChannel&               /*theChannel*/,
+                         ProtoChannel::Notification  /*notifyType*/)
+{
+    smf.GetVRFs()->ApplyPending();
+}
 
 // This is the notification handler called when outbound virtual interface packets are received
 // These should be packets generated by the local host or forwarded via non-SMF forwarding

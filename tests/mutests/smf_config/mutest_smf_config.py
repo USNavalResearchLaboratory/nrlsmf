@@ -90,6 +90,23 @@ section("Config a group that includes a missing iface")
 
 expect_ok(NODE, f"add {GROUP},cf,{ETH0},{ETH1},{GRE},{STUB}", INST)
 expect_ok(NODE, f"elastic {GROUP}", INST)
+
+section("Interface that joins after elastic inherits Elastic")
+
+LATE = "late0"
+step(NODE, "modprobe dummy || true")
+step(NODE, f"ip link add {LATE} type dummy")
+step(NODE, f"ip link set {LATE} up")
+expect_ok(NODE, f"add {GROUP},cf,{LATE}", INST)
+listing = show_json(NODE, "show interface", INST)
+for iface in (ETH0, ETH1, GRE, STUB, LATE):
+    row = iface_row(listing, iface)
+    test_step(
+        row is not None and row.get("FwdMethod") == "Elastic",
+        f"{NODE} {iface} FwdMethod is Elastic",
+        target=NODE,
+    )
+
 expect_ok(NODE, "advertise", INST)
 
 grouping = show_json(NODE, "show interface grouping", INST)
@@ -97,7 +114,7 @@ row = group_row(grouping, GROUP)
 test_step(row is not None, f"{NODE} grouping includes {GROUP}", target=NODE)
 if row is not None:
     have = set(row.get("Interfaces") or [])
-    for iface in (ETH0, ETH1, GRE, STUB):
+    for iface in (ETH0, ETH1, GRE, STUB, LATE):
         test_step(iface in have, f"{NODE} {GROUP} includes {iface}", target=NODE)
     test_step(row.get("RelayType") == "cf", f"{NODE} {GROUP} RelayType is cf", target=NODE)
     test_step(

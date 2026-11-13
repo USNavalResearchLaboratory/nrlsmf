@@ -879,6 +879,12 @@ class Smf
                     {
                         if (elastic_ucast) iface.IncrementUnicastGroupCount();
                         iface.SetETX(use_etx);
+#ifdef ELASTIC_MCAST
+                        // "show interface" prints this flag, not the group bit.
+                        // A member that joins after "elastic <group>" must
+                        // inherit it or it is reported as Flood.
+                        if (elastic_mcast) iface.SetElasticMulticast(true);
+#endif // ELASTIC_MCAST
                         return true;
                     }
                     return false;

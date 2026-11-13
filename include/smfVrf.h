@@ -1,10 +1,14 @@
 #include "protoDefs.h"
 #include "protoQueue.h"
-#include "protoTimer.h"
+#include "protoChannel.h"
 #include "protoAddress.h"
 #include <unordered_set>
 #include <unordered_map>
 #include <string>
+#include <vector>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 
 #define VRF_NAME_SIZE 36
 #define VRF_DEFAULT 0
@@ -59,10 +63,30 @@ class SmfVRF : public ProtoQueue::Item
 };// end class SmfVRF
 
 class SmfVRFPolicies;
+
+/* Read end is watched by the dispatcher. The VRF worker writes one byte
+ * when a parsed snapshot has something for the main thread to apply.
+ */
+class SmfVrfUpdateChannel : public ProtoChannel
+{
+    public:
+        SmfVrfUpdateChannel();
+        ~SmfVrfUpdateChannel();
+        bool Open();
+        void Close();
+        void Signal();
+        void Drain();
+
+    private:
+        int wpipe;
+        std::mutex mu;
+        bool armed;
+};
+
 class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF>
 {
     public:
-        SmfVRFList(ProtoTimerMgr& timerMgr);
+        SmfVRFList();
         ~SmfVRFList();
 
         SmfVRF *FindVRF(UINT32 vid) const
@@ -81,18 +105,49 @@ class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF>
         void DeleteVRF(SmfVRF &vrf);
         void DumpVRFs();
         SmfVRF *GetVRFByName(const char *vrf_name);
-        void QueryFRRVRFs();
         void EnableFRRUpdates(bool enable);
-        bool QueryFRRVRFInterface(std::string vrf_name);
+        // Apply VRF and interface-list changes queued by the worker.
+        void ApplyPending();
         SmfVRF *GetVRF(UINT32 vrf_id) const { return FindVRF(vrf_id); }
         SmfVRF *GetVRFbyIfaceIndex(unsigned int iface_index);
-        void DoUpdate(ProtoTimer& theTimer);
+        ProtoChannel& GetUpdateChannel()
+            {return update_channel;}
         void SetPolicies(SmfVRFPolicies* pols)
             {policies = pols;}
 
     private:
-        ProtoTimerMgr& timer_mgr;
-        ProtoTimer update_timer;
+        struct VrfUpdate
+        {
+            std::string name;
+            UINT32 id;
+            int table_id;
+            bool ifaces_valid;
+            std::unordered_set<std::string> ifaces;
+        };
+        struct VrfSnap
+        {
+            UINT32 id;
+            int table_id;
+            bool have_ifaces;
+            std::unordered_set<std::string> ifaces;
+        };
+
+        // 1 = queued an update, 0 = snapshot unchanged, -1 = zebra read failed.
+        int Collect();
+        void PollLoop();
+        void StopPollThread();
+        bool Stopping();
+        static bool ParseShowVrf(const std::string& text, std::vector<VrfUpdate>& out);
+        static void ParseIfaceBrief(const std::string& text, std::unordered_set<std::string>& out);
+
+        SmfVrfUpdateChannel update_channel;
+        std::mutex poll_mu;
+        std::condition_variable poll_cv;
+        bool stop;
+        std::thread poll_thread;
+        std::mutex pending_mu;
+        std::vector<VrfUpdate> pending_updates;
+        std::unordered_map<std::string, VrfSnap> last_snapshot;
         SmfVRFPolicies * policies;
         const char *GetKey(const Item &item) const
             {return static_cast<const SmfVRF &>(item).GetKey();}

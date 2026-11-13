@@ -356,6 +356,18 @@ Smf::InterfaceGroup::~InterfaceGroup()
 void Smf::InterfaceGroup::SetElasticMulticast(bool state)
 {
     elastic_mcast = state;
+#ifdef ELASTIC_MCAST
+    // Mark every current member before the elastic command collects
+    // memberships. That walk can return early, and "show interface"
+    // would otherwise leave the remaining members as Flood.
+    if (state)
+    {
+        InterfaceList::Iterator ifaceIterator(iface_list);
+        Interface* iface;
+        while (NULL != (iface = ifaceIterator.GetNextItem()))
+            iface->SetElasticMulticast(true);
+    }
+#endif // ELASTIC_MCAST
 }  // end Smf::InterfaceGroup::SetElasticMulticast()
 
 void Smf::InterfaceGroup::SetAdaptiveRouting(bool state)
@@ -398,7 +410,7 @@ Smf::Smf(ProtoTimerMgr& timerMgr)
    update_age_max(DEFAULT_AGE_MAX), current_update_time(0),
    selector_list_len(0), neighbor_list_len(0),
    recv_count(0), mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0),
-   vrf_list(timerMgr), vrf_policies(), with_FRR(false)
+   vrf_list(), vrf_policies(), with_FRR(false)
 {
     delay_relay_off_timer.SetInterval(delay_time);
     delay_relay_off_timer.SetListener(this,&Smf::OnDelayRelayOffTimeout);
