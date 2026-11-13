@@ -356,6 +356,18 @@ Smf::InterfaceGroup::~InterfaceGroup()
 void Smf::InterfaceGroup::SetElasticMulticast(bool state)
 {
     elastic_mcast = state;
+#ifdef ELASTIC_MCAST
+    // Mark every current member before the elastic command collects
+    // memberships. That walk can return early, and "show interface"
+    // would otherwise leave the remaining members as Flood.
+    if (state)
+    {
+        InterfaceList::Iterator ifaceIterator(iface_list);
+        Interface* iface;
+        while (NULL != (iface = ifaceIterator.GetNextItem()))
+            iface->SetElasticMulticast(true);
+    }
+#endif // ELASTIC_MCAST
 }  // end Smf::InterfaceGroup::SetElasticMulticast()
 
 void Smf::InterfaceGroup::SetAdaptiveRouting(bool state)
