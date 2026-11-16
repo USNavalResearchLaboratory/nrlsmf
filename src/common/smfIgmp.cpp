@@ -45,6 +45,8 @@ bool SmfIgmp::Open(bool withFRR)
 
     descriptor = p[0]; // For reading in SMF core app
     wpipe = p[1]; // For writing IGMP updates locally
+    // Do not rely on SetNotifier() to make these non-blocking. A later
+    // Open() would reuse a cached blocking flag and this drain would hang.
     for (int i = 0; i < 2; ++i)
     {
         int flags = fcntl(p[i], F_GETFL, 0);
