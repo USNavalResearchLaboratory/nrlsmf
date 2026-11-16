@@ -432,6 +432,7 @@ class SmfApp : public ProtoApp
         // Member variables
         Smf                     smf;            // General-purpose "SMF" class
         bool                    need_help;
+        bool                    startup_done;
 
         bool                    priority_boost;
         bool                    ipv6_enabled;
@@ -1087,7 +1088,7 @@ const char* SmfApp::DEFAULT_INSTANCE_NAME = "nrlsmf";
 const char* SmfApp::DEFAULT_SMF_SERVER = "nrlolsr";
 
 SmfApp::SmfApp()
- : smf(GetTimerMgr()), need_help(false), priority_boost(true), ipv6_enabled(false),
+ : smf(GetTimerMgr()), need_help(false), startup_done(false), priority_boost(true), ipv6_enabled(false),
    resequence(false), ttl_set(-1),
    default_tx_rate_limit(-1.0), smf_queue_limit(0),
 #ifdef _PROTO_DETOUR
@@ -1933,6 +1934,7 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
             PLOG(PL_ALWAYS, "\n");
         }
     }
+    startup_done = true;
     return true;
 }  // end SmfApp::OnStartup()
 
@@ -2231,7 +2233,11 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     {
         PLOG(PL_DEBUG,"Setup to pull VRF data from FRR\n");
         smf.SetWithFRR(true);
-        smf.GetVRFs()->EnableFRRUpdates(true);
+        // Command-line with-frr runs inside ProcessCommands(), before
+        // OnStartup() knows the rest of the command line is valid.
+        // A runtime --cli "with-frr" starts the poll thread here.
+        if (startup_done)
+            smf.GetVRFs()->EnableFRRUpdates(true);
 #ifdef ELASTIC_MCAST
         // Command-line with-frr runs before OnStartup() opens the
         // controller. A runtime --cli "with-frr" must start FRR polling
