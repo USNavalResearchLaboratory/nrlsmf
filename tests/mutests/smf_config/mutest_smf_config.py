@@ -232,20 +232,47 @@ step(
 )
 step(NODE, f"ip addr add 172.16.1.1/24 dev {LATEGRE} || true")
 step(NODE, f"ip link set {LATEGRE} up")
-expect_ok(NODE, f"add hold,cf,{LATEGRE}", INST)
+# A second relay group would refuse the later add to net: the tunnel
+# already has relay associations. A one-interface push group only
+# exists so map can see the interface before it joins the elastic group.
+expect_ok(NODE, f"add gre2src,push,{LATEGRE}", INST)
 expect_ok(NODE, f"map {LATEGRE},{LOCAL},{LATEGRE_REMOTE}", INST)
 expect_ok(NODE, f"add {GROUP},cf,{LATEGRE}", INST)
 listing = show_json(NODE, "show interface", INST)
 late_gre = iface_row(listing, LATEGRE)
 test_step(
-    late_gre is not None and late_gre.get("FwdMethod") == "Elastic",
-    f"{NODE} {LATEGRE} FwdMethod is Elastic",
+    late_gre is not None and late_gre.get("FwdMethod") == "Advertise",
+    f"{NODE} {LATEGRE} FwdMethod is Advertise",
     target=NODE,
 )
 late_maddr = step(NODE, f"ip maddr show dev {LATEGRE}")
 test_step(
     "224.0.0.55" in (late_maddr or ""),
     f"{NODE} {LATEGRE} joined 224.0.0.55",
+    target=NODE,
+)
+
+section("Leaving the elastic group clears the Elastic flag")
+
+expect_ok(NODE, f"remove {GROUP},{LATEGRE}", INST)
+grouping = show_json(NODE, "show interface grouping", INST)
+net = group_row(grouping, GROUP)
+pushed = group_row(grouping, "gre2src:gre2")
+test_step(
+    LATEGRE not in set((net or {}).get("Interfaces") or []),
+    f"{NODE} {GROUP} no longer includes {LATEGRE}",
+    target=NODE,
+)
+test_step(
+    LATEGRE in set((pushed or {}).get("Interfaces") or []),
+    f"{NODE} gre2src:gre2 still includes {LATEGRE}",
+    target=NODE,
+)
+listing = show_json(NODE, "show interface", INST)
+late_gre = iface_row(listing, LATEGRE)
+test_step(
+    late_gre is not None and late_gre.get("FwdMethod") == "Flood",
+    f"{NODE} {LATEGRE} FwdMethod is Flood after leaving {GROUP}",
     target=NODE,
 )
 

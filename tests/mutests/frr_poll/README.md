@@ -14,7 +14,7 @@ eth0 is in the default VRF with IGMP. eth1 is in VRF red.
 
 | File | What it covers |
 |------|----------------|
-| `mutest_smf_frr_poll.py` | Control-socket ping while pimd and zebra are stopped, an IGMP group applied on eth0, and VRF red learned from zebra |
+| `mutest_smf_frr_poll.py` | Control-socket ping while pimd and zebra are stopped, an IGMP join and leave on eth0, eth0 put back after `remove`, VRF red learned, and eth1 leaving red |
 
 ## Run
 

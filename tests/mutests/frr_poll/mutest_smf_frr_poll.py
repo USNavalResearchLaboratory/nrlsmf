@@ -6,13 +6,19 @@ Topology:
     `-- lan1
 
 eth0 is in the default VRF with IGMP. eth1 is in VRF red. nrlsmf is
-started with-frr. The test checks three things:
+started with-frr. The test checks:
 
 - ping on the control socket returns within a few seconds while pimd
   and zebra are stopped
-- a local IGMP membership on eth0 shows up in show igmp groups
-- VRF red is learned from zebra and recorded in the nrlsmf log
+- a local IGMP membership on eth0 shows up in show igmp groups, and
+  leaves again when the receiver socket closes
+- an operator remove of that IGMP interface is undone on a later poll
+- VRF red is learned from zebra, and eth1 leaving red is learned too
 """
+
+import json
+import sys
+import time
 
 from munet.mutest.userapi import script_dir
 from munet.mutest.userapi import section
@@ -20,9 +26,12 @@ from munet.mutest.userapi import step
 from munet.mutest.userapi import test_step
 from munet.mutest.userapi import wait_step
 
-import sys
-
 sys.path.insert(0, str(script_dir().parent))
+from smf_cli import cli_cmd
+from smf_cli import expect_ok
+from smf_cli import iface_row
+from smf_cli import parse_json_blob
+from smf_cli import show_json
 from smf_cli import wait_em_managed
 
 NODE = "r0"
@@ -114,7 +123,7 @@ step(
     "s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); "
     "mreq=struct.pack(\"4s4s\", socket.inet_aton(\"%s\"), socket.inet_aton(\"10.0.0.1\")); "
     "s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq); "
-    "time.sleep(180)' >/tmp/igmp-join.log 2>&1 &" % GROUP,
+    "time.sleep(180)' >/tmp/igmp-join.log 2>&1 & echo $! > /tmp/igmp-join.pid" % GROUP,
 )
 wait_step(
     NODE,
@@ -141,3 +150,106 @@ wait_step(
     desc=f"{NODE} VRF red includes {ETH1}",
     timeout=10,
 )
+
+
+def wait_until(desc, predicate, timeout=20):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            test_step(True, desc, target=NODE)
+            return True
+        time.sleep(1)
+    test_step(False, desc, target=NODE)
+    return False
+
+
+def show_rows(show_cmd):
+    try:
+        data = parse_json_blob(cli_cmd(NODE, f"{show_cmd} json", INST))
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return data
+
+
+section("IGMP leave is applied")
+
+# Drop the receiver socket first, or its next report puts the group back.
+# Kill by pid. pkill -f matches the shell running that command and can
+# exit before the sleeper is signaled.
+# clear ip igmp drops the learned group without removing ip igmp, so the
+# interface stays in the IGMP-up set and SMF does not delete it.
+step(NODE, "if [ -s /tmp/igmp-join.pid ]; then kill -9 $(cat /tmp/igmp-join.pid) || true; fi")
+step(NODE, "vtysh -c 'clear ip igmp interfaces'")
+
+
+def pimd_dropped_group():
+    # Text "show ip igmp groups" can be empty while the JSON poll SMF
+    # reads still lists the group. Check that same JSON.
+    out = step(NODE, "vtysh -c 'show ip igmp vrf all groups json' || true")
+    return GROUP not in (out or "")
+
+
+def smf_dropped_group():
+    rows = show_rows("show igmp groups")
+    if not isinstance(rows, list):
+        return False
+    for row in rows:
+        if not isinstance(row, dict) or row.get("Interface") != ETH0:
+            continue
+        groups = row.get("Groups") if isinstance(row.get("Groups"), list) else []
+        return GROUP not in groups
+    return True
+
+
+wait_until(f"{NODE} pimd dropped {GROUP}", pimd_dropped_group, timeout=30)
+wait_until(f"{NODE} show igmp groups dropped {GROUP}", smf_dropped_group, timeout=30)
+
+section("Removed IGMP interface is added again")
+
+expect_ok(NODE, f"remove {ETH0}", INST)
+listing = show_json(NODE, "show interface", INST)
+test_step(
+    iface_row(listing, ETH0) is None,
+    f"{NODE} {ETH0} is gone after remove",
+    target=NODE,
+)
+
+
+def eth0_managed_again():
+    row = iface_row(show_rows("show interface"), ETH0)
+    return row is not None and row.get("Managed") is True
+
+
+wait_until(
+    f"{NODE} {ETH0} is back and managed",
+    eth0_managed_again,
+    timeout=20,
+)
+
+section("eth1 leaving VRF red is learned")
+
+log_end = "".join(ch for ch in step(NODE, "wc -c < nrlsmf.log") if ch.isdigit())
+step(NODE, "ip link set eth1 nomaster")
+
+
+def red_without_eth1():
+    new = step(NODE, f"tail -c +{int(log_end) + 1} nrlsmf.log || true")
+    blocks = []
+    current = None
+    for line in (new or "").splitlines():
+        if "vrf name = red" in line:
+            current = []
+            blocks.append(current)
+            continue
+        if current is None:
+            continue
+        if "vrf name =" in line or "VRF table" in line:
+            current = None
+            continue
+        current.append(line)
+    if not blocks:
+        return False
+    return not any(ETH1 in line.split() for line in blocks[-1])
+
+
+wait_until(f"{NODE} VRF red no longer includes {ETH1}", red_without_eth1, timeout=25)
