@@ -6,6 +6,8 @@
 #include <sstream>
 #include <string>
 #include <chrono>
+#include <pthread.h>
+#include <signal.h>
 #include <stdlib.h>  // for atoi()
 #include <unistd.h>
 
@@ -253,7 +255,15 @@ void SmfVRFList::SmfVRFList::EnableFRRUpdates(bool enable)
             std::lock_guard<std::mutex> lock(poll_mu);
             stop = false;
         }
+        // Workers inherit a blocked SIGTERM/SIGINT so ProtoApp's handler
+        // runs on the main thread and select() is interrupted.
+        sigset_t blocked, saved;
+        sigemptyset(&blocked);
+        sigaddset(&blocked, SIGTERM);
+        sigaddset(&blocked, SIGINT);
+        pthread_sigmask(SIG_BLOCK, &blocked, &saved);
         poll_thread = std::thread(&SmfVRFList::PollLoop, this);
+        pthread_sigmask(SIG_SETMASK, &saved, NULL);
     }
     else
     {
