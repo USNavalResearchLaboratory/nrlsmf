@@ -7570,18 +7570,18 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
 {
     // igmp_controller has updates
     igmp_controller.ProcessUpdates();
-    // Handle interface updates first, in case we are adding a new interface with an existing membership
-    if (igmp_controller.HasInterfaceUpdates())
+    // Reconcile the full IGMP-up set every poll. An interface SMF dropped
+    // (failed add, link flap, operator remove) is queued again here.
+    SmfIgmp::InterfacesMap currentIfaces;
+    if (igmp_controller.TakeInterfaceSnapshot(currentIfaces))
     {
         std::map<std::string, std::vector<std::string>> commands; // The commands to run to update configuration
         std::vector<unsigned int> createdIfaces;
+        SmfIgmp::InterfacesMap previous = igmp_controller.ActiveInterfaces();
+        igmp_controller.SetActiveInterfaces(currentIfaces);
 
-        // Get the interface updates from the igmp_controller and update the interface and group configuration
-        // Returns a map of iff index to pair with iface name and flag indicating added/removed (true/false)
-        for (const auto& u : igmp_controller.GetInterfaceUpdates())
+        for (const auto& u : currentIfaces)
         {
-            if (u.second.second)
-            {
                 Smf::Interface* existing = smf.GetInterface(u.first);
                 if (existing)
                 {
@@ -7636,16 +7636,17 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
                 addCmds.emplace_back(os.str());
                 // We also want to add the new host interface to the merge group for the host interfaces
                 addCmds.emplace_back("hostifaces,merge,"+u.second.first);
-            }
-            else
-            {
-                Smf::Interface* existing = smf.GetInterface(u.first);
-                if (!existing)
-                    continue;
-                existing->SetManaged(false);
-                // Just removing the interface should handle cleaning it from all groups and clearing any empty groups etc.
-                commands["remove"].emplace_back(u.second.first);
-            }
+        }
+        for (const auto& u : previous)
+        {
+            if (currentIfaces.find(u.first) != currentIfaces.end())
+                continue;
+            Smf::Interface* existing = smf.GetInterface(u.first);
+            if (!existing)
+                continue;
+            existing->SetManaged(false);
+            // Just removing the interface should handle cleaning it from all groups and clearing any empty groups etc.
+            commands["remove"].emplace_back(u.second.first);
         }
 
         // Now process each command to update the configuration

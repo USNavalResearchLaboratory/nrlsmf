@@ -14,7 +14,8 @@ SmfIgmp::SmfIgmp() :
     wpipe(INVALID_HANDLE),
     membership_changes(),
     active_interfaces(),
-    interface_changes(),
+    have_fresh_interfaces(false),
+    fresh_interfaces(),
     mu(),
     cv(),
     stop(false),
@@ -109,9 +110,7 @@ bool SmfIgmp::IsOpen() const
 
 void SmfIgmp::PollLoop()
 {
-    InterfacesMap seenIfaces;
     MembershipMap seenGroups;
-    bool haveIfaces = false;
     bool haveGroups = false;
     bool first = true;
 
@@ -130,24 +129,20 @@ void SmfIgmp::PollLoop()
 
         InterfacesMap ifaces;
         MembershipMap groups;
-        InterfacesMap ifaceDelta;
         MembershipChangeArray groupDelta;
         const bool ifOk = CollectInterfaces(ifaces);
         if (Stopping())
             return;
         const bool grpOk = CollectMemberships(groups);
-        if (ifOk && (!haveIfaces || ifaces != seenIfaces))
-        {
-            DiffInterfaces(haveIfaces ? seenIfaces : InterfacesMap(), ifaces, ifaceDelta);
-            seenIfaces = ifaces;
-            haveIfaces = true;
-        }
+        // The full interface set is published on every good read so the
+        // main thread can put back an interface SMF dropped.
         if (grpOk && (!haveGroups || groups != seenGroups))
         {
             DiffMemberships(seenGroups, groups, groupDelta);
+            seenGroups = groups;
             haveGroups = true;
         }
-        if (ifaceDelta.empty() && groupDelta.empty())
+        if (!ifOk && groupDelta.empty())
             continue;
 
         bool wake = false;
@@ -155,8 +150,11 @@ void SmfIgmp::PollLoop()
             std::lock_guard<std::mutex> lock(mu);
             if (stop)
                 return;
-            for (const auto& c : ifaceDelta)
-                pending.interface_changes[c.first] = c.second;
+            if (ifOk)
+            {
+                pending.have_interfaces = true;
+                pending.interface_table = ifaces;
+            }
             pending.membership_changes.insert(pending.membership_changes.end(),
                                               groupDelta.begin(), groupDelta.end());
             wake = !notify_armed;
@@ -186,17 +184,23 @@ void SmfIgmp::ProcessUpdates()
         std::swap(handoff, pending);
         notify_armed = false;
     }
-    for (const auto& c : handoff.interface_changes)
+    if (handoff.have_interfaces)
     {
-        interface_changes[c.first] = c.second;
-        if (c.second.second)
-            active_interfaces[c.first] = c.second;
-        else
-            active_interfaces.erase(c.first);
+        fresh_interfaces = handoff.interface_table;
+        have_fresh_interfaces = true;
     }
     membership_changes.insert(membership_changes.end(),
                               handoff.membership_changes.begin(),
                               handoff.membership_changes.end());
+}
+
+bool SmfIgmp::TakeInterfaceSnapshot(InterfacesMap& out)
+{
+    if (!have_fresh_interfaces)
+        return false;
+    out.swap(fresh_interfaces);
+    have_fresh_interfaces = false;
+    return true;
 }
 
 std::vector<std::tuple<std::string, std::string>> SmfIgmp::NewNetworkInterface(const std::string& ifaceName) const
@@ -344,25 +348,6 @@ bool SmfIgmp::CollectInterfaces(InterfacesMap& out)
     return true;
 }
 
-void SmfIgmp::DiffInterfaces(const InterfacesMap& previous, const InterfacesMap& current,
-                             InterfacesMap& changes)
-{
-    for (const auto& c : current)
-    {
-        InterfacesMap::const_iterator it = previous.find(c.first);
-        if (it == previous.end())
-            changes[c.first] = c.second;
-    }
-    for (const auto& p : previous)
-    {
-        if (current.find(p.first) == current.end())
-        {
-            changes[p.first].first = p.second.first;
-            changes[p.first].second = false;
-        }
-    }
-}
-
 bool SmfIgmp::CollectMemberships(MembershipMap& out)
 {
     std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::PIM, {"enable","show ip igmp vrf all groups json"});
@@ -494,7 +479,7 @@ bool SmfIgmp::CollectMemberships(MembershipMap& out)
     return true;
 }
 
-void SmfIgmp::DiffMemberships(MembershipMap& previous, const MembershipMap& current,
+void SmfIgmp::DiffMemberships(const MembershipMap& previous, const MembershipMap& current,
                                MembershipChangeArray& changes)
 {
     // Find difference between previous state and the current state
@@ -580,6 +565,4 @@ void SmfIgmp::DiffMemberships(MembershipMap& previous, const MembershipMap& curr
             cit = std::next(cit);
         }
     }
-
-    previous = current;
 }

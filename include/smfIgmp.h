@@ -21,19 +21,18 @@
  *
  * @brief Polls FRR for IGMP interface and group state. The poll runs on its
  * own thread so a slow pimd reply does not stall the SMF control socket.
- * The worker diffs each successful read and hands the main thread only
- * the added and removed interfaces and groups. The core app applies that
- * list.
+ * The worker parses each read. Group changes are a delta. The full
+ * IGMP-up interface set is handed over on every successful poll so the
+ * main thread can reconcile it with the interfaces SMF still has.
  *
  */
 
 class SmfIgmp : public ProtoChannel
 {
-    using MembershipMap = std::map<std::uint32_t, std::set<ProtoAddress>>;
-    using MembershipChangeArray = std::vector<std::tuple<ProtoAddress, bool, std::uint32_t>>;
-    using InterfacesMap = std::map<std::uint32_t, std::pair<std::string, bool>>;
-
     public:
+        using MembershipMap = std::map<std::uint32_t, std::set<ProtoAddress>>;
+        using MembershipChangeArray = std::vector<std::tuple<ProtoAddress, bool, std::uint32_t>>;
+        using InterfacesMap = std::map<std::uint32_t, std::pair<std::string, bool>>;
         SmfIgmp();
         ~SmfIgmp();
 
@@ -50,17 +49,23 @@ class SmfIgmp : public ProtoChannel
         MembershipChangeArray GetMembershipUpdates()
             {return std::move(membership_changes);}
         bool HasInterfaceUpdates() const
-            {return !interface_changes.empty();}
-        InterfacesMap GetInterfaceUpdates()
-            {return std::move(interface_changes);}
+            {return have_fresh_interfaces;}
+        // Latest IGMP-up interfaces from the worker. Main thread only.
+        bool TakeInterfaceSnapshot(InterfacesMap& out);
+        InterfacesMap ActiveInterfaces() const
+            {return active_interfaces;}
+        void SetActiveInterfaces(const InterfacesMap& next)
+            {active_interfaces = next;}
 
         std::vector<std::tuple<std::string, std::string>> NewNetworkInterface(const std::string& ifaceName) const;
 
     private:
         struct Handoff
         {
-            InterfacesMap interface_changes;
+            bool have_interfaces;
+            InterfacesMap interface_table;
             MembershipChangeArray membership_changes;
+            Handoff() : have_interfaces(false) {}
         };
 
         void PollLoop();
@@ -68,15 +73,14 @@ class SmfIgmp : public ProtoChannel
         bool Stopping();
         bool CollectInterfaces(InterfacesMap& out);
         bool CollectMemberships(MembershipMap& out);
-        static void DiffInterfaces(const InterfacesMap& previous, const InterfacesMap& current,
-                                   InterfacesMap& changes);
-        static void DiffMemberships(MembershipMap& previous, const MembershipMap& current,
+        static void DiffMemberships(const MembershipMap& previous, const MembershipMap& current,
                                     MembershipChangeArray& changes);
 
         int wpipe;
         MembershipChangeArray membership_changes;
         InterfacesMap active_interfaces;
-        InterfacesMap interface_changes;
+        bool have_fresh_interfaces;
+        InterfacesMap fresh_interfaces;
 
         std::mutex mu;
         std::condition_variable cv;
