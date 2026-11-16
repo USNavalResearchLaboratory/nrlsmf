@@ -512,10 +512,30 @@ void Smf::DeleteInterfaceGroup(InterfaceGroup& ifaceGroup)
         {
             DeleteInterface(iface); // It's not in any other groups, so deactivate / delete it
         }
+        else
+        {
+            SyncElasticFlag(*iface);
+        }
     }
     iface_group_list.Remove(ifaceGroup);
     delete &ifaceGroup;
 }  // end Smf::DeleteInterfaceGroup()
+
+void Smf::SyncElasticFlag(Interface& iface)
+{
+#ifdef ELASTIC_MCAST
+    InterfaceGroupList::Iterator iterator(iface_group_list);
+    InterfaceGroup* ifaceGroup;
+    while (NULL != (ifaceGroup = iterator.GetNextItem()))
+    {
+        if (ifaceGroup->GetElasticMulticast() && ifaceGroup->Contains(iface))
+            return;
+    }
+    iface.SetElasticMulticast(false);
+#else
+    (void)iface;
+#endif // ELASTIC_MCAST
+}  // end Smf::SyncElasticFlag()
 
 Smf::Interface *Smf::AddInterface(unsigned int ifIndex, const char *ifName)
 {

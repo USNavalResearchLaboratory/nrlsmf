@@ -855,6 +855,9 @@ class Smf
 
         bool IsInGroup(Interface& iface)
             {return iface_list.IsInOtherQueue(iface);}
+        // Forwarding reads the interface Elastic flag as well as the
+        // group bit. Clear it once no elastic group still has the iface.
+        void SyncElasticFlag(Interface& iface);
 
         // This class is used to manage interfaces that are associated
         // with each other as a group using a common relay algorithm
@@ -880,9 +883,11 @@ class Smf
                         if (elastic_ucast) iface.IncrementUnicastGroupCount();
                         iface.SetETX(use_etx);
 #ifdef ELASTIC_MCAST
-                        // "show interface" prints this flag, not the group bit.
-                        // A member that joins after "elastic <group>" must
-                        // inherit it or it is reported as Flood.
+                        // "show interface" prints this flag. Forwarding also
+                        // treats the iface as elastic when it is set, so a
+                        // member that joins after "elastic <group>" must
+                        // inherit it or it is reported as Flood and forwarded
+                        // as a plain flood.
                         if (elastic_mcast) iface.SetElasticMulticast(true);
 #endif // ELASTIC_MCAST
                         return true;

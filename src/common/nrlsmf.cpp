@@ -2571,7 +2571,6 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         {
             char ifaceName[64];
             ifaceName[63] = '\0';
-            iface->SetElasticMulticast(true);
             if (iface->IsStub())
                 continue;
             if (!ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, 63))
@@ -5978,6 +5977,8 @@ bool SmfApp::RemoveInterface(Smf::InterfaceGroup* ifaceGroup, const char* ifaceN
                 ifaceGroup->RemoveInterface(*iface);
                 if (!smf.IsInGroup(*iface))
                     smf.DeleteInterface(iface); // It's not in any other groups, so deactivate / delete it
+                else
+                    smf.SyncElasticFlag(*iface);
                 if (ifaceGroup->IsEmpty())
                 {
                     PLOG(PL_DEBUG, "SmfApp::RemoveInterface() deleting empty interface group \"%s\"\n", ifaceGroup->GetName());
