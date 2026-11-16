@@ -6,6 +6,7 @@
 #include <sstream>
 #include <string>
 #include <chrono>
+#include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>  // for atoi()
@@ -124,6 +125,13 @@ bool SmfVrfUpdateChannel::Open()
     }
     descriptor = p[0];
     wpipe = p[1];
+    for (int i = 0; i < 2; ++i)
+    {
+        int flags = fcntl(p[i], F_GETFL, 0);
+        if (flags >= 0)
+            fcntl(p[i], F_SETFL, flags | O_NONBLOCK);
+        fcntl(p[i], F_SETFD, FD_CLOEXEC);
+    }
     if (!ProtoChannel::Open())
     {
         PLOG(PL_ERROR, "SmfVrfUpdateChannel::Open() Failed to open ProtoChannel\n");
@@ -135,6 +143,7 @@ bool SmfVrfUpdateChannel::Open()
 
 void SmfVrfUpdateChannel::Close()
 {
+    // The worker must already be joined. Signal() writes wpipe without mu.
     ProtoChannel::Close();
     if (descriptor != ProtoChannel::INVALID_HANDLE)
     {

@@ -3,6 +3,7 @@
 #include <regex>
 #include <set>
 #include <chrono>
+#include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <utility>
@@ -44,6 +45,13 @@ bool SmfIgmp::Open(bool withFRR)
 
     descriptor = p[0]; // For reading in SMF core app
     wpipe = p[1]; // For writing IGMP updates locally
+    for (int i = 0; i < 2; ++i)
+    {
+        int flags = fcntl(p[i], F_GETFL, 0);
+        if (flags >= 0)
+            fcntl(p[i], F_SETFL, flags | O_NONBLOCK);
+        fcntl(p[i], F_SETFD, FD_CLOEXEC);
+    }
 
     // Register the read end before the poll thread can write it.
     if (!ProtoChannel::Open())
