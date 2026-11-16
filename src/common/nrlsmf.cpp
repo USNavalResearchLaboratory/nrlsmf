@@ -3499,11 +3499,26 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                 return false;
             }
 #ifdef ELASTIC_MCAST
-            // map is what makes IsGRE() true. A member already in an
-            // elastic group has to join 224.0.0.55 here; the elastic
-            // command's walk already ran.
-            if (iface->IsGRE() && !JoinElasticAckGroup(*iface, ifaceName))
-                return false;
+            // map is what makes IsGRE() true. Join 224.0.0.55 only when
+            // this iface is already in an elastic group; the elastic
+            // command's walk already ran. A map that runs before elastic
+            // must not fail startup, the walk joins those tunnels later.
+            if (iface->IsGRE())
+            {
+                bool inElastic = false;
+                Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
+                Smf::InterfaceGroup* group;
+                while (NULL != (group = grouperator.GetNextItem()))
+                {
+                    if (group->GetElasticMulticast() && group->Contains(*iface))
+                    {
+                        inElastic = true;
+                        break;
+                    }
+                }
+                if (inElastic && !JoinElasticAckGroup(*iface, ifaceName))
+                    return false;
+            }
 #endif // ELASTIC_MCAST
         }
         else if (dynamicLearn)
