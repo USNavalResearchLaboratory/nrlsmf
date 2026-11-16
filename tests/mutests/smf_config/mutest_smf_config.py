@@ -95,7 +95,7 @@ section("Interface that joins after elastic inherits Elastic")
 
 LATE = "late0"
 step(NODE, "modprobe dummy || true")
-step(NODE, f"ip link add {LATE} type dummy")
+step(NODE, f"ip link add {LATE} type dummy || true")
 step(NODE, f"ip link set {LATE} up")
 expect_ok(NODE, f"add {GROUP},cf,{LATE}", INST)
 listing = show_json(NODE, "show interface", INST)
@@ -209,12 +209,45 @@ section("Tunnel, underlay join, and EM join")
 
 expect_ok(NODE, f"map {GRE},{LOCAL},{REMOTE}", INST)
 check_show_tunnel(NODE, INST, GRE, local=LOCAL, remotes=(REMOTE,), want_c=True)
+gre_maddr = step(NODE, f"ip maddr show dev {GRE}")
+test_step(
+    "224.0.0.55" in (gre_maddr or ""),
+    f"{NODE} {GRE} joined 224.0.0.55",
+    target=NODE,
+)
 
 expect_ok(NODE, f"ujoin {UJOIN},{ETH0}", INST)
 expect_ok(NODE, f"join {JOIN}", INST)
 memberships = show_json(NODE, "show groups memberships", INST)
 maddrs = {r.get("MCastAddr") for r in (memberships or []) if isinstance(r, dict)}
 test_step(JOIN in maddrs, f"{NODE} memberships include {JOIN}", target=NODE)
+
+section("Late GRE member joins the elastic underlay group")
+
+LATEGRE = "gre2"
+LATEGRE_REMOTE = "10.0.0.3"
+step(
+    NODE,
+    f"ip link add {LATEGRE} type gre local {LOCAL} remote {LATEGRE_REMOTE} ttl 255 || true",
+)
+step(NODE, f"ip addr add 172.16.1.1/24 dev {LATEGRE} || true")
+step(NODE, f"ip link set {LATEGRE} up")
+expect_ok(NODE, f"add hold,cf,{LATEGRE}", INST)
+expect_ok(NODE, f"map {LATEGRE},{LOCAL},{LATEGRE_REMOTE}", INST)
+expect_ok(NODE, f"add {GROUP},cf,{LATEGRE}", INST)
+listing = show_json(NODE, "show interface", INST)
+late_gre = iface_row(listing, LATEGRE)
+test_step(
+    late_gre is not None and late_gre.get("FwdMethod") == "Elastic",
+    f"{NODE} {LATEGRE} FwdMethod is Elastic",
+    target=NODE,
+)
+late_maddr = step(NODE, f"ip maddr show dev {LATEGRE}")
+test_step(
+    "224.0.0.55" in (late_maddr or ""),
+    f"{NODE} {LATEGRE} joined 224.0.0.55",
+    target=NODE,
+)
 
 section("Global options")
 

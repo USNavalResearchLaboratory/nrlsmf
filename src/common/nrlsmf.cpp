@@ -56,6 +56,7 @@
 #ifdef LINUX
 #include <linux/neighbour.h>
 #endif
+#include <set>
 #include <sstream>
 #include <vector>
 #include <tuple>
@@ -217,6 +218,8 @@ class SmfApp : public ProtoApp
                          ProtoChannel::Notification  notifyType);
 
         bool JoinUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
+        // mGRE PF_PACKET does not deliver 224.0.0.55 unless the tunnel joins it.
+        bool JoinElasticAckGroup(Smf::Interface& iface, const char* ifaceName);
         bool LeaveUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
         bool GreDeviceIsUnicastMgre(Smf::Interface& iface);
         bool MaybeEnableUnderlayGreDemux(const ProtoAddress& groupAddr);
@@ -471,6 +474,7 @@ class SmfApp : public ProtoApp
         ProtoTimer                  igmp_query_timer;
 #endif // ELASTIC_MCAST
         ProtoSocket                 underlay_group_socket;  // used for joining mGRE underlay groups
+        std::set<unsigned int>      elastic_ack_joined;     // ifaces already in 224.0.0.55
         ProtoAddressList            underlay_join_groups;   // ujoin group -> underlay ifindex
         ProtoCap*                   underlay_gre_cap;       // GRE-in-mcast capture (unicast mGRE only)
         ProtoAddressList            underlay_gre_groups;    // groups that need capture demux
@@ -2577,21 +2581,8 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             }
             // mGRE PF_PACKET does not deliver 224.0.0.55 unless the
             // tunnel joins it. EM_ACK/ADV/NACK all use that group.
-            if (iface->IsGRE())
-            {
-                if (!underlay_group_socket.IsOpen() && !underlay_group_socket.Open())
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: unable to open socket to join %s on %s\n",
-                         ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
-                    return false;
-                }
-                if (!underlay_group_socket.JoinGroup(ElasticAck::ELASTIC_ADDR, ifaceName))
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: join %s on %s failed\n",
-                         ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
-                    return false;
-                }
-            }
+            if (!JoinElasticAckGroup(*iface, ifaceName))
+                return false;
             ProtoAddressList groupList;
             if (!ProtoNet::GetGroupMemberships(ifaceName, ProtoAddress::IPv4, groupList))
             {
@@ -3499,6 +3490,13 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                 PLOG(PL_ERROR, "OnCommand(%s) error: Smf::AddOwnAddress() failed\n", cmd);
                 return false;
             }
+#ifdef ELASTIC_MCAST
+            // map is what makes IsGRE() true. A member already in an
+            // elastic group has to join 224.0.0.55 here; the elastic
+            // command's walk already ran.
+            if (iface->IsGRE() && !JoinElasticAckGroup(*iface, ifaceName))
+                return false;
+#endif // ELASTIC_MCAST
         }
         else if (dynamicLearn)
         {
@@ -4520,6 +4518,30 @@ bool SmfApp::ParseRouteList(const char* routeList)
 }  // end SmfApp::ParseRouteList()
 
 
+#ifdef ELASTIC_MCAST
+bool SmfApp::JoinElasticAckGroup(Smf::Interface& iface, const char* ifaceName)
+{
+    if (!iface.IsGRE())
+        return true;
+    if (elastic_ack_joined.count(iface.GetIndex()) != 0)
+        return true;
+    if (!underlay_group_socket.IsOpen() && !underlay_group_socket.Open())
+    {
+        PLOG(PL_ERROR, "SmfApp::JoinElasticAckGroup() error: unable to open socket to join %s on %s\n",
+             ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
+        return false;
+    }
+    if (!underlay_group_socket.JoinGroup(ElasticAck::ELASTIC_ADDR, ifaceName))
+    {
+        PLOG(PL_ERROR, "SmfApp::JoinElasticAckGroup() error: join %s on %s failed\n",
+             ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
+        return false;
+    }
+    elastic_ack_joined.insert(iface.GetIndex());
+    return true;
+}  // end SmfApp::JoinElasticAckGroup()
+#endif // ELASTIC_MCAST
+
 bool SmfApp::JoinUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName)
 {
     if (!underlay_group_socket.IsOpen() && !underlay_group_socket.Open())
@@ -5318,6 +5340,8 @@ bool SmfApp::AddInterfaceToGroup(Smf::InterfaceGroup& ifaceGroup, Smf::Interface
                 PLOG(PL_ERROR, "SmfApp::AddInterfaceToGroup(%s) error: unable to retrieve interface name\n", ifaceName);
                 return false;
             }
+            if (!JoinElasticAckGroup(iface, ifaceName))
+                return false;
             ProtoAddressList groupList;
             if (!ProtoNet::GetGroupMemberships(ifaceName, ProtoAddress::IPv4, groupList))
             {
