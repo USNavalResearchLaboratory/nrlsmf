@@ -221,7 +221,12 @@ std::vector<std::tuple<std::string, std::string>> SmfIgmp::NewNetworkInterface(c
 
 bool SmfIgmp::CollectInterfaces(InterfacesMap& out)
 {
-    std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::PIM, {"enable","show ip igmp vrf all interface json"});
+    if (Stopping())
+        return false;
+    std::pair<std::string, std::int8_t> enable = FRR::FRRVty(FRR::PIM, {"enable"});
+    if (enable.second != 0 || Stopping())
+        return false;
+    std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::PIM, {"show ip igmp vrf all interface json"});
     if (ret.second != 0)
     {
        PLOG(PL_ERROR, "SmfIgmp::CollectInterfaces() Failed to retrieve IGMP interface information from FRR-PIM\n");
@@ -350,7 +355,12 @@ bool SmfIgmp::CollectInterfaces(InterfacesMap& out)
 
 bool SmfIgmp::CollectMemberships(MembershipMap& out)
 {
-    std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::PIM, {"enable","show ip igmp vrf all groups json"});
+    if (Stopping())
+        return false;
+    std::pair<std::string, std::int8_t> enable = FRR::FRRVty(FRR::PIM, {"enable"});
+    if (enable.second != 0 || Stopping())
+        return false;
+    std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::PIM, {"show ip igmp vrf all groups json"});
     if (ret.second != 0)
     {
        PLOG(PL_ERROR, "SmfIgmp::CollectMemberships() Failed to retrieve group information from FRR-PIM\n");

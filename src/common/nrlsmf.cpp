@@ -1934,6 +1934,14 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
 
 void SmfApp::OnShutdown()
 {
+    /* Join the FRR poll threads before tearing anything else down. Each
+     * VTY exchange can run until its deadline, so this is the wait.
+     */
+#ifdef ELASTIC_MCAST
+    igmp_controller.Close();
+#endif // ELASTIC_MCAST
+    smf.GetVRFs()->EnableFRRUpdates(false);
+
     if ('\0' != config_path[0])
         SaveConfig(config_path);
 
