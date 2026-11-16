@@ -194,6 +194,7 @@ SmfVRFList::SmfVRFList() :
     pending_mu(),
     pending_updates(),
     last_snapshot(),
+    applied_ifaces(),
     policies(NULL)
 {
 }
@@ -440,6 +441,12 @@ int SmfVRFList::Collect()
         it->second.have_ifaces = true;
     }
 
+    std::unordered_map<std::string, std::unordered_set<std::string>> applied;
+    {
+        std::lock_guard<std::mutex> lock(pending_mu);
+        applied = applied_ifaces;
+    }
+
     std::vector<VrfUpdate> delta;
     for (std::unordered_map<std::string, VrfSnap>::iterator it = now.begin(); it != now.end(); ++it)
     {
@@ -447,7 +454,16 @@ int SmfVRFList::Collect()
         bool isNew = prev == last_snapshot.end();
         bool ifacesChanged = it->second.have_ifaces &&
             (isNew || !prev->second.have_ifaces || prev->second.ifaces != it->second.ifaces);
-        if (!isNew && !ifacesChanged)
+        // Retry when the stored list is not zebra's list. That covers a
+        // name SetIfaceList dropped, and an operator vrf command that
+        // cleared the stored list.
+        bool notApplied = false;
+        if (it->second.have_ifaces)
+        {
+            std::unordered_map<std::string, std::unordered_set<std::string>>::iterator got = applied.find(it->first);
+            notApplied = (got == applied.end() || got->second != it->second.ifaces);
+        }
+        if (!isNew && !ifacesChanged && !notApplied)
             continue;
 
         VrfUpdate update;
@@ -468,6 +484,14 @@ int SmfVRFList::Collect()
     std::lock_guard<std::mutex> lock(pending_mu);
     pending_updates.insert(pending_updates.end(), delta.begin(), delta.end());
     return 1;
+}
+
+void SmfVRFList::ForgetAppliedIfaces(const char* name)
+{
+    if (NULL == name)
+        return;
+    std::lock_guard<std::mutex> lock(pending_mu);
+    applied_ifaces.erase(name);
 }
 
 void SmfVRFList::ApplyPending()
@@ -491,6 +515,10 @@ void SmfVRFList::ApplyPending()
         {
             vrf->SetIfaceList(it->ifaces);
             dirty = true;
+        }
+        {
+            std::lock_guard<std::mutex> lock(pending_mu);
+            applied_ifaces[it->name] = vrf->GetIfaceList();
         }
     }
     if (dirty)

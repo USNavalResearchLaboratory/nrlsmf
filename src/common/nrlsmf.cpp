@@ -2394,6 +2394,9 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
           vrf->AddInterface(ifaceName);
           noIface = false;
         }
+        // The VRF poll compares zebra's list with the list it last
+        // stored. Drop that record so the next read overwrites this edit.
+        smf.GetVRFs()->ForgetAppliedIfaces(vrfNamePtr);
         if (noIface) {
           PLOG(PL_ERROR,
                "SmfApp::OnCommand(vrf) error: missing interface list\n");

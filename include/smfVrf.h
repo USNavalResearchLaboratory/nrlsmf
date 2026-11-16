@@ -108,6 +108,9 @@ class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF>
         void EnableFRRUpdates(bool enable);
         // Apply VRF and interface-list changes queued by the worker.
         void ApplyPending();
+        // Drop the iface list the worker thinks it stored, so the next
+        // zebra read is applied again. The runtime vrf command uses this.
+        void ForgetAppliedIfaces(const char* name);
         SmfVRF *GetVRF(UINT32 vrf_id) const { return FindVRF(vrf_id); }
         SmfVRF *GetVRFbyIfaceIndex(unsigned int iface_index);
         ProtoChannel& GetUpdateChannel()
@@ -126,6 +129,9 @@ class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF>
         };
         struct VrfSnap
         {
+            // id and table_id are stored so a new VRF can be created
+            // with them. AddVRF ignores an existing name, so a later
+            // change of id or table is not re-applied.
             UINT32 id;
             int table_id;
             bool have_ifaces;
@@ -148,6 +154,10 @@ class SmfVRFList : public ProtoIndexedQueueTemplate<SmfVRF>
         std::mutex pending_mu;
         std::vector<VrfUpdate> pending_updates;
         std::unordered_map<std::string, VrfSnap> last_snapshot;
+        // Iface names SetIfaceList actually kept. A name zebra listed
+        // whose index did not resolve is missing here, so the next poll
+        // retries it. ForgetAppliedIfaces() clears an entry.
+        std::unordered_map<std::string, std::unordered_set<std::string>> applied_ifaces;
         SmfVRFPolicies * policies;
         const char *GetKey(const Item &item) const
             {return static_cast<const SmfVRF &>(item).GetKey();}
