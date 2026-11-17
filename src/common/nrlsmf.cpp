@@ -146,6 +146,12 @@ class SmfApp : public ProtoApp
                                                InterfaceMatcher*   matcher = NULL,
                                                bool                isTemplate = false);
 
+        bool IsRelayMember(const char* ifName);
+        // An IGMP-up relay radio is not a host LAN. Drop the automatic
+        // rpush group so it can keep relay associates.
+        void ReleaseIgmpHostRole(const char* ifName);
+        bool HostPlumbingCommand(const std::string& arg, std::string& out);
+
         bool ParseInterfaceList(const char*         ifaceGroupName,
                                 Smf::Mode           mode,
                                 const char*         ifaceList,
@@ -4949,6 +4955,93 @@ Smf::InterfaceGroup* SmfApp::GetInterfaceGroup(const char*         groupName,
     return ifaceGroup;
 }  // end SmfApp::GetInterfaceGroup()
 
+bool SmfApp::IsRelayMember(const char* ifName)
+{
+    if ((NULL == ifName) || ('\0' == *ifName))
+        return false;
+    Smf::Interface* iface = smf.FindInterfaceByName(ifName);
+    if (NULL == iface)
+        return false;
+    Smf::InterfaceGroupList::Iterator iterator(smf.AccessInterfaceGroupList());
+    Smf::InterfaceGroup* group;
+    while (NULL != (group = iterator.GetNextItem()))
+    {
+        if ((Smf::RELAY == group->GetForwardingMode()) && group->Contains(*iface))
+            return true;
+    }
+    return false;
+}  // end SmfApp::IsRelayMember()
+
+void SmfApp::ReleaseIgmpHostRole(const char* ifName)
+{
+    if ((NULL == ifName) || ('\0' == *ifName))
+        return;
+    char groupName[Smf::IF_GROUP_NAME_MAX + Smf::IF_NAME_MAX + 2];
+    groupName[sizeof(groupName) - 1] = '\0';
+    snprintf(groupName, sizeof(groupName), "push:%s", ifName);
+    Smf::InterfaceGroup* group = smf.FindInterfaceGroup(groupName);
+    if ((NULL == group) || !group->GetResequence() || (Smf::PUSH != group->GetForwardingMode()))
+        return;
+    Smf::Interface* src = group->GetPushSource();
+    if ((NULL == src) || (0 != strcmp(src->GetNameStr(), ifName)))
+        return;
+    // The IGMP poll built this rpush group while the radio was only a
+    // host. Relay associates need the same edges.
+    PLOG(PL_DEBUG, "SmfApp::ReleaseIgmpHostRole() dropping automatic rpush for relay iface \"%s\"\n", ifName);
+    src->RemoveAssociatesForGroup(*group);
+    src->SetResequence(false);
+    smf.DeleteInterfaceGroup(*group);
+}  // end SmfApp::ReleaseIgmpHostRole()
+
+bool SmfApp::HostPlumbingCommand(const std::string& arg, std::string& out)
+{
+    // rpush,<host>[,<radio>...] is host-LAN plumbing. A relay radio that
+    // also has IGMP stays a relay member; its receivers are memberships.
+    if (0 == arg.compare(0, 6, "rpush,"))
+    {
+        std::string rest = arg.substr(6);
+        size_t comma = rest.find(',');
+        std::string host = (std::string::npos == comma) ? rest : rest.substr(0, comma);
+        if (host.empty() || IsRelayMember(host.c_str()))
+            return false;
+        out = arg;
+        return true;
+    }
+    if (0 == arg.compare(0, 5, "push,"))
+    {
+        std::string rest = arg.substr(5);
+        size_t comma = rest.find(',');
+        // push,<radio> with no destinations is the implicit subgroup
+        // created for every relay interface. Keep it.
+        if (std::string::npos == comma)
+        {
+            if (rest.empty())
+                return false;
+            out = arg;
+            return true;
+        }
+        std::string rebuilt = "push," + rest.substr(0, comma);
+        std::string hosts = rest.substr(comma + 1);
+        size_t start = 0;
+        while (start < hosts.size())
+        {
+            size_t next = hosts.find(',', start);
+            std::string host = hosts.substr(start, (std::string::npos == next) ? std::string::npos : next - start);
+            if (!host.empty() && !IsRelayMember(host.c_str()))
+                rebuilt += "," + host;
+            if (std::string::npos == next)
+                break;
+            start = next + 1;
+        }
+        // Relay members were the only destinations. The radio still
+        // gets its implicit push group; it is not an rpush source.
+        out = rebuilt;
+        return true;
+    }
+    out = arg;
+    return true;
+}  // end SmfApp::HostPlumbingCommand()
+
 // "mode = Smf::PUSH, Smf::MERGE, SMPR, ECDS, NSMPR, etc
 bool SmfApp::ParseInterfaceList(const char*         groupName,
                                 Smf::Mode           mode,
@@ -5029,7 +5122,10 @@ bool SmfApp::ParseInterfaceList(const char*         groupName,
             std::vector<std::tuple<std::string, std::string>> cmds = igmp_controller.NewNetworkInterface(ifaceName);
             for (const auto& c : cmds)
             {
-                if (!OnCommand(std::get<0>(c).c_str(), std::get<1>(c).c_str()))
+                std::string plumbing;
+                if (!HostPlumbingCommand(std::get<1>(c), plumbing))
+                    continue;
+                if (!OnCommand(std::get<0>(c).c_str(), plumbing.c_str()))
                 {
                     PLOG(PL_ERROR, "SmfApp::ParseInterfaceList() Failed to do automatic host configuration for new network interface \"%s\"\n", ifaceName);
                 }
@@ -5093,6 +5189,11 @@ bool SmfApp::ParseInterfaceName(Smf::InterfaceGroup& ifaceGroup, const char* ifa
     }
     else
     {
+        // A relay radio may also have IGMP hosts. That is membership on
+        // this iface, not a separate host LAN, so drop an rpush role
+        // the IGMP poll may already have installed.
+        if (Smf::RELAY == ifaceGroup.GetForwardingMode())
+            ReleaseIgmpHostRole(ifaceName);
         Smf::Interface* iface = GetInterface(ifaceName);
         if (NULL == iface)
         {
@@ -5661,8 +5762,9 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
                 // Make sure this iface hasn't been previously set as a rpush or rmerge srcIface
                 if (iface->GetResequence() || iface->IsTunnel())
                 {
+                    // One rpush source must not abort the rest of the mesh.
                     PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() error: MANET iface config conflicts with previous rpush or rmerge config!\n");
-                    return false;  // TBD - issue warning and make this "continue" instead ???
+                    continue;
                 }
                 Smf::InterfaceGroup::Iterator dstIfacerator(ifaceGroup);
                 Smf::Interface* dstIface;
@@ -5674,9 +5776,10 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
                     {
                         if (&ifaceGroup != &assoc->GetInterfaceGroup())
                         {
+                            // Keep the edges that do not conflict.
                             PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() error: MANET iface index %d already has a different association with index %d?!\n",
                                            iface->GetIndex(), dstIface->GetIndex());
-                            return false;
+                            continue;
                         }
                     }
                     else

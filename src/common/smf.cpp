@@ -174,6 +174,27 @@ bool Smf::Interface::AddAssociate(InterfaceGroup& ifaceGroup, Interface& iface)
     return true;
 }  // end Smf::Interface::AddAssociate()
 
+void Smf::Interface::RemoveAssociatesForGroup(InterfaceGroup& ifaceGroup)
+{
+    Associate* doomed[64];
+    unsigned int count = 0;
+    AssociateList::Iterator iterator(assoc_target_list);
+    Associate* assoc;
+    while (NULL != (assoc = iterator.GetNextItem()))
+    {
+        if (&assoc->GetInterfaceGroup() != &ifaceGroup)
+            continue;
+        if (count < 64)
+            doomed[count++] = assoc;
+    }
+    for (unsigned int i = 0; i < count; i++)
+    {
+        doomed[i]->GetInterface().assoc_source_list.Remove(*doomed[i]);
+        assoc_target_list.Remove(*doomed[i]);
+        delete doomed[i];
+    }
+}  // end Smf::Interface::RemoveAssociatesForGroup()
+
 bool Smf::Interface::EnqueueFrame(const char* frameBuf, unsigned int frameLen, SmfPacket::Pool* pktPool)
 {
     if (frameLen > SmfPacket::PKT_SIZE_MAX)

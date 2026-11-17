@@ -631,6 +631,9 @@ class Smf
                     {return (!assoc_target_list.IsEmpty());}// || !assoc_source_list.IsEmpty());}
 
                 bool AddAssociate(InterfaceGroup& ifaceGroup, Interface& targetIface);
+                // Drop edges installed by one group. Used when an IGMP host
+                // role is removed so the iface can be a relay member.
+                void RemoveAssociatesForGroup(InterfaceGroup& ifaceGroup);
 
                 Associate* FindAssociate(unsigned int ifIndex);
 
