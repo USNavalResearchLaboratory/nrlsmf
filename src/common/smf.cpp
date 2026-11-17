@@ -808,7 +808,9 @@ Smf::DpdType Smf::GetIPv6PktID(ProtoPktIPv6&   ip6Pkt,      // input
             }  // end switch (ext.GetType())
             extHeaderLength += ext.GetLength();
         }  // end while (extIterator.GetNextExtension(ext))
-        nextHeader = ext.GetNextHeader();  // header _after_ extension headers (might be ESP)
+        // Only read from "ext" if an extension header was actually parsed
+        if (0 != ext.GetBufferLength())
+            nextHeader = ext.GetNextHeader();  // header _after_ extension headers (might be ESP)
     }  // end if (ip6Pkt.HasExtendedHeader())
     if (ProtoPktIP::ESP == nextHeader)
     {
@@ -1308,6 +1310,11 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                 case ElasticMsg::ACK:
                                 {
                                     ElasticAck elasticAck(elasticMsg);
+                                    if (!elasticAck.IsValid())
+                                    {
+                                        PLOG(PL_ERROR, "Smf::ProcessPacket() error: invalid ElasticAck message\n");
+                                        break;
+                                    }
                                     Smf::Interface* upstreamIface = NULL;
                                     ProtoAddress upstreamAddr;
                                     UINT8 upstreamCount = elasticAck.GetUpstreamListLength();
@@ -1413,6 +1420,11 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                         if (!elasticAdv.InitFromBuffer(buffer + bufferIndex, bufferLen - bufferIndex))
                                         {
                                             PLOG(PL_ERROR, "Smf::ProcessPacket() error: invalid ElasticAdv message\n");
+                                            break;
+                                        }
+                                        if (0 == elasticAdv.GetLength())
+                                        {
+                                            PLOG(PL_ERROR, "Smf::ProcessPacket() error: zero-length ElasticAdv message\n");
                                             break;
                                         }
                                         HandleAdv(currentTick, elasticAdv, srcIface, prevHopAddr, srcIp, upstreamHistory);
