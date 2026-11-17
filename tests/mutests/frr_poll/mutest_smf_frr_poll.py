@@ -12,6 +12,8 @@ started with-frr. The test checks:
   and zebra are stopped
 - a local IGMP membership on eth0 shows up in show igmp groups, and
   leaves again when the receiver socket closes
+- eth0 stays a relay member while it has IGMP; a separate host LAN
+  still gets push and rpush
 - an operator remove of that IGMP interface is undone on a later poll
 - VRF red is learned from zebra, and eth1 leaving red is learned too
 """
@@ -29,6 +31,7 @@ from munet.mutest.userapi import wait_step
 sys.path.insert(0, str(script_dir().parent))
 from smf_cli import cli_cmd
 from smf_cli import expect_ok
+from smf_cli import group_row
 from smf_cli import iface_row
 from smf_cli import parse_json_blob
 from smf_cli import show_json
@@ -170,6 +173,88 @@ def show_rows(show_cmd):
         return None
     return data
 
+
+def group_names():
+    grouping = show_rows("show interface grouping")
+    if not isinstance(grouping, list):
+        return set()
+    return {g.get("GroupName") for g in grouping if isinstance(g, dict)}
+
+
+section("Relay radio with IGMP keeps the mesh")
+
+# eth0 is already in the relay group and IGMP-up. Adding more relay
+# members must not turn eth0 into an rpush source. A later host-only
+# interface still gets push from the radios and rpush back.
+step(NODE, "modprobe dummy || true")
+step(NODE, "ip link add late0 type dummy || true")
+step(NODE, "ip link add late1 type dummy || true")
+step(NODE, "ip link set late0 up")
+step(NODE, "ip link set late1 up")
+expect_ok(NODE, "add net,cf,late0", INST)
+expect_ok(NODE, "add net,cf,late1", INST)
+grouping = show_json(NODE, "show interface grouping", INST)
+net = group_row(grouping, "net")
+have = set((net or {}).get("Interfaces") or [])
+for iface in (ETH0, ETH1, "late0", "late1"):
+    test_step(iface in have, f"{NODE} net includes {iface}", target=NODE)
+radio_push = group_row(grouping, "push:eth0")
+radio_ifaces = set((radio_push or {}).get("Interfaces") or [])
+test_step(
+    radio_push is not None and radio_ifaces <= {ETH0},
+    f"{NODE} {ETH0} keeps its implicit push group and does not rpush to other radios",
+    target=NODE,
+)
+conflicts = step(NODE, "grep -F 'previous rpush' nrlsmf.log || true")
+test_step(
+    "previous rpush" not in (conflicts or ""),
+    f"{NODE} relay update did not stop on an rpush conflict",
+    target=NODE,
+)
+
+HOST = "host0"
+# A dummy is not an IGMP-up interface to pimd. A veth is.
+step(NODE, f"ip link add {HOST} type veth peer name {HOST}p")
+step(NODE, f"ip link set {HOST} up")
+step(NODE, f"ip link set {HOST}p up")
+step(NODE, f"ip addr add 10.9.0.1/24 dev {HOST}")
+step(
+    NODE,
+    "vtysh -c 'configure terminal' "
+    f"-c 'interface {HOST}' -c 'ip igmp' -c 'end'",
+)
+wait_step(
+    NODE,
+    f"vtysh -c 'show ip igmp interface {HOST}'",
+    match="up",
+    desc=f"{NODE} pimd has IGMP up on {HOST}",
+    timeout=20,
+)
+
+
+def host_plumbed():
+    # rpush,<host>,<radio> is stored as group rpush:<host>.
+    # push,<radio>,<host> adds the host to the radio's push:<radio> group.
+    names = group_names()
+    if "rpush:host0" not in names:
+        return False
+    grouping = show_rows("show interface grouping")
+    radio = group_row(grouping, "push:eth0")
+    dests = set((radio or {}).get("Interfaces") or [])
+    return HOST in dests
+
+
+wait_until(
+    f"{NODE} host LAN {HOST} is pushed from {ETH0} and has rpush",
+    host_plumbed,
+    timeout=25,
+)
+grouping = show_json(NODE, "show interface grouping", INST)
+net = group_row(grouping, "net")
+have = set((net or {}).get("Interfaces") or [])
+test_step(HOST not in have, f"{NODE} {HOST} stays out of the relay group", target=NODE)
+test_step(ETH0 in have, f"{NODE} {ETH0} stays in the relay group", target=NODE)
+wait_em_managed(NODE, INST, ETH0, GROUP, timeout=15)
 
 section("IGMP leave is applied")
 
