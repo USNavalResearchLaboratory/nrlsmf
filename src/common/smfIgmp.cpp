@@ -2,29 +2,36 @@
 #include "frrVty.h"
 #include <regex>
 #include <set>
+#include <chrono>
+#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
+#include <utility>
 #include <protoJson.h>
 #include <iostream>
 
-static const double IGMP_POLL_INTERVAL = 5.0;
-static const double IGMP_POLL_FIRST_INTERVAL = 0.01;
+static const int IGMP_POLL_INTERVAL_MS = 5000;
 
-SmfIgmp::SmfIgmp(ProtoTimerMgr& timerMgr, Smf& _smf) :
+SmfIgmp::SmfIgmp() :
     ProtoChannel(),
     wpipe(INVALID_HANDLE),
-    timer_mgr(timerMgr),
-    smf(_smf),
-    update_timer(),
-    active_memberships(),
     membership_changes(),
     active_interfaces(),
-    interface_changes()
+    have_fresh_interfaces(false),
+    fresh_interfaces(),
+    mu(),
+    cv(),
+    stop(false),
+    notify_armed(false),
+    pending(),
+    poll_thread()
 {
-    update_timer.SetInterval(IGMP_POLL_INTERVAL);
-    update_timer.SetRepeat(-1);
-    update_timer.SetListener(this, &SmfIgmp::DoUpdate);
 }
 
-SmfIgmp::~SmfIgmp() {}
+SmfIgmp::~SmfIgmp()
+{
+    StopPollThread();
+}
 
 bool SmfIgmp::Open(bool withFRR)
 {
@@ -38,51 +45,82 @@ bool SmfIgmp::Open(bool withFRR)
 
     descriptor = p[0]; // For reading in SMF core app
     wpipe = p[1]; // For writing IGMP updates locally
-
-    if (withFRR)
-        EnableFrrPolling();
-    else if (update_timer.IsActive())
-    { // Not using FRR, so make sure the timer is inactive
-        update_timer.Deactivate();
+    // Do not rely on SetNotifier() to make these non-blocking. A later
+    // Open() would reuse a cached blocking flag and this drain would hang.
+    for (int i = 0; i < 2; ++i)
+    {
+        int flags = fcntl(p[i], F_GETFL, 0);
+        if (flags >= 0)
+            fcntl(p[i], F_SETFL, flags | O_NONBLOCK);
+        fcntl(p[i], F_SETFD, FD_CLOEXEC);
     }
 
-    // This must be called at the end of the Open
+    // Register the read end before the poll thread can write it.
     if (!ProtoChannel::Open())
     {
         PLOG(PL_ERROR, "SmfIgmp::Open() Failed to open ProtoChannel\n");
         Close();
         return false;
     }
+
+    if (withFRR)
+        EnableFrrPolling();
     return true;
 }
 
 void SmfIgmp::EnableFrrPolling()
 {
-    /* Do not DoUpdate() here: Open(withFRR) runs from OnStartup before
-     * the dispatcher, and blocking PIM VTY would stall the SMF socket.
-     */
-    if (!update_timer.IsActive())
+    if (poll_thread.joinable() || wpipe == INVALID_HANDLE)
+        return;
     {
-        update_timer.SetInterval(IGMP_POLL_FIRST_INTERVAL);
-        timer_mgr.ActivateTimer(update_timer);
+        std::lock_guard<std::mutex> lock(mu);
+        stop = false;
     }
+    // Workers inherit a blocked SIGTERM/SIGINT so ProtoApp's handler
+    // runs on the main thread and select() is interrupted.
+    sigset_t blocked, saved;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGTERM);
+    sigaddset(&blocked, SIGINT);
+    pthread_sigmask(SIG_BLOCK, &blocked, &saved);
+    poll_thread = std::thread(&SmfIgmp::PollLoop, this);
+    pthread_sigmask(SIG_SETMASK, &saved, NULL);
+}
+
+void SmfIgmp::StopPollThread()
+{
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        stop = true;
+    }
+    cv.notify_all();
+    if (poll_thread.joinable())
+        poll_thread.join();
+}
+
+bool SmfIgmp::Stopping()
+{
+    std::lock_guard<std::mutex> lock(mu);
+    return stop;
 }
 
 void SmfIgmp::Close()
 {
-    // This must be called first
+    // Join the poll thread before closing the pipe it writes.
+    StopPollThread();
+
     ProtoChannel::Close();
 
-    if (update_timer.IsActive())
+    if (descriptor != INVALID_HANDLE)
     {
-        update_timer.Deactivate();
+        close(descriptor);
+        descriptor = INVALID_HANDLE;
     }
-
-    // Close the pipe
-    close(descriptor);
-    descriptor = INVALID_HANDLE;
-    close(wpipe);
-    wpipe = INVALID_HANDLE;
+    if (wpipe != INVALID_HANDLE)
+    {
+        close(wpipe);
+        wpipe = INVALID_HANDLE;
+    }
 }
 
 bool SmfIgmp::IsOpen() const
@@ -90,13 +128,99 @@ bool SmfIgmp::IsOpen() const
     return ProtoChannel::IsOpen() && wpipe != INVALID_HANDLE;
 }
 
+void SmfIgmp::PollLoop()
+{
+    MembershipMap seenGroups;
+    bool haveGroups = false;
+    bool first = true;
+
+    while (true)
+    {
+        {
+            std::unique_lock<std::mutex> lock(mu);
+            if (stop)
+                return;
+            if (!first &&
+                cv.wait_for(lock, std::chrono::milliseconds(IGMP_POLL_INTERVAL_MS),
+                            [this]() { return stop; }))
+                return;
+        }
+        first = false;
+
+        InterfacesMap ifaces;
+        MembershipMap groups;
+        MembershipChangeArray groupDelta;
+        const bool ifOk = CollectInterfaces(ifaces);
+        if (Stopping())
+            return;
+        const bool grpOk = CollectMemberships(groups);
+        // The full interface set is published on every good read so the
+        // main thread can put back an interface SMF dropped.
+        if (grpOk && (!haveGroups || groups != seenGroups))
+        {
+            DiffMemberships(seenGroups, groups, groupDelta);
+            seenGroups = groups;
+            haveGroups = true;
+        }
+        if (!ifOk && groupDelta.empty())
+            continue;
+
+        bool wake = false;
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            if (stop)
+                return;
+            if (ifOk)
+            {
+                pending.have_interfaces = true;
+                pending.interface_table = ifaces;
+            }
+            pending.membership_changes.insert(pending.membership_changes.end(),
+                                              groupDelta.begin(), groupDelta.end());
+            wake = !notify_armed;
+            notify_armed = true;
+        }
+        if (!wake || wpipe == INVALID_HANDLE)
+            continue;
+        char c = 1;
+        if (write(wpipe, &c, 1) != 1)
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            notify_armed = false;
+        }
+    }
+}
+
 void SmfIgmp::ProcessUpdates()
 {
-    char c[2];
-    if (read(descriptor, c, 2) == -1)
+    char c;
+    while (read(descriptor, &c, 1) > 0)
     {
-        PLOG(PL_ERROR, "SmfIgmp::ProcessUpdates() Failed to read from pipe, %s\n", GetErrorString());
     }
+
+    Handoff handoff;
+    {
+        std::lock_guard<std::mutex> lock(mu);
+        std::swap(handoff, pending);
+        notify_armed = false;
+    }
+    if (handoff.have_interfaces)
+    {
+        fresh_interfaces = handoff.interface_table;
+        have_fresh_interfaces = true;
+    }
+    membership_changes.insert(membership_changes.end(),
+                              handoff.membership_changes.begin(),
+                              handoff.membership_changes.end());
+}
+
+bool SmfIgmp::TakeInterfaceSnapshot(InterfacesMap& out)
+{
+    if (!have_fresh_interfaces)
+        return false;
+    out.swap(fresh_interfaces);
+    have_fresh_interfaces = false;
+    return true;
 }
 
 std::vector<std::tuple<std::string, std::string>> SmfIgmp::NewNetworkInterface(const std::string& ifaceName) const
@@ -115,32 +239,21 @@ std::vector<std::tuple<std::string, std::string>> SmfIgmp::NewNetworkInterface(c
     return cmds;
 }
 
-void SmfIgmp::DoUpdate(ProtoTimer& theTimer)
+bool SmfIgmp::CollectInterfaces(InterfacesMap& out)
 {
-    UpdateInterfaces();
-    UpdateMemberships();
-    if (!interface_changes.empty() || !membership_changes.empty())
-    { // There were changes, send a signal on the pipe
-        char c;
-        if (write(wpipe, &c, 1) == -1)
-        {
-            PLOG(PL_ERROR, "SmfIgmp::DoUpdate() Failed to write to pipe, %s\n", GetErrorString());
-        }
-    }
-    if (theTimer.GetInterval() != IGMP_POLL_INTERVAL)
-        theTimer.SetInterval(IGMP_POLL_INTERVAL);
-}
-
-void SmfIgmp::UpdateInterfaces()
-{
-    std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::PIM, {"enable","show ip igmp vrf all interface json"});
+    if (Stopping())
+        return false;
+    std::pair<std::string, std::int8_t> enable = FRR::FRRVty(FRR::PIM, {"enable"});
+    if (enable.second != 0 || Stopping())
+        return false;
+    std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::PIM, {"show ip igmp vrf all interface json"});
     if (ret.second != 0)
     {
-       PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() Failed to retrieve IGMP interface information from FRR-PIM\n");
-       return;
+       PLOG(PL_ERROR, "SmfIgmp::CollectInterfaces() Failed to retrieve IGMP interface information from FRR-PIM\n");
+       return false;
     }
 
-    PLOG(PL_DETAIL, "SmfIgmp::UpdateInterfaces() Current IGMP Interfaces\n%s\n", ret.first.c_str());
+    PLOG(PL_DETAIL, "SmfIgmp::CollectInterfaces() Current IGMP Interfaces\n%s\n", ret.first.c_str());
 
     // Example output from FRR-PIM
     // # show ip igmp vrf all interface json
@@ -174,30 +287,24 @@ void SmfIgmp::UpdateInterfaces()
     //   }
     // }
 
-    // First unmark all the current active interfaces so we can detect interfaces that get removed
-    for (auto& i : active_interfaces)
-    {
-        i.second.second = false;
-    }
-
     ProtoJson::Parser parser;
     ProtoJson::Document* doc = nullptr;
     switch (parser.ProcessInput(ret.first.c_str(), ret.first.size()))
     {
         case ProtoJson::Parser::PARSE_ERROR:
-            PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() Invalid JSON string\n");
-            return;
+            PLOG(PL_ERROR, "SmfIgmp::CollectInterfaces() Invalid JSON string\n");
+            return false;
 
         case ProtoJson::Parser::PARSE_MORE:
-            PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() Incomplete JSON string\n");
-            return;
+            PLOG(PL_ERROR, "SmfIgmp::CollectInterfaces() Incomplete JSON string\n");
+            return false;
 
         case ProtoJson::Parser::PARSE_DONE:
             doc = parser.AccessDocument();
             if (!doc)
             {
-                PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() NULL document\n");
-                return;
+                PLOG(PL_ERROR, "SmfIgmp::CollectInterfaces() NULL document\n");
+                return false;
             }
             break;
     }
@@ -211,7 +318,7 @@ void SmfIgmp::UpdateInterfaces()
             ProtoJson::Object* obj = reinterpret_cast<ProtoJson::Object*>(item);
             if (!obj)
             {
-                PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() Failed to cast item to object\n");
+                PLOG(PL_ERROR, "SmfIgmp::CollectInterfaces() Failed to cast item to object\n");
                 continue;
             }
             // Look for the interface objects by first testing for the "state" key
@@ -241,13 +348,13 @@ void SmfIgmp::UpdateInterfaces()
             entry = obj->FindEntry("name");
             if (!entry)
             {
-                PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() Failed to parse Interface name from JSON output\n");
+                PLOG(PL_ERROR, "SmfIgmp::CollectInterfaces() Failed to parse Interface name from JSON output\n");
                 continue;
             }
             std::string ifaceName = static_cast<const ProtoJson::String*>(entry->GetValue())->GetText();
             if (ifaceName.empty())
             {
-                PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() Failed to parse Interface name from JSON output\n");
+                PLOG(PL_ERROR, "SmfIgmp::CollectInterfaces() Failed to parse Interface name from JSON output\n");
                 continue;
             }
 
@@ -255,57 +362,32 @@ void SmfIgmp::UpdateInterfaces()
             entry = obj->FindEntry("index");
             if (!entry)
             {
-                PLOG(PL_ERROR, "SmfIgmp::UpdateInterfaces() Failed to find interface index\n");
+                PLOG(PL_ERROR, "SmfIgmp::CollectInterfaces() Failed to find interface index\n");
                 continue;
             }
             std::uint32_t iffidx = static_cast<const ProtoJson::Number*>(entry->GetValue())->GetInteger();
-
-            auto iface = smf.GetInterface(iffidx);
-            if (iface)
-            {
-                iface->SetManaged(true);
-            }
-            else
-            { // If not found, then it's a new managed interface so save the changes for later processing
-                interface_changes[iffidx].first = ifaceName;
-                interface_changes[iffidx].second = true;
-            }
-            active_interfaces[iffidx].first = ifaceName;
-            active_interfaces[iffidx].second = true;
+            out[iffidx].first = ifaceName;
+            out[iffidx].second = true;
         }
     }
-
-    // Now any interfaces not marked have been removed
-    for (auto it = active_interfaces.begin(); it != active_interfaces.end();)
-    {
-        if (!it->second.second)
-        {
-            auto iface = smf.GetInterface(it->first);
-            if (iface)
-            {
-                iface->SetManaged(false);
-                interface_changes[it->first].first = it->second.first;
-                interface_changes[it->first].second = false;
-            }
-            it = active_interfaces.erase(it);
-        }
-        else
-        {
-            it = std::next(it);
-        }
-    }
+    return true;
 }
 
-void SmfIgmp::UpdateMemberships()
+bool SmfIgmp::CollectMemberships(MembershipMap& out)
 {
-    std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::PIM, {"enable","show ip igmp vrf all groups json"});
+    if (Stopping())
+        return false;
+    std::pair<std::string, std::int8_t> enable = FRR::FRRVty(FRR::PIM, {"enable"});
+    if (enable.second != 0 || Stopping())
+        return false;
+    std::pair<std::string, std::int8_t> ret = FRR::FRRVty(FRR::PIM, {"show ip igmp vrf all groups json"});
     if (ret.second != 0)
     {
-       PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Failed to retrieve group information from FRR-PIM\n");
-       return;
+       PLOG(PL_ERROR, "SmfIgmp::CollectMemberships() Failed to retrieve group information from FRR-PIM\n");
+       return false;
     }
 
-    PLOG(PL_DETAIL, "SmfIgmp::UpdateMemberships() Current IGMP Groups\n%s\n", ret.first.c_str());
+    PLOG(PL_DETAIL, "SmfIgmp::CollectMemberships() Current IGMP Groups\n%s\n", ret.first.c_str());
 
     // Example output from FRR-PIM
     // # show ip igmp vrf all groups json
@@ -349,24 +431,23 @@ void SmfIgmp::UpdateMemberships()
     switch (parser.ProcessInput(ret.first.c_str(), ret.first.size()))
     {
         case ProtoJson::Parser::PARSE_ERROR:
-            PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Invalid JSON string\n");
-            return;
+            PLOG(PL_ERROR, "SmfIgmp::CollectMemberships() Invalid JSON string\n");
+            return false;
 
         case ProtoJson::Parser::PARSE_MORE:
-            PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Incomplete JSON string\n");
-            return;
+            PLOG(PL_ERROR, "SmfIgmp::CollectMemberships() Incomplete JSON string\n");
+            return false;
 
         case ProtoJson::Parser::PARSE_DONE:
             doc = parser.AccessDocument();
             if (!doc)
             {
-                PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() NULL document\n");
-                return;
+                PLOG(PL_ERROR, "SmfIgmp::CollectMemberships() NULL document\n");
+                return false;
             }
             break;
     }
 
-    MembershipMap currentMemberships;
     ProtoJson::Document::Iterator dit(*doc);
     ProtoJson::Item* item = nullptr;
     while ((item = dit.GetNextItem()) != nullptr)
@@ -376,7 +457,7 @@ void SmfIgmp::UpdateMemberships()
             ProtoJson::Object* obj = reinterpret_cast<ProtoJson::Object*>(item);
             if (!obj)
             {
-                PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Failed to cast item to object\n");
+                PLOG(PL_ERROR, "SmfIgmp::CollectMemberships() Failed to cast item to object\n");
                 continue;
             }
             // Look for the interface objects by first testing for the "state" key
@@ -398,7 +479,7 @@ void SmfIgmp::UpdateMemberships()
             entry = obj->FindEntry("index");
             if (!entry)
             {
-                PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Failed to find interface index\n");
+                PLOG(PL_ERROR, "SmfIgmp::CollectMemberships() Failed to find interface index\n");
                 continue;
             }
             std::uint32_t iffidx = static_cast<const ProtoJson::Number*>(entry->GetValue())->GetInteger();
@@ -407,7 +488,7 @@ void SmfIgmp::UpdateMemberships()
             entry = obj->FindEntry("groups");
             if (!entry || entry->GetValue()->GetType() != ProtoJson::Item::ARRAY)
             {
-                PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Failed to find groups array\n");
+                PLOG(PL_ERROR, "SmfIgmp::CollectMemberships() Failed to find groups array\n");
                 continue;
             }
 
@@ -417,37 +498,42 @@ void SmfIgmp::UpdateMemberships()
                 entry = static_cast<const ProtoJson::Object*>(arr->GetValue(i))->FindEntry("group");
                 if (!entry)
                 {
-                    PLOG(PL_ERROR, "SmfIgmp::UpdateMemberships() Failed to find group address\n");
+                    PLOG(PL_ERROR, "SmfIgmp::CollectMemberships() Failed to find group address\n");
                     break;
                 }
                 ProtoAddress grp(static_cast<const ProtoJson::String*>(entry->GetValue())->GetText());
-                currentMemberships[iffidx].emplace(grp);
+                out[iffidx].emplace(grp);
             }
         }
     }
+    return true;
+}
 
+void SmfIgmp::DiffMemberships(const MembershipMap& previous, const MembershipMap& current,
+                               MembershipChangeArray& changes)
+{
     // Find difference between previous state and the current state
-    auto ait = active_memberships.begin();
-    auto cit = currentMemberships.begin();
+    auto ait = previous.begin();
+    auto cit = current.begin();
     while (true)
     {
-        if (ait == active_memberships.end() && cit == currentMemberships.end())
+        if (ait == previous.end() && cit == current.end())
         { // Reached the end of both, break loop
             break;
         }
-        else if (ait == active_memberships.end())
+        else if (ait == previous.end())
         { // End of previous groups, anything left in current groups is new
             for (const auto& i : cit->second)
             { // Add all groups as new for this interface
-                membership_changes.emplace_back(i, true, cit->first);
+                changes.emplace_back(i, true, cit->first);
             }
             cit = std::next(cit);
         }
-        else if (cit == currentMemberships.end())
+        else if (cit == current.end())
         { // End of current groups, anything left in previous groups is removed
             for (const auto& i : ait->second)
             { // Add all groups as removed for this interface
-                membership_changes.emplace_back(i, false, ait->first);
+                changes.emplace_back(i, false, ait->first);
             }
             ait = std::next(ait);
         }
@@ -455,7 +541,7 @@ void SmfIgmp::UpdateMemberships()
         { // Previous iface is less than current, means the iface was removed
             for (const auto& i : ait->second)
             { // Add all groups as removed for this interface
-                membership_changes.emplace_back(i, false, ait->first);
+                changes.emplace_back(i, false, ait->first);
             }
             ait = std::next(ait);
         }
@@ -463,7 +549,7 @@ void SmfIgmp::UpdateMemberships()
         { // Current iface is less than previous, means the iface was added
             for (const auto& i : cit->second)
             { // Add all groups as added for this interface
-                membership_changes.emplace_back(i, true, cit->first);
+                changes.emplace_back(i, true, cit->first);
             }
             cit = std::next(cit);
         }
@@ -479,23 +565,23 @@ void SmfIgmp::UpdateMemberships()
                 }
                 else if (agit == ait->second.end())
                 { // Anything left in current groups is new
-                    membership_changes.emplace_back(*cgit, true, ait->first);
+                    changes.emplace_back(*cgit, true, ait->first);
                     cgit = std::next(cgit);
                 }
                 else if (cgit == cit->second.end())
                 { // Anything left in previous groups is removed
-                    membership_changes.emplace_back(*agit, false, ait->first);
+                    changes.emplace_back(*agit, false, ait->first);
                     agit = std::next(agit);
                 }
                 else if (*agit < *cgit)
                 { // Previous group is less than current, means previous group is removed
-                    membership_changes.emplace_back(*agit, false, ait->first);
+                    changes.emplace_back(*agit, false, ait->first);
                     // Advance previous group only
                     agit = std::next(agit);
                 }
                 else if (*agit > *cgit)
                 { // Current group is less than previous, means current group is new
-                    membership_changes.emplace_back(*cgit, true, ait->first);
+                    changes.emplace_back(*cgit, true, ait->first);
                     // Advance current group only
                     cgit = std::next(cgit);
                 }
@@ -509,6 +595,4 @@ void SmfIgmp::UpdateMemberships()
             cit = std::next(cit);
         }
     }
-
-    active_memberships = std::move(currentMemberships);
 }

@@ -56,6 +56,7 @@
 #ifdef LINUX
 #include <linux/neighbour.h>
 #endif
+#include <set>
 #include <sstream>
 #include <vector>
 #include <tuple>
@@ -145,6 +146,12 @@ class SmfApp : public ProtoApp
                                                InterfaceMatcher*   matcher = NULL,
                                                bool                isTemplate = false);
 
+        bool IsRelayMember(const char* ifName);
+        // An IGMP-up relay radio is not a host LAN. Drop the automatic
+        // rpush group so it can keep relay associates.
+        void ReleaseIgmpHostRole(const char* ifName);
+        bool HostPlumbingCommand(const std::string& arg, std::string& out);
+
         bool ParseInterfaceList(const char*         ifaceGroupName,
                                 Smf::Mode           mode,
                                 const char*         ifaceList,
@@ -213,8 +220,12 @@ class SmfApp : public ProtoApp
         bool OnIgmpQueryTimeout(ProtoTimer& theTimer);
         void OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
                                     ProtoChannel::Notification  notifyType);
+        void OnVrfUpdate(ProtoChannel&               theChannel,
+                         ProtoChannel::Notification  notifyType);
 
         bool JoinUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
+        // mGRE PF_PACKET does not deliver 224.0.0.55 unless the tunnel joins it.
+        bool JoinElasticAckGroup(Smf::Interface& iface, const char* ifaceName);
         bool LeaveUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
         bool GreDeviceIsUnicastMgre(Smf::Interface& iface);
         bool MaybeEnableUnderlayGreDemux(const ProtoAddress& groupAddr);
@@ -427,6 +438,7 @@ class SmfApp : public ProtoApp
         // Member variables
         Smf                     smf;            // General-purpose "SMF" class
         bool                    need_help;
+        bool                    startup_done;
 
         bool                    priority_boost;
         bool                    ipv6_enabled;
@@ -469,6 +481,7 @@ class SmfApp : public ProtoApp
         ProtoTimer                  igmp_query_timer;
 #endif // ELASTIC_MCAST
         ProtoSocket                 underlay_group_socket;  // used for joining mGRE underlay groups
+        std::set<unsigned int>      elastic_ack_joined;     // ifaces already in 224.0.0.55
         ProtoAddressList            underlay_join_groups;   // ujoin group -> underlay ifindex
         ProtoCap*                   underlay_gre_cap;       // GRE-in-mcast capture (unicast mGRE only)
         ProtoAddressList            underlay_gre_groups;    // groups that need capture demux
@@ -1081,7 +1094,7 @@ const char* SmfApp::DEFAULT_INSTANCE_NAME = "nrlsmf";
 const char* SmfApp::DEFAULT_SMF_SERVER = "nrlolsr";
 
 SmfApp::SmfApp()
- : smf(GetTimerMgr()), need_help(false), priority_boost(true), ipv6_enabled(false),
+ : smf(GetTimerMgr()), need_help(false), startup_done(false), priority_boost(true), ipv6_enabled(false),
    resequence(false), ttl_set(-1),
    default_tx_rate_limit(-1.0), smf_queue_limit(0),
 #ifdef _PROTO_DETOUR
@@ -1097,7 +1110,7 @@ SmfApp::SmfApp()
 #endif // MNE_SUPPORT
 #ifdef ELASTIC_MCAST
    mcast_controller(GetTimerMgr()),
-   igmp_controller(GetTimerMgr(), smf),
+   igmp_controller(),
 #endif // ELASTIC_MCAST
    underlay_group_socket(ProtoSocket::UDP),
    underlay_gre_cap(NULL),
@@ -1125,6 +1138,8 @@ SmfApp::SmfApp()
     igmp_controller.SetNotifier(&GetChannelNotifier());
     igmp_controller.SetListener(this, &SmfApp::OnIgmpMembershipUpdate);
 #endif // ELASTIC_MCAST
+    smf.GetVRFs()->GetUpdateChannel().SetNotifier(&GetChannelNotifier());
+    smf.GetVRFs()->GetUpdateChannel().SetListener(this, &SmfApp::OnVrfUpdate);
 #ifdef ADAPTIVE_ROUTING
     smart_controller.SetForwarder(&smf);
     smf.SetController(&smart_controller);
@@ -1801,8 +1816,8 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
         exit(0);
 
     smf.GetVRFs()->SetPolicies(smf.GetVRFPolicies());
-    /* Arms a short timer; the first zebra VTY query runs after the
-     * dispatcher starts so the control socket can be read first.
+    /* VRF polling runs on its own thread. The main thread only applies
+     * the queued result when that thread signals the update channel.
      */
     smf.GetVRFs()->EnableFRRUpdates(smf.withFRR());
 
@@ -1925,11 +1940,20 @@ bool SmfApp::OnStartup(int argc, const char*const* argv)
             PLOG(PL_ALWAYS, "\n");
         }
     }
+    startup_done = true;
     return true;
 }  // end SmfApp::OnStartup()
 
 void SmfApp::OnShutdown()
 {
+    /* Join the FRR poll threads before tearing anything else down. Each
+     * VTY exchange can run until its deadline, so this is the wait.
+     */
+#ifdef ELASTIC_MCAST
+    igmp_controller.Close();
+#endif // ELASTIC_MCAST
+    smf.GetVRFs()->EnableFRRUpdates(false);
+
     if ('\0' != config_path[0])
         SaveConfig(config_path);
 
@@ -2215,6 +2239,11 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     {
         PLOG(PL_DEBUG,"Setup to pull VRF data from FRR\n");
         smf.SetWithFRR(true);
+        // Command-line with-frr runs inside ProcessCommands(), before
+        // OnStartup() knows the rest of the command line is valid.
+        // A runtime --cli "with-frr" starts the poll thread here.
+        if (startup_done)
+            smf.GetVRFs()->EnableFRRUpdates(true);
 #ifdef ELASTIC_MCAST
         // Command-line with-frr runs before OnStartup() opens the
         // controller. A runtime --cli "with-frr" must start FRR polling
@@ -2377,6 +2406,9 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
           vrf->AddInterface(ifaceName);
           noIface = false;
         }
+        // The VRF poll compares zebra's list with the list it last
+        // stored. Drop that record so the next read overwrites this edit.
+        smf.GetVRFs()->ForgetAppliedIfaces(vrfNamePtr);
         if (noIface) {
           PLOG(PL_ERROR,
                "SmfApp::OnCommand(vrf) error: missing interface list\n");
@@ -2554,7 +2586,6 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         {
             char ifaceName[64];
             ifaceName[63] = '\0';
-            iface->SetElasticMulticast(true);
             if (iface->IsStub())
                 continue;
             if (!ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, 63))
@@ -2564,21 +2595,8 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             }
             // mGRE PF_PACKET does not deliver 224.0.0.55 unless the
             // tunnel joins it. EM_ACK/ADV/NACK all use that group.
-            if (iface->IsGRE())
-            {
-                if (!underlay_group_socket.IsOpen() && !underlay_group_socket.Open())
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: unable to open socket to join %s on %s\n",
-                         ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
-                    return false;
-                }
-                if (!underlay_group_socket.JoinGroup(ElasticAck::ELASTIC_ADDR, ifaceName))
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: join %s on %s failed\n",
-                         ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
-                    return false;
-                }
-            }
+            if (!JoinElasticAckGroup(*iface, ifaceName))
+                return false;
             ProtoAddressList groupList;
             if (!ProtoNet::GetGroupMemberships(ifaceName, ProtoAddress::IPv4, groupList))
             {
@@ -3486,6 +3504,28 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                 PLOG(PL_ERROR, "OnCommand(%s) error: Smf::AddOwnAddress() failed\n", cmd);
                 return false;
             }
+#ifdef ELASTIC_MCAST
+            // map is what makes IsGRE() true. Join 224.0.0.55 only when
+            // this iface is already in an elastic group; the elastic
+            // command's walk already ran. A map that runs before elastic
+            // must not fail startup, the walk joins those tunnels later.
+            if (iface->IsGRE())
+            {
+                bool inElastic = false;
+                Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
+                Smf::InterfaceGroup* group;
+                while (NULL != (group = grouperator.GetNextItem()))
+                {
+                    if (group->GetElasticMulticast() && group->Contains(*iface))
+                    {
+                        inElastic = true;
+                        break;
+                    }
+                }
+                if (inElastic && !JoinElasticAckGroup(*iface, ifaceName))
+                    return false;
+            }
+#endif // ELASTIC_MCAST
         }
         else if (dynamicLearn)
         {
@@ -4507,6 +4547,30 @@ bool SmfApp::ParseRouteList(const char* routeList)
 }  // end SmfApp::ParseRouteList()
 
 
+#ifdef ELASTIC_MCAST
+bool SmfApp::JoinElasticAckGroup(Smf::Interface& iface, const char* ifaceName)
+{
+    if (!iface.IsGRE())
+        return true;
+    if (elastic_ack_joined.count(iface.GetIndex()) != 0)
+        return true;
+    if (!underlay_group_socket.IsOpen() && !underlay_group_socket.Open())
+    {
+        PLOG(PL_ERROR, "SmfApp::JoinElasticAckGroup() error: unable to open socket to join %s on %s\n",
+             ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
+        return false;
+    }
+    if (!underlay_group_socket.JoinGroup(ElasticAck::ELASTIC_ADDR, ifaceName))
+    {
+        PLOG(PL_ERROR, "SmfApp::JoinElasticAckGroup() error: join %s on %s failed\n",
+             ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
+        return false;
+    }
+    elastic_ack_joined.insert(iface.GetIndex());
+    return true;
+}  // end SmfApp::JoinElasticAckGroup()
+#endif // ELASTIC_MCAST
+
 bool SmfApp::JoinUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName)
 {
     if (!underlay_group_socket.IsOpen() && !underlay_group_socket.Open())
@@ -4891,6 +4955,93 @@ Smf::InterfaceGroup* SmfApp::GetInterfaceGroup(const char*         groupName,
     return ifaceGroup;
 }  // end SmfApp::GetInterfaceGroup()
 
+bool SmfApp::IsRelayMember(const char* ifName)
+{
+    if ((NULL == ifName) || ('\0' == *ifName))
+        return false;
+    Smf::Interface* iface = smf.FindInterfaceByName(ifName);
+    if (NULL == iface)
+        return false;
+    Smf::InterfaceGroupList::Iterator iterator(smf.AccessInterfaceGroupList());
+    Smf::InterfaceGroup* group;
+    while (NULL != (group = iterator.GetNextItem()))
+    {
+        if ((Smf::RELAY == group->GetForwardingMode()) && group->Contains(*iface))
+            return true;
+    }
+    return false;
+}  // end SmfApp::IsRelayMember()
+
+void SmfApp::ReleaseIgmpHostRole(const char* ifName)
+{
+    if ((NULL == ifName) || ('\0' == *ifName))
+        return;
+    char groupName[Smf::IF_GROUP_NAME_MAX + Smf::IF_NAME_MAX + 2];
+    groupName[sizeof(groupName) - 1] = '\0';
+    snprintf(groupName, sizeof(groupName), "push:%s", ifName);
+    Smf::InterfaceGroup* group = smf.FindInterfaceGroup(groupName);
+    if ((NULL == group) || !group->GetResequence() || (Smf::PUSH != group->GetForwardingMode()))
+        return;
+    Smf::Interface* src = group->GetPushSource();
+    if ((NULL == src) || (0 != strcmp(src->GetNameStr(), ifName)))
+        return;
+    // The IGMP poll built this rpush group while the radio was only a
+    // host. Relay associates need the same edges.
+    PLOG(PL_DEBUG, "SmfApp::ReleaseIgmpHostRole() dropping automatic rpush for relay iface \"%s\"\n", ifName);
+    src->RemoveAssociatesForGroup(*group);
+    src->SetResequence(false);
+    smf.DeleteInterfaceGroup(*group);
+}  // end SmfApp::ReleaseIgmpHostRole()
+
+bool SmfApp::HostPlumbingCommand(const std::string& arg, std::string& out)
+{
+    // rpush,<host>[,<radio>...] is host-LAN plumbing. A relay radio that
+    // also has IGMP stays a relay member; its receivers are memberships.
+    if (0 == arg.compare(0, 6, "rpush,"))
+    {
+        std::string rest = arg.substr(6);
+        size_t comma = rest.find(',');
+        std::string host = (std::string::npos == comma) ? rest : rest.substr(0, comma);
+        if (host.empty() || IsRelayMember(host.c_str()))
+            return false;
+        out = arg;
+        return true;
+    }
+    if (0 == arg.compare(0, 5, "push,"))
+    {
+        std::string rest = arg.substr(5);
+        size_t comma = rest.find(',');
+        // push,<radio> with no destinations is the implicit subgroup
+        // created for every relay interface. Keep it.
+        if (std::string::npos == comma)
+        {
+            if (rest.empty())
+                return false;
+            out = arg;
+            return true;
+        }
+        std::string rebuilt = "push," + rest.substr(0, comma);
+        std::string hosts = rest.substr(comma + 1);
+        size_t start = 0;
+        while (start < hosts.size())
+        {
+            size_t next = hosts.find(',', start);
+            std::string host = hosts.substr(start, (std::string::npos == next) ? std::string::npos : next - start);
+            if (!host.empty() && !IsRelayMember(host.c_str()))
+                rebuilt += "," + host;
+            if (std::string::npos == next)
+                break;
+            start = next + 1;
+        }
+        // Relay members were the only destinations. The radio still
+        // gets its implicit push group; it is not an rpush source.
+        out = rebuilt;
+        return true;
+    }
+    out = arg;
+    return true;
+}  // end SmfApp::HostPlumbingCommand()
+
 // "mode = Smf::PUSH, Smf::MERGE, SMPR, ECDS, NSMPR, etc
 bool SmfApp::ParseInterfaceList(const char*         groupName,
                                 Smf::Mode           mode,
@@ -4971,7 +5122,10 @@ bool SmfApp::ParseInterfaceList(const char*         groupName,
             std::vector<std::tuple<std::string, std::string>> cmds = igmp_controller.NewNetworkInterface(ifaceName);
             for (const auto& c : cmds)
             {
-                if (!OnCommand(std::get<0>(c).c_str(), std::get<1>(c).c_str()))
+                std::string plumbing;
+                if (!HostPlumbingCommand(std::get<1>(c), plumbing))
+                    continue;
+                if (!OnCommand(std::get<0>(c).c_str(), plumbing.c_str()))
                 {
                     PLOG(PL_ERROR, "SmfApp::ParseInterfaceList() Failed to do automatic host configuration for new network interface \"%s\"\n", ifaceName);
                 }
@@ -5035,6 +5189,11 @@ bool SmfApp::ParseInterfaceName(Smf::InterfaceGroup& ifaceGroup, const char* ifa
     }
     else
     {
+        // A relay radio may also have IGMP hosts. That is membership on
+        // this iface, not a separate host LAN, so drop an rpush role
+        // the IGMP poll may already have installed.
+        if (Smf::RELAY == ifaceGroup.GetForwardingMode())
+            ReleaseIgmpHostRole(ifaceName);
         Smf::Interface* iface = GetInterface(ifaceName);
         if (NULL == iface)
         {
@@ -5305,6 +5464,8 @@ bool SmfApp::AddInterfaceToGroup(Smf::InterfaceGroup& ifaceGroup, Smf::Interface
                 PLOG(PL_ERROR, "SmfApp::AddInterfaceToGroup(%s) error: unable to retrieve interface name\n", ifaceName);
                 return false;
             }
+            if (!JoinElasticAckGroup(iface, ifaceName))
+                return false;
             ProtoAddressList groupList;
             if (!ProtoNet::GetGroupMemberships(ifaceName, ProtoAddress::IPv4, groupList))
             {
@@ -5601,8 +5762,9 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
                 // Make sure this iface hasn't been previously set as a rpush or rmerge srcIface
                 if (iface->GetResequence() || iface->IsTunnel())
                 {
+                    // One rpush source must not abort the rest of the mesh.
                     PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() error: MANET iface config conflicts with previous rpush or rmerge config!\n");
-                    return false;  // TBD - issue warning and make this "continue" instead ???
+                    continue;
                 }
                 Smf::InterfaceGroup::Iterator dstIfacerator(ifaceGroup);
                 Smf::Interface* dstIface;
@@ -5614,9 +5776,10 @@ bool SmfApp::UpdateGroupAssociations(Smf::InterfaceGroup& ifaceGroup)
                     {
                         if (&ifaceGroup != &assoc->GetInterfaceGroup())
                         {
+                            // Keep the edges that do not conflict.
                             PLOG(PL_ERROR, "SmfApp::UpdateGroupAssociations() error: MANET iface index %d already has a different association with index %d?!\n",
                                            iface->GetIndex(), dstIface->GetIndex());
-                            return false;
+                            continue;
                         }
                     }
                     else
@@ -5941,6 +6104,8 @@ bool SmfApp::RemoveInterface(Smf::InterfaceGroup* ifaceGroup, const char* ifaceN
                 ifaceGroup->RemoveInterface(*iface);
                 if (!smf.IsInGroup(*iface))
                     smf.DeleteInterface(iface); // It's not in any other groups, so deactivate / delete it
+                else
+                    smf.SyncElasticFlag(*iface);
                 if (ifaceGroup->IsEmpty())
                 {
                     PLOG(PL_DEBUG, "SmfApp::RemoveInterface() deleting empty interface group \"%s\"\n", ifaceGroup->GetName());
@@ -7565,17 +7730,25 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
 {
     // igmp_controller has updates
     igmp_controller.ProcessUpdates();
-    // Handle interface updates first, in case we are adding a new interface with an existing membership
-    if (igmp_controller.HasInterfaceUpdates())
+    // Reconcile the full IGMP-up set every poll. An interface SMF dropped
+    // (failed add, link flap, operator remove) is queued again here.
+    SmfIgmp::InterfacesMap currentIfaces;
+    if (igmp_controller.TakeInterfaceSnapshot(currentIfaces))
     {
         std::map<std::string, std::vector<std::string>> commands; // The commands to run to update configuration
+        std::vector<unsigned int> createdIfaces;
+        SmfIgmp::InterfacesMap previous = igmp_controller.ActiveInterfaces();
+        igmp_controller.SetActiveInterfaces(currentIfaces);
 
-        // Get the interface updates from the igmp_controller and update the interface and group configuration
-        // Returns a map of iff index to pair with iface name and flag indicating added/removed (true/false)
-        for (const auto& u : igmp_controller.GetInterfaceUpdates())
+        for (const auto& u : currentIfaces)
         {
-            if (u.second.second)
-            {
+                Smf::Interface* existing = smf.GetInterface(u.first);
+                if (existing)
+                {
+                    existing->SetManaged(true);
+                    continue;
+                }
+                createdIfaces.push_back(u.first);
                 // Set up it up as if configured on the command line with
                 //    nrlsmf add,network,cf,eth0 add,eth0_push,push,eth0,<iface> add,<iface>_rpush,rpush,<iface>,eth0
                 // where the network group was configured and we automatically added the push/rpush commands.
@@ -7623,12 +7796,17 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
                 addCmds.emplace_back(os.str());
                 // We also want to add the new host interface to the merge group for the host interfaces
                 addCmds.emplace_back("hostifaces,merge,"+u.second.first);
-            }
-            else
-            {
-                // Just removing the interface should handle cleaning it from all groups and clearing any empty groups etc.
-                commands["remove"].emplace_back(u.second.first);
-            }
+        }
+        for (const auto& u : previous)
+        {
+            if (currentIfaces.find(u.first) != currentIfaces.end())
+                continue;
+            Smf::Interface* existing = smf.GetInterface(u.first);
+            if (!existing)
+                continue;
+            existing->SetManaged(false);
+            // Just removing the interface should handle cleaning it from all groups and clearing any empty groups etc.
+            commands["remove"].emplace_back(u.second.first);
         }
 
         // Now process each command to update the configuration
@@ -7639,6 +7817,12 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
             {
                 PLOG(PL_ERROR, "SmfApp::OnIgmpMembershipUpdate() Unable to add automatic host configuration\n");
             }
+        }
+        for (unsigned int index : createdIfaces)
+        {
+            Smf::Interface* created = smf.GetInterface(index);
+            if (created)
+                created->SetManaged(true);
         }
         // Now do the remove commands
         for (const auto& c : commands["remove"])
@@ -7683,6 +7867,12 @@ void SmfApp::OnIgmpMembershipUpdate(ProtoChannel&               theChannel,
     }
 }
 #endif // ELASTIC_MCAST
+
+void SmfApp::OnVrfUpdate(ProtoChannel&               /*theChannel*/,
+                         ProtoChannel::Notification  /*notifyType*/)
+{
+    smf.GetVRFs()->ApplyPending();
+}
 
 // This is the notification handler called when outbound virtual interface packets are received
 // These should be packets generated by the local host or forwarded via non-SMF forwarding

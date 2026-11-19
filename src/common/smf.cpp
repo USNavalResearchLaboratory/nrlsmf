@@ -174,6 +174,27 @@ bool Smf::Interface::AddAssociate(InterfaceGroup& ifaceGroup, Interface& iface)
     return true;
 }  // end Smf::Interface::AddAssociate()
 
+void Smf::Interface::RemoveAssociatesForGroup(InterfaceGroup& ifaceGroup)
+{
+    Associate* doomed[64];
+    unsigned int count = 0;
+    AssociateList::Iterator iterator(assoc_target_list);
+    Associate* assoc;
+    while (NULL != (assoc = iterator.GetNextItem()))
+    {
+        if (&assoc->GetInterfaceGroup() != &ifaceGroup)
+            continue;
+        if (count < 64)
+            doomed[count++] = assoc;
+    }
+    for (unsigned int i = 0; i < count; i++)
+    {
+        doomed[i]->GetInterface().assoc_source_list.Remove(*doomed[i]);
+        assoc_target_list.Remove(*doomed[i]);
+        delete doomed[i];
+    }
+}  // end Smf::Interface::RemoveAssociatesForGroup()
+
 bool Smf::Interface::EnqueueFrame(const char* frameBuf, unsigned int frameLen, SmfPacket::Pool* pktPool)
 {
     if (frameLen > SmfPacket::PKT_SIZE_MAX)
@@ -356,6 +377,18 @@ Smf::InterfaceGroup::~InterfaceGroup()
 void Smf::InterfaceGroup::SetElasticMulticast(bool state)
 {
     elastic_mcast = state;
+#ifdef ELASTIC_MCAST
+    // Mark every current member before the elastic command collects
+    // memberships. That walk can return early, and "show interface"
+    // would otherwise leave the remaining members as Flood.
+    if (state)
+    {
+        InterfaceList::Iterator ifaceIterator(iface_list);
+        Interface* iface;
+        while (NULL != (iface = ifaceIterator.GetNextItem()))
+            iface->SetElasticMulticast(true);
+    }
+#endif // ELASTIC_MCAST
 }  // end Smf::InterfaceGroup::SetElasticMulticast()
 
 void Smf::InterfaceGroup::SetAdaptiveRouting(bool state)
@@ -398,7 +431,7 @@ Smf::Smf(ProtoTimerMgr& timerMgr)
    update_age_max(DEFAULT_AGE_MAX), current_update_time(0),
    selector_list_len(0), neighbor_list_len(0),
    recv_count(0), mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0),
-   vrf_list(timerMgr), vrf_policies(), with_FRR(false)
+   vrf_list(), vrf_policies(), with_FRR(false)
 {
     delay_relay_off_timer.SetInterval(delay_time);
     delay_relay_off_timer.SetListener(this,&Smf::OnDelayRelayOffTimeout);
@@ -500,10 +533,30 @@ void Smf::DeleteInterfaceGroup(InterfaceGroup& ifaceGroup)
         {
             DeleteInterface(iface); // It's not in any other groups, so deactivate / delete it
         }
+        else
+        {
+            SyncElasticFlag(*iface);
+        }
     }
     iface_group_list.Remove(ifaceGroup);
     delete &ifaceGroup;
 }  // end Smf::DeleteInterfaceGroup()
+
+void Smf::SyncElasticFlag(Interface& iface)
+{
+#ifdef ELASTIC_MCAST
+    InterfaceGroupList::Iterator iterator(iface_group_list);
+    InterfaceGroup* ifaceGroup;
+    while (NULL != (ifaceGroup = iterator.GetNextItem()))
+    {
+        if (ifaceGroup->GetElasticMulticast() && ifaceGroup->Contains(iface))
+            return;
+    }
+    iface.SetElasticMulticast(false);
+#else
+    (void)iface;
+#endif // ELASTIC_MCAST
+}  // end Smf::SyncElasticFlag()
 
 Smf::Interface *Smf::AddInterface(unsigned int ifIndex, const char *ifName)
 {

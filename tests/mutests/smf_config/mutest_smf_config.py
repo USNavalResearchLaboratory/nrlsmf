@@ -90,6 +90,23 @@ section("Config a group that includes a missing iface")
 
 expect_ok(NODE, f"add {GROUP},cf,{ETH0},{ETH1},{GRE},{STUB}", INST)
 expect_ok(NODE, f"elastic {GROUP}", INST)
+
+section("Interface that joins after elastic inherits Elastic")
+
+LATE = "late0"
+step(NODE, "modprobe dummy || true")
+step(NODE, f"ip link add {LATE} type dummy || true")
+step(NODE, f"ip link set {LATE} up")
+expect_ok(NODE, f"add {GROUP},cf,{LATE}", INST)
+listing = show_json(NODE, "show interface", INST)
+for iface in (ETH0, ETH1, GRE, STUB, LATE):
+    row = iface_row(listing, iface)
+    test_step(
+        row is not None and row.get("FwdMethod") == "Elastic",
+        f"{NODE} {iface} FwdMethod is Elastic",
+        target=NODE,
+    )
+
 expect_ok(NODE, "advertise", INST)
 
 grouping = show_json(NODE, "show interface grouping", INST)
@@ -97,7 +114,7 @@ row = group_row(grouping, GROUP)
 test_step(row is not None, f"{NODE} grouping includes {GROUP}", target=NODE)
 if row is not None:
     have = set(row.get("Interfaces") or [])
-    for iface in (ETH0, ETH1, GRE, STUB):
+    for iface in (ETH0, ETH1, GRE, STUB, LATE):
         test_step(iface in have, f"{NODE} {GROUP} includes {iface}", target=NODE)
     test_step(row.get("RelayType") == "cf", f"{NODE} {GROUP} RelayType is cf", target=NODE)
     test_step(
@@ -192,12 +209,72 @@ section("Tunnel, underlay join, and EM join")
 
 expect_ok(NODE, f"map {GRE},{LOCAL},{REMOTE}", INST)
 check_show_tunnel(NODE, INST, GRE, local=LOCAL, remotes=(REMOTE,), want_c=True)
+gre_maddr = step(NODE, f"ip maddr show dev {GRE}")
+test_step(
+    "224.0.0.55" in (gre_maddr or ""),
+    f"{NODE} {GRE} joined 224.0.0.55",
+    target=NODE,
+)
 
 expect_ok(NODE, f"ujoin {UJOIN},{ETH0}", INST)
 expect_ok(NODE, f"join {JOIN}", INST)
 memberships = show_json(NODE, "show groups memberships", INST)
 maddrs = {r.get("MCastAddr") for r in (memberships or []) if isinstance(r, dict)}
 test_step(JOIN in maddrs, f"{NODE} memberships include {JOIN}", target=NODE)
+
+section("Late GRE member joins the elastic underlay group")
+
+LATEGRE = "gre2"
+LATEGRE_REMOTE = "10.0.0.3"
+step(
+    NODE,
+    f"ip link add {LATEGRE} type gre local {LOCAL} remote {LATEGRE_REMOTE} ttl 255 || true",
+)
+step(NODE, f"ip addr add 172.16.1.1/24 dev {LATEGRE} || true")
+step(NODE, f"ip link set {LATEGRE} up")
+# A second relay group would refuse the later add to net: the tunnel
+# already has relay associations. A one-interface push group only
+# exists so map can see the interface before it joins the elastic group.
+expect_ok(NODE, f"add gre2src,push,{LATEGRE}", INST)
+expect_ok(NODE, f"map {LATEGRE},{LOCAL},{LATEGRE_REMOTE}", INST)
+expect_ok(NODE, f"add {GROUP},cf,{LATEGRE}", INST)
+listing = show_json(NODE, "show interface", INST)
+late_gre = iface_row(listing, LATEGRE)
+test_step(
+    late_gre is not None and late_gre.get("FwdMethod") == "Advertise",
+    f"{NODE} {LATEGRE} FwdMethod is Advertise",
+    target=NODE,
+)
+late_maddr = step(NODE, f"ip maddr show dev {LATEGRE}")
+test_step(
+    "224.0.0.55" in (late_maddr or ""),
+    f"{NODE} {LATEGRE} joined 224.0.0.55",
+    target=NODE,
+)
+
+section("Leaving the elastic group clears the Elastic flag")
+
+expect_ok(NODE, f"remove {GROUP},{LATEGRE}", INST)
+grouping = show_json(NODE, "show interface grouping", INST)
+net = group_row(grouping, GROUP)
+pushed = group_row(grouping, "gre2src:gre2")
+test_step(
+    LATEGRE not in set((net or {}).get("Interfaces") or []),
+    f"{NODE} {GROUP} no longer includes {LATEGRE}",
+    target=NODE,
+)
+test_step(
+    LATEGRE in set((pushed or {}).get("Interfaces") or []),
+    f"{NODE} gre2src:gre2 still includes {LATEGRE}",
+    target=NODE,
+)
+listing = show_json(NODE, "show interface", INST)
+late_gre = iface_row(listing, LATEGRE)
+test_step(
+    late_gre is not None and late_gre.get("FwdMethod") == "Flood",
+    f"{NODE} {LATEGRE} FwdMethod is Flood after leaving {GROUP}",
+    target=NODE,
+)
 
 section("Global options")
 

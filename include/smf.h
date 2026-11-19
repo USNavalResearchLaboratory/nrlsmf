@@ -631,6 +631,9 @@ class Smf
                     {return (!assoc_target_list.IsEmpty());}// || !assoc_source_list.IsEmpty());}
 
                 bool AddAssociate(InterfaceGroup& ifaceGroup, Interface& targetIface);
+                // Drop edges installed by one group. Used when an IGMP host
+                // role is removed so the iface can be a relay member.
+                void RemoveAssociatesForGroup(InterfaceGroup& ifaceGroup);
 
                 Associate* FindAssociate(unsigned int ifIndex);
 
@@ -855,6 +858,9 @@ class Smf
 
         bool IsInGroup(Interface& iface)
             {return iface_list.IsInOtherQueue(iface);}
+        // Forwarding reads the interface Elastic flag as well as the
+        // group bit. Clear it once no elastic group still has the iface.
+        void SyncElasticFlag(Interface& iface);
 
         // This class is used to manage interfaces that are associated
         // with each other as a group using a common relay algorithm
@@ -879,6 +885,14 @@ class Smf
                     {
                         if (elastic_ucast) iface.IncrementUnicastGroupCount();
                         iface.SetETX(use_etx);
+#ifdef ELASTIC_MCAST
+                        // "show interface" prints this flag. Forwarding also
+                        // treats the iface as elastic when it is set, so a
+                        // member that joins after "elastic <group>" must
+                        // inherit it or it is reported as Flood and forwarded
+                        // as a plain flood.
+                        if (elastic_mcast) iface.SetElasticMulticast(true);
+#endif // ELASTIC_MCAST
                         return true;
                     }
                     return false;

@@ -1,0 +1,13 @@
+# One router with FRR. No traffic. The test checks that with-frr learns
+# IGMP groups and VRFs on the poll threads, and that the control socket
+# still answers while those reads are in progress.
+topology:
+  networks:
+    - name: lan0
+    - name: lan1
+  nodes:
+    - name: r0
+      kind: frr
+      connections:
+        - to: lan0
+        - to: lan1

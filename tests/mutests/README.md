@@ -23,6 +23,7 @@ sudo mutest
 sudo mutest mgre_four_peers
 sudo mutest 1hop_smf
 sudo mutest smf_config
+sudo mutest frr_poll
 sudo mutest mgre_chained_clouds
 ```
 
@@ -44,6 +45,7 @@ sudo ../../.venv/bin/mutest smf_config
 | Directory | Covers |
 |-----------|--------|
 | `smf_config/` | Single node: nrlsmf config commands parsed and reflected in show json |
+| `frr_poll/` | Single router with FRR: with-frr IGMP and VRF polls, and the control socket still answers |
 | `1hop_smf/` | Single router, two host LANs: basic nrlsmf CLI and forwarding modes (merge, classical flooding, elastic, advertise) |
 | `advertise_smf/` | Advertise-mode routers: an attached host is originated by r0, forwarded by r1 on net0 and by r2 on the longer path, with r3 and r4 also on those LANs |
 | `mgre_four_peers/` | Four routers across a shared underlay: every GRE/mGRE tunnel mode nrlsmf supports (point-to-point, static NBMA mGRE, NHRP-resolved mGRE, multicast-underlay mGRE, external/metadata GRE), one mode per test |
