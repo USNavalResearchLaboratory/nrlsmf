@@ -84,11 +84,11 @@ def restart_overlay_mcast_servers(step, receivers, mcast):
     start_overlay_mcast_servers(step, receivers, mcast)
 
 
-def start_host_mcast_client(step, wait_step, mcast):
+def start_host_mcast_client(step, wait_step, mcast, ttl=IPERF_TTL):
     step(SOURCE_HOST, f"ip route replace {mcast}/32 dev {HOST_IFACE}")
     step(
         SOURCE_HOST,
-        f"iperf -u -T {IPERF_TTL} -t 1000 -i 1 -b 8pps -l 1024 -e "
+        f"iperf -u -T {ttl} -t 1000 -i 1 -b 8pps -l 1024 -e "
         f"-B {SOURCE_HOST_ADDR} -c {mcast} &> iperf-{SOURCE_HOST}-client.log &",
     )
     wait_step(
