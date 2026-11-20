@@ -124,7 +124,7 @@ def check_common_show(node, instance=None, group_name=None, ifaces=None):
 
 
 def check_group_elastic(node, instance, group_name, enabled, ifaces=None,
-                        group_ifaces=None, absent_ifaces=None):
+                        group_ifaces=None, absent_ifaces=None, method=None):
     """Assert show interface grouping/interface report Elastic on or off."""
     grouping = show_json(node, "show interface grouping", instance)
     if grouping is None:
@@ -154,7 +154,7 @@ def check_group_elastic(node, instance, group_name, enabled, ifaces=None,
     listing = show_json(node, "show interface", instance)
     if listing is None or not ifaces:
         return
-    want = "Elastic" if enabled else "Flood"
+    want = method if method else ("Elastic" if enabled else "Flood")
     for iface in ifaces:
         rows = [r for r in listing if isinstance(r, dict) and r.get("Interface") == iface]
         test_step(bool(rows), f"{node} interface list includes {iface}", target=node)

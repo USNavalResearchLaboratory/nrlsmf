@@ -80,6 +80,7 @@ Smf::Interface::Interface(unsigned int ifIndex, const char *ifName)
    mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0), extension(NULL)
 {
     tunnel_learn_dynamic = false;
+    kernel_gre = false;
 }
 
 Smf::Interface::~Interface()
@@ -1399,10 +1400,11 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                             // else // else not for me
                                         }
                                     } // end for (UINT8 i = 0; i < upstreamCount
-                                    // mGRE unicast ACK: arrived on this tunnel and mapping
-                                    // missed (no local endpoint match). The GRE dest already
-                                    // selected this node, so apply the ACK to srcIface.
-                                    if ((NULL == upstreamIface) && srcIface.IsGRE())
+                                    // ACK arrived on this GRE device and did not match a
+                                    // local endpoint. Outer delivery already selected
+                                    // this node, so apply the ACK here.
+                                    if ((NULL == upstreamIface) &&
+                                        (srcIface.IsGRE() || srcIface.IsKernelGre()))
                                         mcast_controller->HandleAck(elasticAck, &srcIface, srcIp, prevHopAddr);
                                     break;
                                 }
@@ -2225,7 +2227,14 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 #ifdef ELASTIC_MCAST
         // yyy - change to use IsElastic() method
         bool elastic = ifaceGroup.GetElasticMulticast() || dstIface.GetElasticMulticast();
-        if (!elastic && mcast_controller->HasPolicies())
+        // Link-local multicast on a tunnel is forwarded with the relay
+        // decision. Elastic flow control is for other multicast.
+        // 224.0.0.55 is handled before this loop. Duplicate detection
+        // below still applies.
+        bool linkLocalControl = is_tunnel && dstIp.IsMulticast() && dstIp.IsLinkLocal();
+        // Link-local traffic skips UpdateElasticRouting(), which is where
+        // elastic groups apply DENY, so check policies here for it too.
+        if ((!elastic || linkLocalControl) && mcast_controller->HasPolicies())
         {
             // Check for matching fibEntry to get "default forwarding status".  This is used to
             // check if there is a DENY policy for the given flow.  Note that currently, the ligher-weight
@@ -2505,7 +2514,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             // Don't forward unicast packets destined to self
             ifaceForward = false;
         }
-        if (elastic)  // note 'elastic' can only be true for non-duplicate packets
+        if (elastic && !linkLocalControl)  // elastic is true only for non-duplicates
         {
             if (NULL == fibEntry)
             {
@@ -2822,7 +2831,10 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             if (GetDebugLevel() >= PL_DEBUG)
             {
                 PLOG(PL_DEBUG, "Smf::ProcessPacket(): sent NACK in response to data packet from %s for flow: ", upstreamHistory->GetAddress().GetHostString());
-                fibEntry->GetFlowDescription().Print();
+                // fibEntry is NULL when no elastic or policy lookup ran
+                // (e.g. link-local multicast on a tunnel).
+                if (NULL != fibEntry)
+                    fibEntry->GetFlowDescription().Print();
                 PLOG(PL_ALWAYS, "\n");
             }
         }
@@ -2858,6 +2870,29 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 
 
 #ifdef ELASTIC_MCAST
+
+// Relay address for an elastic update. On GRE the previous hop is the
+// tunnel neighbor. UMP carries the forwarding source, which may be the
+// origin rather than that neighbor.
+static const ProtoAddress& TunnelElasticRelay(const Smf::Interface& iface,
+                                              const ProtoAddress& prevHopAddr,
+                                              MulticastFIB::UpstreamHistory* upstreamHistory)
+{
+    const bool gre = iface.IsGRE() || iface.IsKernelGre();
+    const bool prevHopUsable = prevHopAddr.IsValid() &&
+        !prevHopAddr.HostIsEqual(PROTO_ADDR_ANY) &&
+        !prevHopAddr.HostIsEqual(PROTO_ADDR_ANY6);
+    if (gre && prevHopUsable)
+        return prevHopAddr;
+    if (NULL != upstreamHistory)
+        return upstreamHistory->GetAddress();
+    return prevHopAddr;
+}
+
+static bool SameRelay(const ProtoAddress& a, const ProtoAddress& b)
+{
+    return a.IsValid() && b.IsValid() && a.HostIsEqual(b);
+}
 
 MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   currentTick,
                                                const ProtoFlow::Description&  flowDescription,
@@ -2922,7 +2957,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
     bool updateController = false;
     bool sendAck = false;
     bool deny = false;
-    const ProtoAddress& relayAddr = (NULL != upstreamHistory) ? upstreamHistory->GetAddress() : prevHopAddr;
+    // On GRE, use the tunnel previous hop rather than the UMP source.
+    const ProtoAddress& relayAddr = TunnelElasticRelay(srcIface, prevHopAddr, upstreamHistory);
     if (NULL == fibEntry)
     {
         // This is a newly-detected flow, so we need to alert control plane!!!!!
@@ -3101,7 +3137,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             }
         }
         // Make sure the "best upstream relay" has the most recent metric/link quality for this upstream
-        if (NULL != upstreamHistory)
+        if ((NULL != upstreamHistory) &&
+            SameRelay(upstreamHistory->GetAddress(), relayAddr))
             upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
         if (dataTTL >= 0)
             upstreamRelay->NoteDataTTL((UINT8)dataTTL);
@@ -3232,7 +3269,7 @@ void Smf::HandleAdv(unsigned int                    currentTick,
     memcpy(pktId + advIp.GetLength(), &advId, 2);
     pktIdSize = (advIp.GetLength() + 2) * 8;
 
-    const ProtoAddress& relayAddr = (NULL != upstreamHistory) ? upstreamHistory->GetAddress() : prevHopAddr;
+    const ProtoAddress& relayAddr = TunnelElasticRelay(srcIface, prevHopAddr, upstreamHistory);
 
     if (srcIface.IsDuplicatePkt(current_update_time, flowId, flowIdSize, pktId, pktIdSize))
     {
@@ -3257,7 +3294,8 @@ void Smf::HandleAdv(unsigned int                    currentTick,
         //upstreamRelay->SetAdvMetric(elasticAdv.GetMetric());
         //upstreamRelay->SetAdvTTL(elasticAdv.GetTTL());
         //upstreamRelay->SetAdvHopCount(elasticAdv.GetHopCount());
-if (NULL != upstreamHistory)
+        if ((NULL != upstreamHistory) &&
+            SameRelay(upstreamHistory->GetAddress(), relayAddr))
             upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
         return;  // do nothing else, this is a duplicate EM_ADV message
     }
@@ -3274,7 +3312,8 @@ if (NULL != upstreamHistory)
             PLOG(PL_DEBUG, "Smf::HandleAdv() saving EM_ADV info id:%hu metric:%lf for relay: %s\n",
                             advId, elasticAdv.GetMetric(), upstreamRelay->GetAddress().GetHostString());
             upstreamRelay->UpdateAdvertisementState(currentTick, advIp, elasticAdv.GetId(),  &elasticAdv);
-            if (NULL != upstreamHistory)
+            if ((NULL != upstreamHistory) &&
+                SameRelay(upstreamHistory->GetAddress(), relayAddr))
                 upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
         }
         else

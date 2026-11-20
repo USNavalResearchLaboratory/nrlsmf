@@ -36,6 +36,7 @@ still one of the operator's own four routers, just doing double duty.
 | File | Mode | What resolves "which peer?" |
 |------|------|------------------------------|
 | `mutest_gre_p2p.py` | Point-to-point GRE (two independent pairs: r0<->r1, r2<->r3) | N/A — each tunnel has exactly one fixed peer |
+| `mutest_gre_linklocal.py` | Point-to-point GRE, r0<->r1, `tunnel` group with elastic and then advertise | N/A — one fixed peer. Link-local multicast is forwarded at the send rate; other multicast stays under elastic flow control |
 | `mutest_mgre_static.py` | Multipoint GRE, static NBMA | Kernel `ip neigh` for overlay unicast; nrlsmf `map <gre>,<local>,dynamic` learns those dests for overlay multicast inject. Ends with runtime `with-frr` + `elastic overlay` on the same `eth1,gre1` group (keep h1, stop h2/h3; idle hosts at most 1 pps). |
 | `mutest_mgre_nhrp.py` | Multipoint GRE, NHRP-resolved | FRR `nhrpd` programs kernel `ip neigh` (hub/NHS on `r3`, never `u0`); nrlsmf `map …,dynamic` learns those dests. Spokes are layered; the hub is not (overlay-mcast replicator). |
 | `mutest_mgre_mcast.py` | Multipoint GRE, multicast underlay remote | Nothing — underlay multicast fan-out delivers to every peer from one transmission |
@@ -64,6 +65,7 @@ From `tests/mutests` (requires root, FRR with `nhrpd` enabled, `nrlsmf` on PATH)
 sudo mutest mgre_four_peers
 # or one file:
 sudo mutest mgre_four_peers/mutest_gre_p2p.py
+sudo mutest mgre_four_peers/mutest_gre_linklocal.py
 sudo mutest mgre_four_peers/mutest_mgre_static.py
 sudo mutest mgre_four_peers/mutest_mgre_nhrp.py
 sudo mutest mgre_four_peers/mutest_mgre_mcast.py

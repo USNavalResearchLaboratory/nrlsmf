@@ -692,6 +692,9 @@ class MulticastFIB
                                          ForwardingStatus   forwardingStatus,
                                          bool               ackingStatus);
                 ForwardingStatus GetForwardingStatus(unsigned int ifaceIndex) const;
+                // True when the interface already has this forwarding status.
+                // Unlike GetForwardingStatus(), a missing bucket is not logged.
+                bool HasForwardingStatus(unsigned int ifaceIndex, ForwardingStatus status) const;
                 unsigned int GetForwardingCount() const
                     {return forwarding_count;}
 
