@@ -505,6 +505,13 @@ class Smf
                 void ClearLearnedOverlays();
                 bool IsGRE() const
                     {return tunnel_local_addr.IsValid();}
+                // Kernel GRE or mGRE, including a device whose tunnel
+                // endpoints are not mapped yet. IsGRE() is true only after
+                // a tunnel local address is known.
+                void SetKernelGre(bool state)
+                    {kernel_gre = state;}
+                bool IsKernelGre() const
+                    {return kernel_gre;}
 
                 ProtoAddressList& AccessAddressList()
                     {return addr_list;}
@@ -782,6 +789,7 @@ class Smf
                 ProtoAddress                          tunnel_local_addr;  // valid when Smf::Interface is GRE endpoint
                 ProtoAddress                          tunnel_remote_addr;
                 bool                                  tunnel_learn_dynamic; // map <iface>,<local>,dynamic
+                bool                                  kernel_gre;    // IFACE_GRE even with no mapped endpoints
                 ProtoAddressList                      learned_overlays;  // overlay neigh dst -> underlay (userData)
                 ProtoAddress                          ip_addr;       // used as source addr for nrlsmf IPIP encapsulation
                 std::string                           if_name;

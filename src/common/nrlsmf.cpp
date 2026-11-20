@@ -4550,7 +4550,9 @@ bool SmfApp::ParseRouteList(const char* routeList)
 #ifdef ELASTIC_MCAST
 bool SmfApp::JoinElasticAckGroup(Smf::Interface& iface, const char* ifaceName)
 {
-    if (!iface.IsGRE())
+    // Join the elastic address on kernel GRE even when no tunnel local
+    // is mapped yet. IsGRE() is false until that address is known.
+    if (!iface.IsGRE() && !iface.IsKernelGre())
         return true;
     if (elastic_ack_joined.count(iface.GetIndex()) != 0)
         return true;
@@ -4562,9 +4564,17 @@ bool SmfApp::JoinElasticAckGroup(Smf::Interface& iface, const char* ifaceName)
     }
     if (!underlay_group_socket.JoinGroup(ElasticAck::ELASTIC_ADDR, ifaceName))
     {
-        PLOG(PL_ERROR, "SmfApp::JoinElasticAckGroup() error: join %s on %s failed\n",
+        // A mapped GRE join failure is an error. An unmapped device may
+        // not be ready to join yet, so warn and continue.
+        if (iface.IsGRE())
+        {
+            PLOG(PL_ERROR, "SmfApp::JoinElasticAckGroup() error: join %s on %s failed\n",
+                 ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
+            return false;
+        }
+        PLOG(PL_WARN, "SmfApp::JoinElasticAckGroup() warning: join %s on %s failed\n",
              ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
-        return false;
+        return true;
     }
     elastic_ack_joined.insert(iface.GetIndex());
     return true;
@@ -5367,6 +5377,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
     // if if is a GRE interface, record its tunnel local addr for SMF operations
     if (ProtoNet::IFACE_GRE == mech->GetPrincipalElement()->GetProtoCap().GetInterfaceType())
     {
+        iface->SetKernelGre(true);
         const ProtoAddress& localAddr = mech->GetPrincipalElement()->GetProtoCap().GetTunnelLocalAddr();
         const ProtoAddress& remoteAddr = mech->GetPrincipalElement()->GetProtoCap().GetTunnelRemoteAddr();
         TRACE("SmfApp::GetInterface() GRE interface %s local:%s", ifName, localAddr.GetHostString());
@@ -6266,6 +6277,7 @@ Smf::Interface* SmfApp::AddDevice(const char* vifName, const char* ifaceNameAndF
     InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
     if (ProtoNet::IFACE_GRE == mech->GetPrincipalElement()->GetProtoCap().GetInterfaceType())
     {
+        iface->SetKernelGre(true);
         const ProtoAddress& localAddr = mech->GetPrincipalElement()->GetProtoCap().GetTunnelLocalAddr();
         const ProtoAddress& remoteAddr = mech->GetPrincipalElement()->GetProtoCap().GetTunnelRemoteAddr();
         if (localAddr.IsValid() && !localAddr.HostIsEqual(PROTO_ADDR_ANY) && !localAddr.HostIsEqual(PROTO_ADDR_ANY6) && remoteAddr.IsValid())
@@ -9048,6 +9060,7 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
             ProtoAddress remoteAddr;
             if (ProtoNet::IFACE_GRE == ProtoNet::GetInterfaceType(ifIndex, &localAddr, &remoteAddr))
             {
+                iface->SetKernelGre(true);
                 // Only add tunnel addressing when local endpoint is valid
                 // (nrlsmf "address" command will be needed to separately set tunnel endpoint information
                 //  such as when "external" mode "metadata" lightweight GRE tunnels are used)
@@ -9062,6 +9075,22 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
                 {
                     PLOG(PL_WARN, "SmfApp::MonitorEventHandler() warning: GRE interface '%s' missing tunnel endpoint addressing. (must map it)\n", ifName);
                 }
+#ifdef ELASTIC_MCAST
+                // Interface may already be in an elastic group from before
+                // the kernel reported it as GRE (tunnel plugin came up late).
+                // Joined after the endpoints are recorded so a failed join on
+                // a mapped device is reported as an error.
+                Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
+                Smf::InterfaceGroup* group;
+                while (NULL != (group = grouperator.GetNextItem()))
+                {
+                    if (group->GetElasticMulticast() && group->Contains(*iface))
+                    {
+                        JoinElasticAckGroup(*iface, ifName);
+                        break;
+                    }
+                }
+#endif // ELASTIC_MCAST
             }
             if (!ifaceAddrList.AddList(addrList))
             {

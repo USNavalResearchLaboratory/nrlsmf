@@ -1533,6 +1533,12 @@ MulticastFIB::ForwardingStatus MulticastFIB::Entry::GetForwardingStatus(unsigned
     return bucket->GetForwardingStatus();
 }  // end MulticastFIB::Entry::GetForwardingStatus()
 
+bool MulticastFIB::Entry::HasForwardingStatus(unsigned int ifaceIndex, ForwardingStatus status) const
+{
+    TokenBucket* bucket = bucket_list.FindBucket(ifaceIndex);
+    return (NULL != bucket) && (status == bucket->GetForwardingStatus());
+}  // end MulticastFIB::Entry::HasForwardingStatus()
+
 MulticastFIB::UpstreamRelay* MulticastFIB::Entry::AddUpstreamRelay(const ProtoAddress& addr, unsigned int ifaceIndex)
 {
     MulticastFIB::UpstreamRelay* upstreamRelay = new UpstreamRelay(addr, ifaceIndex);
@@ -2414,7 +2420,11 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const ProtoFlow::Description
         unsigned int currentTick = UpdateTicker();
         do
         {
-            //if (GetDebugLevel() >= PL_DEBUG)
+            // HandleAck() calls this on every EM_ACK, so log only real changes.
+            bool changed = (0 == ifaceIndex) ||
+                           (entry->GetAckingStatus() != ackingStatus) ||
+                           !entry->HasForwardingStatus(ifaceIndex, forwardingStatus);
+            if (changed || (GetDebugLevel() >= PL_DEBUG))
             {
                 const char* forwardingStatusString = MulticastFIB::GetForwardingStatusString(forwardingStatus);
                 PLOG(PL_ALWAYS, "nrlsmf: setting ForwardingStatus %s and AckingStatus to %d for existing flow ",
@@ -3192,8 +3202,9 @@ void ElasticMulticastController::HandleAck(const ElasticAck&   ack,
     if ((iface->GetIpAddress().GetType() == ProtoAddress::INVALID) &&
         !iface->GetTunnelLocalAddress().IsValid())
     {
-        PLOG(PL_WARN, "ElasticMulticastController::HandleAck() no IP address on interface %s!\n", iface->GetNameStr());
-        return;
+        // Record the acknowledgement even when the interface has no
+        // address yet. Logged at debug level: this repeats on every EM_ACK.
+        PLOG(PL_DEBUG, "ElasticMulticastController::HandleAck() no IP address on interface %s\n", iface->GetNameStr());
     }
     unsigned int ifaceIndex = iface->GetIndex();
 
@@ -3231,8 +3242,6 @@ void ElasticMulticastController::HandleAck(const ElasticAck&   ack,
         membership->SetDefaultForwardingStatus(default_forwarding_status);
         membership->SetIdleCountThreshold(MulticastFIB::DEFAULT_IDLE_COUNT_THRESHOLD);
     }
-    // Update forwarder only when ELASTIC membership not already set
-    bool updateForwarder = membership->FlagIsSet(MulticastFIB::Membership::ELASTIC) ? false : true;
     // Activate (or refresh) ELASTIC membership
     if (GetDebugLevel() >= PL_DEBUG)
     {
@@ -3266,13 +3275,14 @@ void ElasticMulticastController::HandleAck(const ElasticAck&   ack,
         return;
     }
 
-    membership->ResetIdleCount();  // reset packet-count based "timeout"    
+    membership->ResetIdleCount();  // reset packet-count based "timeout"
 
-    if (updateForwarder)
-    {
-        ProtoFlow::Description flowDescription(dstIp, srcIp, trafficClass, protocol);
-        mcast_forwarder->SetForwardingStatus(flowDescription, ifaceIndex, MulticastFIB::FORWARD, true);
-    }
+    // Apply forwarding on every acknowledgement. The first one can
+    // arrive before the flow entry exists (SetForwardingStatus() only
+    // updates existing entries), so a later one still applies.
+    // SetForwardingStatus() logs only when an entry actually changes.
+    ProtoFlow::Description flowDescription(dstIp, srcIp, trafficClass, protocol);
+    mcast_forwarder->SetForwardingStatus(flowDescription, ifaceIndex, MulticastFIB::FORWARD, true);
 
 }  // end ElasticMulticastController::HandleAck()
 
